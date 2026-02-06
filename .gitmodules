@@ -1,0 +1,3 @@
+[submodule "apps/auth-service"]
+	path = apps/auth-service
+	url = git@github-me:minhle106cse/distributed-social-platform_auth-service

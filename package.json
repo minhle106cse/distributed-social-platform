@@ -1,0 +1,30 @@
+{
+  "name": "distributed-social-platform",
+  "version": "1.0.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "private": true,
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build:shared": "npm run build -w @distributed-social-platform/shared-kernel",
+    "build:auth": "npm run build -w @distributed-social-platform/auth-service",
+    "build:chat": "npm run build -w @distributed-social-platform/chat-service",
+    "build:core": "npm run build -w @distributed-social-platform/core-service",
+    "build:notification": "npm run build -w @distributed-social-platform/notification-service",
+    "build:worker": "npm run build -w @distributed-social-platform/worker-service",
+    "build:services": "npm run build -w @distributed-social-platform/auth-service -w @distributed-social-platform/chat-service -w @distributed-social-platform/core-service -w @distributed-social-platform/notification-service -w @distributed-social-platform/worker-service",
+    "build:all": "npm run build:shared && npm run build:services"
+  },
+  "keywords": [],
+  "author": "minhle106cse",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "typescript": "^5.9.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.0.10"
+  }
+}
