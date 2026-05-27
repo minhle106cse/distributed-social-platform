@@ -102,12 +102,12 @@ Sau khi hệ thống ổn định, chúng ta sẽ thực hiện **The Great Migr
 
 # 🛠️ CÔNG NGHỆ ÁP DỤNG
 
-- **Database**: PostgreSQL.
+- **Database**: PostgreSQL (kèm `pgvector` cho VectorDB).
 - **Caching & Pub/Sub**: Redis.
 - **Message Broker**: Kafka (cho Event Backbone, xử lý throughput lớn).
-- **Search Engine**: Elasticsearch (để search bài viết, ghi chú chi tiêu, user).
+- **Search & RAG Engine**: Elasticsearch (Text Search) & VectorDB (Semantic Search / RAG).
 - **Real-time**: WebSockets (có Redis adapter để scale ngang).
-- **AIOps**: Áp dụng AI Agent 3-Layer Architecture để giám sát DLQ, tự động fix lỗi data, và báo cáo health check.
+- **AI-Native & AIOps**: Xây dựng **System Runtime Agent** bằng Python, áp dụng **MCP (Model Context Protocol)** để giao tiếp, và **RAG** để tạo trí nhớ ngữ nghĩa cho trợ lý cá nhân.
 
 ---
 
