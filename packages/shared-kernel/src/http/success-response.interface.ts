@@ -1,4 +1,4 @@
-import { BaseMeta } from "./base-meta.interface"
+import { BaseMeta } from "./base-meta.interface.js"
 
 export class HttpResponseBuilder {
   public readonly success: boolean = true

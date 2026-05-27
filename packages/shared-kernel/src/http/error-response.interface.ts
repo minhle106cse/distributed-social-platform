@@ -1,6 +1,6 @@
-import { ErrorDetails } from "../errors/app-error";
-import { ApplicationError } from "../errors/application-error";
-import { BaseMeta } from "./base-meta.interface";
+import { ErrorDetails } from "../errors/app-error.js";
+import { ApplicationError } from "../errors/application-error.js";
+import { BaseMeta } from "./base-meta.interface.js";
 
 export interface ErrorResponse {
   success: false;
