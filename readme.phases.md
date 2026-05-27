@@ -1,18 +1,10 @@
-# 🚀 DISTRIBUTED SOCIAL PLATFORM — EXECUTION ROADMAP (PHASE-FIRST)
+# 🚀 EXECUTION ROADMAP: FROM MONOLITH TO MICROSERVICES
 
 ---
 
-# 🧠 MỤC TIÊU GIAI ĐOẠN NÀY
+# 🧠 MỤC TIÊU LỘ TRÌNH
 
-## Không build loạn.
-## Không code trước architecture.
-## Không microservice trước foundation.
-
----
-
-# TRIẾT LÝ:
-## Build theo thứ tự:
-### Foundation → Correctness → Reliability → Scale → Hardening
+Không áp dụng Microservices một cách mù quáng. Chúng ta sẽ bắt đầu bằng một **Modular Monolith** vững chắc cho Core Business, xây dựng nền tảng Event-Driven, và sau cùng sẽ chứng minh kỹ năng Senior bằng cách **Migrate** một module thành Microservice độc lập.
 
 ---
 
@@ -20,524 +12,108 @@
 
 | Phase | Mục tiêu | Output |
 |------|----------|--------|
-| Phase 0 | Foundation | Repo + standards + infra baseline |
-| Phase 1 | Core Domain Correctness | Auth + User + Social Graph |
-| Phase 2 | Event Backbone | Outbox + Queue + Worker |
-| Phase 3 | Feed System | Timeline + fanout |
-| Phase 4 | Realtime | Chat + Notification |
-| Phase 5 | Production Hardening | Observability + Security + Cost |
-| Phase 6 | Release Engineering | CI/CD + Deploy + Runbook |
+| Phase 0 | Foundation & Infra | Monorepo, Docker Compose (Kafka, ES, Redis), AI Workflow |
+| Phase 1 | Modular Monolith | `core-api` (Social + Productivity modules) & `auth-service` |
+| Phase 2 | Event Backbone | Kafka Integration, Outbox Pattern trong `core-api` |
+| Phase 3 | CQRS & Search | Elasticsearch Indexing cho Search |
+| Phase 4 | Async & Real-time | Worker (Feed fan-out), WebSocket Cluster |
+| Phase 5 | **The Great Migration**| Trích xuất `expense-module` thành Microservice độc lập |
+| Phase 6 | AIOps & Hardening | AI Agent quản trị, Observability, Load Test |
 
 ---
 
-# 🔥 PHASE 0 — FOUNDATION (BẮT BUỘC)
+# 🔥 PHASE 0 — FOUNDATION & INFRASTRUCTURE
 
 # 🎯 Goal:
-## Tạo nền tảng để toàn bộ system không vỡ về sau.
-
----
+Tạo môi trường phát triển local hoàn chỉnh và chuẩn hóa kiến trúc.
 
 # Deliverables:
-
-## 1. Monorepo Setup
-### Chọn:
-- Nx hoặc Turborepo
-
----
-
-## Structure:
-```txt
-platform/
- ┣ apps/
- ┣ packages/
- ┣ infra/
- ┣ docs/
-```
+1. **Monorepo Setup**: Nx hoặc Turborepo.
+2. **AI Agent Workflow**: Thiết lập thư mục `directives/` và `execution/` để quản trị hệ thống.
+3. **Local Infra (Docker Compose)**: PostgreSQL, Redis, Kafka, Elasticsearch.
+4. **Shared Packages**: `event-contracts`, `logger`.
 
 ---
 
-# 2. Shared Packages
-## Tạo ngay:
-- event-contracts
-- shared-kernel
-- logger
-- config
-- auth-sdk
-
----
-
-# 3. Engineering Standards
-## Define:
-- ESLint
-- Prettier
-- Commit convention
-- Branch strategy
-- Environment strategy
-- Error response format
-
----
-
-# 4. ADR System
-## Viết docs:
-- Why hybrid architecture
-- Why SQS
-- Why PostgreSQL
-- Why Redis
-- Why API Gateway
-
----
-
-# 5. Infra Baseline
-## Setup:
-- Docker Compose local
-- PostgreSQL
-- Redis
-- LocalStack/SQS emulator
-- Terraform skeleton
-
----
-
-# Output:
-## “Platform skeleton ready”
-
----
-
----
-
-# 🔷 PHASE 1 — CORE DOMAIN CORRECTNESS
+# 🔷 PHASE 1 — THE MODULAR MONOLITH & CORE SERVICES
 
 # 🎯 Goal:
-## Xây đúng business foundation trước scale.
-
----
-
-# Build Order:
-
-## 1. auth-service
-### Features:
-- Register
-- Login
-- JWT
-- Refresh token rotation
-- Logout
-- Session revoke
-
----
-
-## 2. core-api
-### Modules:
-- user-module
-- social-graph-module
-- interaction-module
-
----
-
-# MUST:
-## Domain boundary:
-### auth:
-identity only
-
-### core:
-profile + graph
-
----
-
-# Key Decisions:
-## Social Graph Table:
-- follow
-- unfollow
-- block
-- mute
-
----
+Xây dựng Business Logic khổng lồ một cách gọn gàng trong một Monolith, kết hợp với các service vệ tinh bắt buộc.
 
 # Deliverables:
-## APIs:
-- /auth/register
-- /auth/login
-- /users/:id
-- /follow
-- /unfollow
-- /block
+1. **`auth-service` (Microservice)**: Xử lý Identity, JWT. Tách biệt hoàn toàn để bảo mật.
+2. **`core-api` (Modular Monolith)**:
+   - **`user-module`**: Quản lý Profile, Graph (Follow/Block).
+   - **`post-module`**: Quản lý bài đăng, bình luận.
+   - **`emotion-module`**: Ghi nhận cảm xúc hằng ngày (Thang điểm A, B, C, D).
+   - **`expense-module`**: Quản lý thu chi cá nhân.
+   - **`calendar-module` & `todo-module`**: Quản lý sự kiện, To-do list hằng ngày.
+3. **Database**: 1 Postgres DB cho `auth-service`, 1 Postgres DB cho `core-api` (với các schema/bảng được phân chia rạch ròi).
 
 ---
 
-# Output:
-## “Correct domain + clean ownership”
-
----
-
----
-
-# 🟡 PHASE 2 — EVENT BACKBONE
+# 🟡 PHASE 2 — EVENT STREAMING BACKBONE (KAFKA)
 
 # 🎯 Goal:
-## Chuyển từ synchronous CRUD sang distributed architecture.
+Chuẩn bị cho tương lai phân tán bằng cách áp dụng Event-Driven ngay trong Monolith.
+
+# Deliverables:
+1. **Outbox Pattern**: `core-api` ghi sự kiện vào bảng Outbox cùng lúc ghi data.
+2. **Kafka Integration**: Đọc Outbox và đẩy sự kiện lên các Kafka topics (`core-events`).
+3. Tích hợp "Social Hook": Khi user đạt thành tựu bên `emotion-module`, đẩy event `MilestoneReached`. Catcher sẽ tạo một Post bên `post-module`.
 
 ---
 
-# Build:
-
-## 1. Event Contract
-### Define:
-```ts
-eventId
-eventType
-version
-correlationId
-idempotencyKey
-payload
-```
-
----
-
-## 2. Outbox Pattern
-### Implement:
-DB transaction + outbox table
-
----
-
-## 3. Publisher
-### Core emits:
-- USER_FOLLOWED
-- USER_BLOCKED
-- TODO_CREATED
-
----
-
-## 4. worker-service
-### Consume:
-- Parse
-- Route
-- Retry
-- DLQ
-
----
-
-# MUST:
-## Inbox dedupe
-
----
-
-# Output:
-## “Reliable async backbone”
-
----
-
----
-
-# 🟣 PHASE 3 — FEED SYSTEM
+# 🟣 PHASE 3 — CQRS & ELASTICSEARCH
 
 # 🎯 Goal:
-## Giải quyết read-heavy architecture.
+Thực hiện Full-text search siêu tốc mà không làm nặng Postgres.
+
+# Deliverables:
+1. **search-service (Kafka Consumer)**: Nghe sự kiện từ `core-api` để index dữ liệu vào Elasticsearch.
+2. Index cả bài viết (Posts) và nhật ký thu chi (Expense Notes) để user có thể search nhanh chóng.
+3. Cung cấp API tìm kiếm tổng hợp.
 
 ---
 
-# Build:
-## Feed MVP:
-- Post create
-- Fanout
-- Timeline read
-
----
-
-# Strategy:
-## Hybrid:
-### Regular:
-fanout-on-write
-
-### Large account:
-fanout-on-read
-
----
-
-# Infra:
-- Redis sorted sets
-- PostgreSQL source
-
----
-
-# Ranking v1:
-- Recency
-- Follow score
-
----
-
-# Output:
-## “Feed architecture credibility”
-
----
-
----
-
-# 🟢 PHASE 4 — REALTIME LAYER
+# 🟢 PHASE 4 — ASYNC WORKERS & REAL-TIME
 
 # 🎯 Goal:
-## WebSocket + scaling + realtime state
+Xử lý các tác vụ nền nặng nề và thông báo thời gian thực.
+
+# Deliverables:
+1. **`worker-service`**: Tính toán Feed (Fan-out), gửi Email, tạo báo cáo chi tiêu tháng.
+2. **`notification-service`**: WebSocket Server + Redis Pub/Sub Adapter. Bắn thông báo realtime khi có người tương tác bài viết hoặc nhắc nhở To-do list.
 
 ---
 
-# Build:
-
-## chat-service:
-- Connect
-- Message send
-- Message receive
-- Presence
-- Redis pub/sub
-- Delivery state
-
----
-
-## notification-service:
-- Consume worker events
-- Push realtime
-- Retry failed sends
-
----
-
-# MUST:
-## Handle:
-- reconnect
-- duplicate
-- ordering
-
----
-
-# Output:
-## “Realtime distributed competency”
-
----
-
----
-
-# 🟠 PHASE 5 — PRODUCTION HARDENING
+# 🔴 PHASE 5 — THE GREAT MIGRATION (MICROSERVICE EXTRACTION)
 
 # 🎯 Goal:
-## Từ project thành production-grade.
+**Phô diễn kỹ năng Senior:** Làm sao để phá vỡ Monolith mà không gây downtime?
+
+# Tình huống: 
+Phân hệ `expense-module` phát triển quá lớn, yêu cầu bảo mật tài chính cao hơn, và cần scale riêng biệt. Ta sẽ tách nó thành `finance-microservice`.
+
+# Deliverables:
+1. Xây dựng `finance-microservice` mới với Database riêng biệt.
+2. **Dual-write / CDC**: Đồng bộ dữ liệu cũ từ `core-api` sang DB mới qua Kafka.
+3. Chuyển hướng traffic từ API Gateway sang service mới.
+4. Xóa code cũ khỏi `core-api`.
 
 ---
 
-# Add:
-
-## Observability:
-- requestId
-- correlationId
-- structured logs
-- metrics
-- dashboards
-
----
-
-## Security:
-- WAF
-- rate limiting
-- secret manager
-- IAM
-- encryption
-
----
-
-## Performance:
-- Redis cache
-- query optimization
-- k6 load test
-
----
-
-## Failure:
-- replay tool
-- DLQ admin
-- chaos testing
-
----
-
-# Output:
-## “Operational maturity”
-
----
-
----
-
-# 🔴 PHASE 6 — RELEASE ENGINEERING
+# 🤖 PHASE 6 — AIOPS & PRODUCTION HARDENING
 
 # 🎯 Goal:
-## Có thể deploy và maintain thật.
+Sẵn sàng deploy thực tế và vận hành tự động.
+
+# Deliverables:
+1. **AI Operations (AIOps)**: Viết các Directives để AI Agent tự động dọn dẹp Dead Letter Queue (DLQ), kiểm tra đồng bộ dữ liệu giữa Postgres và Elasticsearch.
+2. **Observability**: Distributed Tracing, Prometheus Metrics, Grafana.
+3. **Security & Load Testing**: Rate limiting, K6 Load test.
 
 ---
 
-# Build:
-## CI/CD:
-- GitHub Actions
-- Test gates
-- Lint
-- Build
-- Deploy
-
----
-
-## Infra:
-- API Gateway
-- ECS/Fargate
-- Lambda
-- RDS
-- Redis
-- CloudWatch
-
----
-
-## Deployment:
-- staging
-- prod
-- rollback
-- blue/green (optional)
-
----
-
-# Documentation:
-- Runbook
-- Incident playbook
-- Cost dashboard
-
----
-
-# Output:
-## “Release-capable platform”
-
----
-
-# 📌 PRIORITY MATRIX (RẤT QUAN TRỌNG)
-
-# MUST FIRST:
-## Before writing serious business code:
-- Monorepo
-- Shared contracts
-- Domain boundaries
-- ADR
-- Auth
-- Core
-
----
-
-# MUST NOT EARLY:
-## Avoid too soon:
-- Kafka
-- Kubernetes
-- ML ranking
-- CQRS split
-- Multi-region
-
----
-
-# 🧠 EXECUTION DISCIPLINE
-
-# Rule:
-## Mỗi phase phải có:
-### 1. Design
-### 2. Contract
-### 3. Build
-### 4. Test
-### 5. Failure case
-### 6. Documentation
-
----
-
-# Ví dụ:
-## Không chỉ:
-“Build follow API”
-
-### Phải:
-- Schema
-- Event
-- Retry
-- Block edge case
-- Rate limit
-- Monitoring
-
----
-
-# 📚 DOCUMENTS TO CREATE PER PHASE
-
-## Every phase:
-- ADR
-- Sequence Diagram
-- API Spec
-- Event Spec
-- Failure Spec
-- Cost Note
-
----
-
-# 🚀 THỰC TẾ NÊN BẮT ĐẦU NGAY HÔM NAY
-
-# DAY 1:
-## Phase 0:
-### Làm:
-- Monorepo
-- Folder structure
-- Shared package
-- Logger
-- Config
-- Docker Compose
-- PostgreSQL
-- Redis
-- Local queue
-
----
-
-# DAY 2–7:
-## Auth + Core
-
----
-
-# WEEK 2:
-## Event backbone
-
----
-
-# WEEK 3:
-## Feed
-
----
-
-# WEEK 4:
-## Realtime
-
----
-
-# MONTH 2:
-## Hardening + deploy
-
----
-
-# 🔥 FINAL ADVICE
-
-## Đừng hỏi:
-“Service nào build trước?”
-
----
-
-## Hãy hỏi:
-### “Foundation nào nếu sai sẽ phá toàn bộ system?”
-
----
-
-# ANSWER:
-## Foundation + Contracts + Domain Boundaries
-
----
-
-# 🏁 BOTTOM LINE
-
-## Bắt đầu:
-# Phase 0 → Foundation
-
-### Nếu Phase 0 yếu:
-Toàn bộ project sẽ devolve thành spaghetti distributed system.
-
----
-
-# 🎯 NEXT STEP:
-## Tôi khuyên:
-### Bây giờ làm ngay:
-# Phase 0.1 — Repo + Package + Boundary Blueprint
+# 🚀 BƯỚC TIẾP THEO
+Bắt đầu triển khai **Phase 0** và thiết kế cấu trúc database cho `core-api`.

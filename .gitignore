@@ -141,3 +141,12 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Agent 3-Layer Architecture Files
+.tmp/
+credentials.json
+token.json
+
+# Turborepo
+.turbo
+

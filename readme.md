@@ -1,747 +1,115 @@
-# 🚀 DISTRIBUTED SOCIAL PLATFORM — PRODUCTION-GRADE SENIOR BLUEPRINT (RELEASE-READY)
+# 🚀 DISTRIBUTED SOCIAL PRODUCTIVITY PLATFORM — SENIOR BLUEPRINT
 
 ---
 
-# 🧠 TẦM NHÌN DỰ ÁN (NORTH STAR)
+# 🧠 TẦM NHÌN DỰ ÁN (NORTH STAR & SUPER APP)
 
 ## Mục tiêu:
-Đây **không phải** portfolio CRUD nhiều feature.  
-Đây là một **production-style distributed system** có thể:
-- Deploy thực tế
-- Scale theo domain pressure
-- Có reliability/failure strategy
-- Có observability
-- Có security boundary
-- Có cost-awareness
-- Có thể release và tiếp tục evolve
+Đây không chỉ là một ứng dụng "Blog/Social Network" cơ bản với các tính năng tạo bài viết, comment, react. 
+Dự án này hướng tới một **"Super App"** — sự kết hợp giữa **Mạng Xã Hội (Social)** và **Tiện ích Cá Nhân (Productivity/Utility)**.
+
+Việc giải quyết logic nghiệp vụ (Business Logic) phức tạp chính là một kỹ năng cốt lõi của Senior Engineer.
 
 ---
 
-# 🎯 MỤC TIÊU CỐT LÕI
+# 🎯 DOMAIN NGHIỆP VỤ (BUSINESS LOGIC)
 
-## Xây dựng hệ thống để demonstrate:
+## 1. Social Domain (Lõi Mạng Xã Hội)
+- **Identity & Graph**: Users, Followers, Following, Block, Mute.
+- **Content & Interactions**: Bài viết đa phương tiện, Bình luận, Reacts, Shares.
+- **Feed**: Timeline cá nhân hóa dựa trên người theo dõi và độ tương tác.
 
-### System Design
-- Domain-driven boundary
-- Distributed mindset
-- Hybrid architecture
-- Scalability economics
+## 2. Productivity & Utility Domain (Lõi Tiện Ích)
+- **Daily Emotion Tracker**:
+  - Ghi lại cảm xúc mỗi ngày theo thang điểm và màu sắc: 🟢 A (Tuyệt vời), 🟡 B (Ổn), 🟠 C (Căng thẳng), 🔴 D (Tệ).
+  - Viết nhật ký cá nhân (Private Journal).
+  - Theo dõi chuỗi ngày tích cực (Streaks).
+- **Expense Tracker**:
+  - Ghi lại chi tiêu, thu nhập hằng ngày.
+  - Phân loại chi tiêu, xuất báo cáo tổng kết tháng.
+- **Calendar & To-do List**:
+  - Lịch trình cá nhân (Calendar).
+  - Quản lý công việc hằng ngày (To-do list), nhắc nhở deadline, đánh dấu hoàn thành.
 
-### Engineering
-- Event-driven architecture
-- Realtime architecture
-- Async consistency
-- Failure handling
-
-### Operations
-- Monitoring
-- Logging
-- Deployment
-- Incident response
-
----
-
-# 🏗️ TRIẾT LÝ KIẾN TRÚC
-
-# Core Strategy:
-## Modular Monolith First → Extract by Scaling Pressure
+## 3. The "Social Hook" (Giao điểm Nghiệp vụ)
+Sự kết hợp giữa 2 lõi tạo ra điểm nhấn của hệ thống:
+- Người dùng có thể **chia sẻ thành tựu** từ phần Tiện Ích lên Bảng Tin Xã Hội. 
+- *Ví dụ*: "Đạt mốc 30 ngày liên tiếp giữ cảm xúc loại A 🟢!", "Đã hoàn thành 10 mục tiêu trong tuần này!", "Tiết kiệm được 50% thu nhập tháng!".
 
 ---
+
+# 🏗️ TRIẾT LÝ KIẾN TRÚC: MODULAR MONOLITH FIRST
+
+## Core Strategy:
+Bắt đầu bằng **Modular Monolith** chặt chẽ, và chỉ tách thành **Microservices** khi thực sự cần thiết hoặc để chứng minh khả năng Migration.
 
 ## Lý do:
-### Tránh:
-- Premature microservices
-- Over-distributed complexity
-- Contract chaos
-- Infra overhead
-- Debugging hell
+- **Tránh over-engineering**: Microservices toàn phần ngay từ đầu sẽ mang lại độ trễ mạng, đau đầu về distributed transaction, và chi phí hạ tầng không cần thiết.
+- **Kỹ năng Migration**: Một trong những kỹ năng đắt giá nhất của Senior là biết cách *phá vỡ Monolith một cách an toàn (Zero-Downtime Migration)*.
 
 ---
 
-## Senior Principle:
-### “Chỉ phân tách khi domain hoặc scaling characteristic buộc phải tách”
-
----
-
-# 🧭 HIGH-LEVEL SYSTEM ARCHITECTURE
+# 🧭 SYSTEM ARCHITECTURE (CURRENT STATE)
 
 ```txt
-Client (Web / Mobile)
-       |
-       v
-AWS API Gateway (HTTP + WebSocket)
-       |
-       v
-Lambda Authorizer / Auth Validation
-       |
-       v
----------------------------------------------------
-| core-api (ECS/Fargate)                          |
-| auth-service (Lambda/ECS Hybrid)                |
-| chat-service (WebSocket + Redis)                |
-| notification-service                            |
----------------------------------------------------
-       |
-       v
-Event Backbone (SQS + SNS/EventBridge)
-       |
-       v
-worker-service
-       |
-       v
----------------------------------------------------
-| PostgreSQL | Redis | S3 | CloudWatch | Terraform|
----------------------------------------------------
+       Client (Web / Mobile)
+               |
+               v
+     API Gateway / Ingress
+               |
+  +------------+-------------+
+  |                          |
+  v                          v
+[Auth Service]         [Core API (Modular Monolith)]
+(Microservice)           - user-module
+                         - post-module
+                         - emotion-module
+                         - expense-module
+                         - calendar-module
+  |                          |
+  v                          v
+[DB: Auth]             [DB: Core (Logical Separation)]
+                             |
+                             v
+                       [Outbox Table]
+                             |
+=========================================================
+ 🌊 KAFKA EVENT STREAMING BACKBONE
+=========================================================
+          |                  |                  |
+          v                  v                  v
+  [Worker Service]     [Search Service]   [Notification Service]
+  (Feed Fan-out,       (ES Indexing)      (WebSockets + Redis)
+   Email, Retry)
 ```
 
 ---
 
-# 🧱 DOMAIN BOUNDARY (CỰC KỲ QUAN TRỌNG)
+# 🧱 BOUNDARIES & EXTRACTION STRATEGY
 
-# auth-service
-## Chỉ chịu trách nhiệm:
-- Register
-- Login
-- Access Token
-- Refresh Token
-- Session lifecycle
-- Credential security
+## 1. `core-api` (Trái tim của hệ thống)
+Chứa toàn bộ Business Logic. Dữ liệu nằm chung một PostgreSQL database nhưng được chia schema/table rõ ràng. KHÔNG JOIN chéo giữa các domain mà không thông qua interface.
 
----
-
-## Không chịu trách nhiệm:
-- User profile
-- Social graph
-- Feed
-
----
-
-# core-api
-## Source of Truth:
-- User profile
-- Settings
-- Social graph
-- Productivity
-- Interaction
-- Feed metadata
-
----
-
-# chat-service
-## Source of Truth:
-- Conversations
-- Messages
-- Delivery state
-- Presence
-
----
-
-# notification-service
-## Source of Truth:
-- Notification history
-- Delivery attempts
-- Channel dispatch
-
----
-
-# RULE:
-## Tuyệt đối không shared database giữa service.
-
-### Giao tiếp:
-- Sync → API
-- Async → Event
-
----
-
-# 📦 REPOSITORY STRATEGY
-
-# Recommended:
-## Monorepo (Nx / Turborepo)
-
----
-
-## apps/
-- api-gateway
-- auth-service
-- core-api
-- chat-service
-- worker-service
-- notification-service
-
----
-
-## packages/
-- event-contracts
-- shared-kernel
-- logger
-- auth-sdk
-- config
-- observability
-
----
-
-## infra/
-- terraform
-- docker
-- monitoring
-- ci-cd
-
----
-
-# 🔐 API GATEWAY STRATEGY (AWS)
-
-# API Gateway Responsibilities:
-- Routing
-- JWT verification
-- WAF
-- Rate limiting
-- Request throttling
-- Request tracing
-- Request normalization
-
----
-
-# HTTP Gateway:
-## Dùng cho:
-- Auth
-- Core API
-- Feed
-- Productivity
-
----
-
-# WebSocket Gateway:
-## Dùng cho:
-- Chat
-- Live notifications
-- Presence
-
----
-
-# Best Practice:
-## Không để frontend direct-call nhiều service nếu không cần.
-
----
-
-# 🔑 AUTHENTICATION BEST PRACTICE
-
-# Token Strategy:
-## Access Token:
-- TTL ngắn (10–15 phút)
-
-## Refresh Token:
-- Rotation
-- Reuse detection
-- Token family tracking
-- Hash storage
-
----
-
-# Security:
-## MUST:
-- Device/session tracking
-- IP anomaly detection
-- Secret Manager
-- Token revocation
-- Least privilege IAM
-
----
-
-# Optional Advanced:
-- OAuth2
-- MFA
-- Suspicious login challenge
-
----
-
-# 📡 EVENT-DRIVEN ARCHITECTURE (BACKBONE)
-
-# Event Flow:
-1. User action xảy ra
-2. Domain write thành công
-3. Outbox record tạo
-4. Publisher đẩy event → SQS/SNS
-5. Worker consume
-6. Retry nếu fail
-7. DLQ nếu poison
-8. Replay nếu cần
-
----
-
-# Event Contract Standard:
-
-```ts
-type DomainEvent<T> = {
-  eventId: string
-  eventType: string
-  eventVersion: number
-  occurredAt: string
-  producer: string
-  actorId: string
-  entityId: string
-  correlationId: string
-  causationId?: string
-  idempotencyKey: string
-  payload: T
-  metadata?: Record<string, unknown>
-}
-```
-
----
-
-# MUST HAVE:
-## Versioning:
-- USER_FOLLOWED_V1
-- USER_FOLLOWED_V2
-
----
-
-# NEVER:
-## Breaking consumer directly.
-
----
-
-# 🛡️ RELIABILITY PATTERNS (NON-NEGOTIABLE)
-
-# 1. Outbox Pattern
-## Giải quyết:
-DB commit success nhưng publish fail
-
----
-
-# 2. Inbox / Idempotency
-## Giải quyết:
-Duplicate event
-
----
-
-# 3. Retry Strategy
-## Bao gồm:
-- Immediate retry
-- Exponential backoff
-- Delayed retry
-- DLQ
-
----
-
-# 4. Replay Tool
-## Admin capability:
-- Replay by eventId
-- Replay by date
-- Replay by event type
-
----
-
-# 5. Correlation ID
-## Mục tiêu:
-Distributed tracing xuyên service
-
----
-
-# 🧠 FEED SYSTEM (HARDEST DOMAIN)
-
-# Core Problem:
-Read-heavy + ranking + scale
-
----
-
-# Phase 1 Strategy:
-## Hybrid Fanout
-
-### Fanout on Write:
-- Normal user
-
-### Fanout on Read:
-- Celebrity / high follower
-
----
-
-# Storage:
-## Hot:
-- Redis Sorted Set
-
-## Canonical:
-- PostgreSQL
-
----
-
-# Ranking Inputs:
-- Recency
-- Follow strength
-- Engagement score
-- Block/mute
-- Productivity relevance (optional)
-
----
-
-# Advanced Future:
-- ML ranking
-- Edge ranking
-- Cached personalized timeline
-
----
-
-# ⚡ REALTIME LAYER
-
-# chat-service MUST support:
-- WebSocket
-- Presence
-- Redis pub/sub
-- Multi-instance scaling
-- Reconnect
-- Ack
-- Ordering
-- Delivery state
-
----
-
-# Delivery States:
-- SENT
-- DELIVERED
-- SEEN
-
----
-
-# Ordering:
-## Recommended:
-- ULID / Snowflake
-OR
-- Conversation sequence number
-
----
-
-# notification-service:
-## Channels:
-- WebSocket
-- Push
-- Email
-
----
-
-# Pattern:
-worker → notification → fanout
-
----
-
-# 📊 OBSERVABILITY (BẮT BUỘC)
-
-# Structured Logging:
-```json
-{
-  "requestId": "",
-  "correlationId": "",
-  "service": "",
-  "userId": "",
-  "eventId": "",
-  "timestamp": ""
-}
-```
-
----
-
-# Metrics:
-## MUST TRACK:
-- P50 / P95 / P99 latency
-- Queue lag
-- DLQ size
-- Retry count
-- Socket connections
-- Cache hit ratio
-- Auth failure
-- DB latency
-
----
-
-# Stack:
-- CloudWatch
-- OpenTelemetry
-- X-Ray
-- Grafana
-- Prometheus
-
----
-
-# Alerts:
-## Ví dụ:
-- Queue backlog spike
-- Redis unavailable
-- Auth anomaly
-- WebSocket disconnect storm
-
----
-
-# 🚨 FAILURE PLAYBOOKS
-
-# Required:
-## What if:
-- Redis down?
-- Queue delayed?
-- Worker crash?
-- Duplicate event?
-- Poison message?
-- Token stolen?
-- Notification flood?
-
----
-
-# MUST:
-## Mỗi case cần:
-- Detection
-- Containment
-- Recovery
-- Replay
-- Postmortem
-
----
-
-# 🔒 SECURITY LAYER
-
-# MUST:
-- WAF
-- Rate limiting
-- DTO validation
-- Secret rotation
-- IAM least privilege
-- Encryption at rest
-- PII protection
-- Audit log
-
----
-
-# Sensitive Data:
-## Encrypt:
-- Email
-- Phone
-- Session data
-- Device fingerprint
-
----
-
-# Optional:
-- Regional compliance
-- GDPR-style deletion
-
----
-
-# 💸 COST ENGINEERING (SENIOR SIGNAL)
-
-# Lambda phù hợp:
-- Auth
-- Lightweight triggers
-- Notification dispatch
-
----
-
-# ECS/Fargate phù hợp:
-- Core API
-- WebSocket
-- Heavy worker
-
----
-
-# Rule:
-## Không “Lambda everything”.
-
-### Vì:
-- Cold start
-- Connection issue
-- Cost unpredictability
-
----
-
-# 🧪 TESTING STRATEGY
-
-# Layer:
-## Unit:
-- Domain
-
-## Integration:
-- DB
-- Redis
-- Queue
-
-## Contract:
-- Event schema
-
-## Load:
-- k6
-- Artillery
-
-## Chaos:
-- Queue duplicate
-- Redis outage
-- Worker death
-
----
-
-# 🚀 RELEASE ROADMAP
-
-# Phase 0 — Foundation
-- Monorepo
-- Shared package
-- CI/CD
-- Terraform baseline
-- Logging standard
-
----
-
-# Phase 1 — Identity + Core
-- Auth
-- User
-- Social graph
-- Interaction
-
----
-
-# Phase 2 — Async Backbone
-- Outbox
-- SQS
-- Worker
-- Retry
-- DLQ
-
----
-
-# Phase 3 — Feed
-- Fanout hybrid
-- Ranking
-- Cache
-
----
-
-# Phase 4 — Realtime
-- Chat
-- Notification
-
----
-
-# Phase 5 — Hardening
-- Monitoring
-- Security
-- Cost optimization
-- Replay tooling
-
----
-
-# 📚 REQUIRED DOCUMENTATION (SENIOR DIFFERENTIATOR)
-
-# MUST WRITE:
-
-## 1. ADR (Architecture Decision Record)
-### Ví dụ:
-- Why SQS over Kafka
-- Why modular monolith first
-- Why Redis for feed hot path
-
----
-
-## 2. Sequence Diagram
-### Flows:
-- Register
-- Follow
-- Message
-- Feed generation
-- Notification
-
----
-
-## 3. Failure Runbook
-### Cases:
-- DLQ
-- Replay
-- Redis outage
-
----
-
-## 4. Cost Model
-### Include:
-- Monthly estimate
-- Scaling threshold
-- Break-even points
-
----
-
-# 🏁 SUCCESS BENCHMARK
-
-## Sau project bạn phải giải thích được:
-
-### Technical:
-- Outbox
-- Inbox
-- Idempotency
-- Fanout
-- WebSocket scale
-- Auth lifecycle
-
----
-
-### Operational:
-- Incident response
-- Rollback
-- Monitoring
-- Autoscaling
-- Failure economics
-
----
-
-# ❌ COMMON FAILURE TRAPS
-
-## Tránh:
-- Over-microservice
-- Shared DB
-- Kafka chỉ để ngầu
-- Kubernetes quá sớm
-- No observability
-- No contract versioning
-
----
-
-# 🎯 FINAL SENIOR TRUTH
-
-## Senior không phải:
-“nhiều service”
-
----
+## 2. Các Service được tách ngay từ đầu (Microservices):
+- **`auth-service`**: Tách biệt hoàn toàn để cô lập bảo mật (JWT, Passwords).
+- **`notification-service`**: Xử lý WebSocket có đặc thù giữ connection liên tục, scale hoàn toàn khác biệt so với REST API, cần Redis Pub/Sub.
+- **`worker-service`**: Xử lý logic nền nặng nề (Feed fan-out, gửi email) để không chặn API response.
 
-## Senior là:
-### “System survives scale, failure, and complexity with maintainable economics.”
+## 3. Future Migration Target:
+Sau khi hệ thống ổn định, chúng ta sẽ thực hiện **The Great Migration**: Tách `expense-module` ra thành một `finance-microservice` hoàn toàn độc lập, sử dụng Event-Driven để đồng bộ dữ liệu mà không làm gián đoạn hệ thống.
 
 ---
 
-# 📈 FINAL SCORECARD
+# 🛠️ CÔNG NGHỆ ÁP DỤNG
 
-## Architecture Depth: 9.5/10  
-## Production Readiness: 9/10  
-## Resume Signal: 10/10  
-## Operational Credibility: 9.5/10  
+- **Database**: PostgreSQL.
+- **Caching & Pub/Sub**: Redis.
+- **Message Broker**: Kafka (cho Event Backbone, xử lý throughput lớn).
+- **Search Engine**: Elasticsearch (để search bài viết, ghi chú chi tiêu, user).
+- **Real-time**: WebSockets (có Redis adapter để scale ngang).
+- **AIOps**: Áp dụng AI Agent 3-Layer Architecture để giám sát DLQ, tự động fix lỗi data, và báo cáo health check.
 
 ---
 
 # 🚀 NEXT IMMEDIATE ACTIONS
-
-## Làm NGAY:
-### 1. Domain Boundary Doc
-### 2. Event Contract Package
-### 3. ADR
-### 4. Infra Topology
-### 5. Sequence Diagram
-### 6. Failure Playbook
-### 7. Cost Model
-
----
-
-# 💥 KẾT LUẬN
-
-### Đây đã vượt xa mức “project học backend”.
-
-## Nếu triển khai đúng:
-### Đây là production-style distributed platform
-
-## Nếu triển khai sai:
-### Chỉ là nhiều NestJS service gọi nhau
-
----
-
-# 🔥 BOTTOM LINE:
-## Build less vanity.  
-## Build more survivability.
+Vui lòng tham khảo file `readme.phases.md` để xem lộ trình xây dựng chi tiết từ Monolith đến Microservices.

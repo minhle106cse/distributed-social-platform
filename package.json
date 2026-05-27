@@ -6,16 +6,13 @@
     "packages/*"
   ],
   "private": true,
+  "packageManager": "npm@11.4.2",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "build:shared": "npm run build -w @distributed-social-platform/shared-kernel",
-    "build:auth": "npm run build -w @distributed-social-platform/auth-service",
-    "build:chat": "npm run build -w @distributed-social-platform/chat-service",
-    "build:core": "npm run build -w @distributed-social-platform/core-service",
-    "build:notification": "npm run build -w @distributed-social-platform/notification-service",
-    "build:worker": "npm run build -w @distributed-social-platform/worker-service",
-    "build:services": "npm run build -w @distributed-social-platform/auth-service -w @distributed-social-platform/chat-service -w @distributed-social-platform/core-service -w @distributed-social-platform/notification-service -w @distributed-social-platform/worker-service",
-    "build:all": "npm run build:shared && npm run build:services"
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "format": "prettier --write \"**/*.{ts,tsx,md}\""
   },
   "keywords": [],
   "author": "minhle106cse",
@@ -25,6 +22,7 @@
     "typescript": "^5.9.3"
   },
   "devDependencies": {
-    "@types/node": "^25.0.10"
+    "@types/node": "^25.0.10",
+    "turbo": "^2.9.15"
   }
 }

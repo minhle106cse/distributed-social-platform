@@ -3,8 +3,8 @@
   "references": [
     { "path": "packages/shared-kernel" },
     { "path": "apps/auth-service" },
-/*     { "path": "apps/chat-service" },
-    { "path": "apps/core-service" },
+    { "path": "apps/core-api" }
+/*  { "path": "apps/chat-service" },
     { "path": "apps/notification-service" },
     { "path": "apps/worker-service" } */
   ]
