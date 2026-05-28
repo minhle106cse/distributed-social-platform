@@ -6,3 +6,5 @@ export * from './errors/infra-error.js'
 export * from './http/error-response.interface.js'
 export * from './http/success-response.interface.js'
 export * from './http/base-meta.interface.js'
+
+export * from './schemas/common.schema.js'
