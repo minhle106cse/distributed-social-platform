@@ -20,21 +20,16 @@ Việc giải quyết logic nghiệp vụ (Business Logic) phức tạp chính l
 - **Feed**: Timeline cá nhân hóa dựa trên người theo dõi và độ tương tác.
 
 ## 2. Productivity & Utility Domain (Lõi Tiện Ích)
-- **Daily Emotion Tracker**:
-  - Ghi lại cảm xúc mỗi ngày theo thang điểm và màu sắc: 🟢 A (Tuyệt vời), 🟡 B (Ổn), 🟠 C (Căng thẳng), 🔴 D (Tệ).
-  - Viết nhật ký cá nhân (Private Journal).
-  - Theo dõi chuỗi ngày tích cực (Streaks).
-- **Expense Tracker**:
-  - Ghi lại chi tiêu, thu nhập hằng ngày.
-  - Phân loại chi tiêu, xuất báo cáo tổng kết tháng.
-- **Calendar & To-do List**:
-  - Lịch trình cá nhân (Calendar).
-  - Quản lý công việc hằng ngày (To-do list), nhắc nhở deadline, đánh dấu hoàn thành.
+- **Daily Emotion Tracker**: Nhật ký cảm xúc & Chuỗi ngày tích cực (Streaks).
+- **Expense Tracker**: Quản lý thu chi cá nhân.
+- **Calendar & To-do List**: Lịch trình và nhắc nhở công việc.
 
-## 3. The "Social Hook" (Giao điểm Nghiệp vụ)
-Sự kết hợp giữa 2 lõi tạo ra điểm nhấn của hệ thống:
-- Người dùng có thể **chia sẻ thành tựu** từ phần Tiện Ích lên Bảng Tin Xã Hội. 
-- *Ví dụ*: "Đạt mốc 30 ngày liên tiếp giữ cảm xúc loại A 🟢!", "Đã hoàn thành 10 mục tiêu trong tuần này!", "Tiết kiệm được 50% thu nhập tháng!".
+## 3. The 4 "Killer Features" (Nghiệp vụ mức độ Senior)
+Sự khác biệt của dự án không nằm ở thao tác CRUD cơ bản, mà là cách giải quyết các bài toán phân tán, bất đồng bộ và nhất quán dữ liệu:
+- 🔥 **Gamification & Trust Score Engine**: Mọi action (hoàn thành task, bị report) đều phát event qua Kafka. Một Reputation Worker xử lý logic chấm điểm (decay theo thời gian) lưu vào Redis, quyết định Reach của bài viết. (Event Sourcing & CQRS).
+- 🔥 **"Proof of Work" Posts**: Để chống "sống ảo", các bài khoe thành tích bắt buộc phải Embed 1 record từ CSDL Productivity. Xử lý Eventual Consistency khi record gốc bị sửa/xoá để hiển thị "Cảnh báo fake data" bên Social.
+- 🔥 **AI-Driven Accountability Partner**: LLM phân tích thói quen (RAG). Hệ thống tự động kích hoạt API ẩn để đăng bài "Bóc phốt" (nếu lười) hoặc "Khen thưởng" (nếu chăm) thay mặt user (Saga Pattern & Distributed Cron).
+- 🔥 **Micro-Bounty & Tipping (Wallet)**: Ví nội bộ cho phép đặt cọc Bounty nhờ người làm task, hoặc Tip cho tác giả. Áp dụng Optimistic/Pessimistic Locking chống Double-spending, chuẩn bị tách thành Finance Service.
 
 ---
 

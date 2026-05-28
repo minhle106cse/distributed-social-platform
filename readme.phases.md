@@ -44,11 +44,10 @@ Xây dựng Business Logic khổng lồ một cách gọn gàng trong một Mono
 # Deliverables:
 1. **`auth-service` (Microservice)**: Xử lý Identity, JWT. Tách biệt hoàn toàn để bảo mật.
 2. **`core-api` (Modular Monolith)**:
-   - **`user-module`**: Quản lý Profile, Graph (Follow/Block).
-   - **`post-module`**: Quản lý bài đăng, bình luận.
-   - **`emotion-module`**: Ghi nhận cảm xúc hằng ngày (Thang điểm A, B, C, D).
-   - **`expense-module`**: Quản lý thu chi cá nhân.
-   - **`calendar-module` & `todo-module`**: Quản lý sự kiện, To-do list hằng ngày.
+   - **`user-module` & `profile-module`**: Quản lý Graph, Trust Score.
+   - **`post-module`**: Quản lý bài đăng, hỗ trợ Proof of Work references.
+   - **`productivity-module`**: Gộp chung Emotion, Expense, Todo.
+   - **`wallet-module`**: Nền tảng giao dịch Tipping/Bounty với Optimistic Locking.
 3. **Database**: 1 Postgres DB cho `auth-service`, 1 Postgres DB cho `core-api` (với các schema/bảng được phân chia rạch ròi).
 
 ---
@@ -61,7 +60,7 @@ Chuẩn bị cho tương lai phân tán bằng cách áp dụng Event-Driven nga
 # Deliverables:
 1. **Outbox Pattern**: `core-api` ghi sự kiện vào bảng Outbox cùng lúc ghi data.
 2. **Kafka Integration**: Đọc Outbox và đẩy sự kiện lên các Kafka topics (`core-events`).
-3. Tích hợp "Social Hook": Khi user đạt thành tựu bên `emotion-module`, đẩy event `MilestoneReached`. Catcher sẽ tạo một Post bên `post-module`.
+3. **Trust Score Events**: Mọi hành động tương tác (hoàn thành task, bị report) đều đẩy event lên Kafka để tính điểm uy tín.
 
 ---
 
@@ -83,8 +82,8 @@ Thực hiện Full-text search siêu tốc mà không làm nặng Postgres.
 Xử lý các tác vụ nền nặng nề và thông báo thời gian thực.
 
 # Deliverables:
-1. **`worker-service`**: Tính toán Feed (Fan-out), gửi Email, tạo báo cáo chi tiêu tháng.
-2. **`notification-service`**: WebSocket Server + Redis Pub/Sub Adapter. Bắn thông báo realtime khi có người tương tác bài viết hoặc nhắc nhở To-do list.
+1. **`worker-service`**: Tính toán Feed (Fan-out), Reputation Worker (chấm điểm Trust Score real-time), gửi Email.
+2. **`notification-service`**: WebSocket Server + Redis Pub/Sub Adapter. Bắn thông báo realtime khi có người tip/bounty hoặc tương tác.
 
 ---
 
@@ -94,12 +93,12 @@ Xử lý các tác vụ nền nặng nề và thông báo thời gian thực.
 **Phô diễn kỹ năng Senior:** Làm sao để phá vỡ Monolith mà không gây downtime?
 
 # Tình huống: 
-Phân hệ `expense-module` phát triển quá lớn, yêu cầu bảo mật tài chính cao hơn, và cần scale riêng biệt. Ta sẽ tách nó thành `finance-microservice`.
+Phân hệ `wallet-module` (Micro-Bounty & Tipping) phát triển quá lớn, yêu cầu bảo mật tài chính khắt khe, cần scale riêng biệt và tuân thủ ACID chặt chẽ. Ta sẽ tách nó thành `finance-microservice`.
 
 # Deliverables:
 1. Xây dựng `finance-microservice` mới với Database riêng biệt.
 2. **Dual-write / CDC**: Đồng bộ dữ liệu cũ từ `core-api` sang DB mới qua Kafka.
-3. Chuyển hướng traffic từ API Gateway sang service mới.
+3. Chuyển hướng traffic từ API Gateway sang service mới (Strangler Fig Pattern).
 4. Xóa code cũ khỏi `core-api`.
 
 ---
@@ -122,9 +121,9 @@ Sẵn sàng deploy thực tế và vận hành tự động.
 Nâng tầm ứng dụng thành "AI-Native Ecosystem" với một trợ lý ảo hiểu sâu sắc dữ liệu của user (RAG) và có thể tự động hành động (System Runtime Agent) thông qua MCP.
 
 # Deliverables:
-1. **VectorDB (`pgvector`)**: Lưu trữ Embedding Vector của nhật ký cảm xúc, chi tiêu, to-do list qua Kafka Event.
-2. **MCP Server**: Tích hợp Model Context Protocol vào `core-api` để LLM có thể gọi các Tool chuẩn hóa.
-3. **`ai-agent-service` (Python/LangGraph)**: Xây dựng System Runtime Agent (Orchestrator) giao tiếp với user, VectorDB (RAG), và MCP Server (Function Calling).
+1. **VectorDB (`pgvector`)**: Lưu trữ Embedding Vector của nhật ký cảm xúc, chi tiêu, to-do list.
+2. **MCP Server**: Tích hợp Model Context Protocol vào `core-api` để LLM có thể gọi các API nội bộ.
+3. **AI Accountability Partner (System Runtime Agent)**: AI theo dõi thói quen, tự động kích hoạt API ẩn để đăng bài "Bóc phốt" hoặc "Khen thưởng" thay mặt user. Dùng LangGraph/Python orchestrator.
 
 ---
 
