@@ -31,7 +31,7 @@ Tạo môi trường phát triển local hoàn chỉnh và chuẩn hóa kiến t
 # Deliverables:
 1. **Monorepo Setup**: Nx hoặc Turborepo.
 2. **AI Agent Workflow**: Thiết lập thư mục `directives/` và `execution/` để quản trị hệ thống.
-3. **Local Infra (Docker Compose)**: PostgreSQL, Redis, Kafka, Elasticsearch.
+3. **Local Infra (Docker Compose)**: PostgreSQL, Redis, Kafka, Elasticsearch. *Lưu ý: Môi trường Local dùng Docker để dev, môi trường Production sẽ dùng AWS Serverless (API Gateway, Lambda) + Managed DB/Kafka (Neon, Upstash, MSK).*
 4. **Shared Packages**: `event-contracts`, `logger`.
 
 ---
@@ -58,9 +58,10 @@ Xây dựng Business Logic khổng lồ một cách gọn gàng trong một Mono
 Chuẩn bị cho tương lai phân tán bằng cách áp dụng Event-Driven ngay trong Monolith.
 
 # Deliverables:
-1. **Outbox Pattern**: `core-api` ghi sự kiện vào bảng Outbox cùng lúc ghi data.
+1. **Outbox Pattern**: `core-api` ghi sự kiện vào bảng Outbox cùng lúc ghi data nhằm đảm bảo Transaction Guarantee trong Microservices.
 2. **Kafka Integration**: Đọc Outbox và đẩy sự kiện lên các Kafka topics (`core-events`).
-3. **Trust Score Events**: Mọi hành động tương tác (hoàn thành task, bị report) đều đẩy event lên Kafka để tính điểm uy tín.
+3. **Saga Pattern / Eventual Consistency**: Giải quyết tính nhất quán dữ liệu phân tán do không dùng Foreign Key (Loose Reference). Ví dụ: `auth-service` phát event `USER_DELETED`, `core-api` nghe và tự xóa Post.
+4. **Trust Score Events**: Mọi hành động tương tác đều đẩy event lên Kafka để tính điểm uy tín.
 
 ---
 

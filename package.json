@@ -10,6 +10,13 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
+    "db:push": "turbo run db:push",
+    "db:format": "turbo run db:format",
+    "db:studio": "turbo run db:studio",
+    "infra:up": "docker-compose up -d",
+    "infra:down": "docker-compose down",
+    "agent:up": "docker-compose -f docker-compose.agent.yml up -d",
+    "agent:down": "docker-compose -f docker-compose.agent.yml down",
     "lint": "turbo run lint",
     "test": "turbo run test",
     "format": "prettier --write \"**/*.{ts,tsx,md}\""

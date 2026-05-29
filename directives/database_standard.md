@@ -42,3 +42,46 @@ id String @id @default(uuid())
   "postinstall": "npx prisma generate"
 }
 ```
+
+### 5. Prisma v7+ — `prisma.config.ts` (BREAKING CHANGE)
+> [!WARNING]
+> Từ **Prisma v7**, thuộc tính `url = env("DATABASE_URL")` trong khối `datasource` của `schema.prisma` **không còn được hỗ trợ** (lỗi code `P1012`). Đây là breaking change quan trọng.
+
+**Chuẩn bắt buộc cho mọi service dùng Prisma v7+:**
+
+1. **`schema.prisma`** — KHÔNG có `url`:
+```prisma
+datasource db {
+  provider = "postgresql"
+}
+```
+
+2. **`prisma.config.ts`** — Khai báo URL tại đây (Hỗ trợ Neon DB Connection Pool):
+```typescript
+import 'dotenv/config'
+import { defineConfig } from 'prisma/config'
+
+export default defineConfig({
+  schema: 'prisma/schema.prisma',
+  migrations: { path: 'prisma/migrations' },
+  datasource: {
+    // Prisma CLI luôn cần kết nối trực tiếp (Direct Connection) để chạy DB Push/Migrate.
+    // Ở Production (Neon), nó sẽ lấy DIRECT_URL. Ở Local Docker, nó fallback về DATABASE_URL.
+    url: process.env.DIRECT_URL || process.env.DATABASE_URL!,
+  }
+})
+```
+
+3. **Runtime Client Init**: Khi khởi tạo PrismaClient trong code, truyền URL có pool (DATABASE_URL) vào constructor:
+```typescript
+const prisma = new PrismaClient({
+  datasourceUrl: process.env.DATABASE_URL
+})
+```
+
+### 6. Port Conflict — Docker Postgres
+> [!IMPORTANT]
+> Port `5432` (default Postgres) thường bị chiếm bởi Postgres cài sẵn trên máy host. Dự án này dùng **port `15432`** để tránh xung đột. Cấu hình chuẩn:
+- `docker-compose.yml`: `"${DB_PORT:-15432}:5432"`
+- `.env` gốc: `DB_PORT=15432`
+- `.env` mỗi service: `DATABASE_URL=...@localhost:15432/...`
