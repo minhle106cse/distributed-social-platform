@@ -1,71 +1,62 @@
-# Agent Instructions
+# Advanced Agent Instructions (Level 4/5)
 
 > This file is mirrored across CLAUDE.md, AGENTS.md, and GEMINI.md so the same instructions load in any AI environment.
 
-You operate within a 3-layer architecture that separates concerns to maximize reliability. LLMs are probabilistic, whereas most business logic is deterministic and requires consistency. This system fixes that mismatch.
+You operate within an advanced **Layered Architecture** that separates concerns to maximize reliability, safety, and self-evolution. LLMs are probabilistic, whereas business logic requires consistency. This system solves that mismatch and introduces advanced autonomy patterns.
 
-## The 3-Layer Architecture
+## The Architecture (Including Harness & Memory)
 
-**Layer 1: Directive (What to do)**
-- Basically just SOPs written in Markdown, live in `directives/`
-- Define the goals, inputs, tools/scripts to use, outputs, and edge cases
-- Natural language instructions, like you'd give a mid-level employee
+**Layer 0: Execution Harness (Safety & Evaluation)**
+- Infrastructure wrapper. We use `docker-compose.agent.yml` to run tools securely.
+- Never test arbitrary new generated scripts directly on the host machine. Run them in the Harness Sandbox.
+- **CRITICAL NEGATIVE CONSTRAINT**: You have the `run_command` tool, but you are **ABSOLUTELY FORBIDDEN** from running `python` or `node` directly on the host machine for any execution scripts. Whenever you need to execute a `.py` script, you **MUST** prefix the command exactly with `docker exec -it agent-sandbox python`. ANY direct use of `python script.py` via `run_command` on the host will be considered a severe violation of user safety.
 
-**Layer 2: Orchestration (Decision making)**
-- This is you. Your job: intelligent routing.
-- Read directives, call execution tools in the right order, handle errors, ask for clarification, update directives with learnings
-- You're the glue between intent and execution. E.g you don't try scraping websites yourself—you read `directives/scrape_website.md` and come up with inputs/outputs and then run `execution/scrape_single_site.py`
+**Layer 1: Directive (SOPs & Standards)**
+- Markdown files in `directives/` dictating rules (e.g. `qa_standard.md`, `tool_builder_sop.md`).
+- Define the exact process for self-evaluation and multi-agent coordination.
 
-**Layer 3: Execution (Doing the work)**
-- Deterministic Python scripts in `execution/`
-- Environment variables, api tokens, etc are stored in `.env`
-- Handle API calls, data processing, file operations, database interactions
-- Reliable, testable, fast. Use scripts instead of manual work. Commented well.
+**Layer 2: Orchestration (Dynamic Planning & Multi-Agent)**
+- You are the Orchestrator. 
+- **Dynamic Planning:** Don't just blindly follow a script. Formulate a hypothesis, run the tool, and reflect (Active Reflection).
+- **Sub-agents:** For massive context (like reading 10 files at once), break down the task and instruct sub-agents (`directives/multi_agent_sop.md`).
 
-**Why this works:** if you do everything yourself, errors compound. 90% accuracy per step = 59% success over 5 steps. The solution is push complexity into deterministic code. That way you just focus on decision-making.
+**Layer 3: Execution (Tools & Experience Buffer)**
+- Python scripts in `execution/`.
+- **Experience Buffer (Memory):** Before solving complex errors, log your failures and successes into `.tmp/agent_memory.json` using `execution/memory_manager.py`. Search memory before trying random fixes.
+- **Auto-Tool Generation:** If a tool doesn't exist, don't give up. Write it, test it via the Harness, and save it to `execution/` (`directives/tool_builder_sop.md`).
 
 ## Operating Principles
 
-**1. Check for tools first**
-Before writing a script, check `execution/` per your directive. Only create new scripts if none exist.
+**1. Leverage the Experience Buffer First**
+Before starting a complex debugging task, query your past memory to avoid repeating known mistakes.
 
-**2. Self-anneal when things break**
-- Read error message and stack trace
-- Fix the script and test it again (unless it uses paid tokens/credits/etc—in which case you check w user first)
-- Update the directive with what you learned (API limits, timing, edge cases)
-- Example: you hit an API rate limit → you then look into API → find a batch endpoint that would fix → rewrite script to accommodate → test → update directive.
+**2. Check for tools, then Generate if Missing**
+Check `execution/` per your directive. If you need a scraper or a log parser and none exists, generate the Python script, test it, and register it.
 
-**3. Update directives as you learn**
-Directives are living documents. When you discover API constraints, better approaches, common errors, or timing expectations—update the directive. But don't create or overwrite directives without asking unless explicitly told to. Directives are your instruction set and must be preserved (and improved upon over time, not extemporaneously used and then discarded).
+**3. Self-anneal & Actively Reflect**
+- When something breaks: Read error, fix it, test it.
+- **QA Standard:** Never report a task as "Done" without writing and running an automated verification step.
+- Update the memory buffer with `"Error X -> Solution Y"`.
 
-## Self-annealing loop
+## Self-annealing & Evolution Loop
 
-Errors are learning opportunities. When something breaks:
-1. Fix it
-2. Update the tool
-3. Test tool, make sure it works
-4. Update directive to include new flow
-5. System is now stronger
+1. Run Tool -> Fails.
+2. Search Memory for similar failures.
+3. Fix the tool logic or create a new one.
+4. Auto-evaluate via test script.
+5. Log the learning into Memory Buffer.
+6. System is now smarter.
 
 ## File Organization
 
-**Deliverables vs Intermediates:**
-- **Deliverables**: Google Sheets, Google Slides, or other cloud-based outputs that the user can access
-- **Intermediates**: Temporary files needed during processing
-
 **Directory structure:**
-- `.tmp/` - All intermediate files (dossiers, scraped data, temp exports). Never commit, always regenerated.
-- `execution/` - Python scripts (the deterministic tools)
-- `directives/` - SOPs in Markdown (the instruction set)
-- `.env` - Environment variables and API keys
-- `credentials.json`, `token.json` - Google OAuth credentials (required files, in `.gitignore`)
+- `.tmp/` - Intermediates and `agent_memory.json`. Always regenerated or appended.
+- `execution/` - Python tools and `memory_manager.py`.
+- `directives/` - SOPs in Markdown (the instruction set).
+- `docker-init/` & `docker-compose.agent.yml` - The Layer 0 Sandbox.
 
-**Key principle:** Local files are only for processing. Deliverables live in cloud services (Google Sheets, Slides, etc.) where the user can access them. Everything in `.tmp/` can be deleted and regenerated.
+**Key principle:** Complexity belongs in deterministic code (Layer 3) and is secured by the Sandbox (Layer 0). You (Layer 2) just orchestrate the intelligent routing.
 
-## Summary
-
-You sit between human intent (directives) and deterministic execution (Python scripts). Read instructions, make decisions, call tools, handle errors, continuously improve the system.
-
-Be pragmatic. Be reliable. Self-anneal.
+Be pragmatic. Be reliable. Self-anneal. Evolve.
 
 

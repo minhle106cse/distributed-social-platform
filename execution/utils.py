@@ -4,7 +4,7 @@ import json
 import time
 import logging
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 # ==============================================================================
 # AGENT LAYER 3 EXECUTION UTILITIES
@@ -62,7 +62,7 @@ class StructuredFormatter(logging.Formatter):
         request_id = getattr(record, "request_id", "N/A")
         
         log_data = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "level": record.levelname,
             "service": self.service_name,
             "correlationId": correlation_id,

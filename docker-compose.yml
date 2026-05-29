@@ -67,6 +67,12 @@ services:
       CLUSTER_ID: 'ciWo7IWazngRchmPES6q5A=='
     volumes:
       - kafka_data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:${KAFKA_BROKER_PORT:-9092} > /dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
 
   # --------------------------------------------------------
   # 4. Elasticsearch (CQRS & Text Search)
@@ -84,6 +90,12 @@ services:
       - "${ELASTIC_PORT:-9200}:9200"
     volumes:
       - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
 
 volumes:
   postgres_data:

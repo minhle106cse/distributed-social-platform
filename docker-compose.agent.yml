@@ -1,0 +1,30 @@
+version: '3.8'
+
+# Agent Harness Layer 0
+# Môi trường chạy script độc lập để đảm bảo an toàn cho dự án chính.
+
+services:
+  agent-sandbox:
+    build:
+      context: .
+      dockerfile: docker-init/Dockerfile.agent
+    container_name: agent-sandbox
+    # Giới hạn tài nguyên để tránh loop vô hạn làm treo máy (Token/Compute Limiter)
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+    volumes:
+      # Map thư mục execution (Read-Only) để Agent có thể gọi script nhưng không sửa mã nguồn trực tiếp qua Sandbox.
+      # Việc sửa code Python phải làm ở môi trường ngoài.
+      - ./execution:/usr/src/app/execution:ro
+      # Map thư mục .tmp (Read/Write) để Agent xuất log, nhớ dài hạn (Memory), hoặc file nháp
+      - ./.tmp:/usr/src/app/.tmp:rw
+      # Map .env để load config
+      - ./.env:/usr/src/app/.env:ro
+      # Cấp quyền đọc (Read-Only) mã nguồn để Agent thực hiện phân tích
+      - ./apps:/usr/src/app/apps:ro
+      - ./packages:/usr/src/app/packages:ro
+
+    network_mode: "bridge" # Có thể đổi thành none nếu cần cắt mạng hoàn toàn khi test logic nội bộ

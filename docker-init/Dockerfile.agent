@@ -1,0 +1,32 @@
+# Môi trường thực thi Sandbox (Layer 0 Harness) cho Agent.
+# Image này cung cấp một môi trường cô lập, có sẵn Python và các dependencies cơ bản,
+# được cấu hình để Agent có thể chạy các script một cách an toàn mà không ảnh hưởng tới Host.
+
+FROM python:3.11-slim
+
+# Set các environment variables cơ bản
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV WORKDIR=/usr/src/app
+
+# Cài đặt các công cụ hệ thống cần thiết (nếu có)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR $WORKDIR
+
+# Agent có thể tự cài thêm các module Python cần thiết ở runtime
+# Tuy nhiên ta cài sẵn một số thư viện hay dùng
+RUN pip install --no-cache-dir \
+    requests \
+    python-dotenv \
+    pydantic
+
+# Tạo thư mục .tmp để map volume
+RUN mkdir -p /usr/src/app/.tmp
+
+# Mặc định sleep vô tận để container luôn chạy (giữ sandbox sống)
+# Harness (Agent) sẽ thực thi script bằng lệnh "docker exec" vào container này
+CMD ["sleep", "infinity"]
