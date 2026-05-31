@@ -17,7 +17,7 @@ Mọi microservice trong `apps/` phải tuân theo cấu trúc file sau:
 2. **`src/bootstrap/fastify.ts`**
    - Chứa hàm `setupFastify(app)`.
    - Bắt buộc phải khai báo bộ plugin bảo mật và tối ưu tiêu chuẩn:
-     - `@fastify/cors`: `{ origin: ['*'], credentials: true }`
+     - `@fastify/cors`: `{ origin: config.corsOrigins, credentials: true }` — **KHÔNG dùng `['*']`**, phải load từ env var (`CORS_ORIGINS`) để tránh lỗ hổng bảo mật (memory entry #8)
      - `@fastify/helmet`
      - `@fastify/compress`: `{ encodings: ['gzip', 'deflate', 'br'] }`
      - `@fastify/rate-limit`: `{ max: 100, timeWindow: '1 minute' }`
