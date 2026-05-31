@@ -32,17 +32,14 @@ export interface ITransactionManager {
 ### 2. The Context Manager (`common/database/transaction.context.ts`)
 ```typescript
 import { AsyncLocalStorage } from 'async_hooks';
-import type { PrismaClient } from '@/generated';
 
-export type PrismaTransactionClient = Parameters<Parameters<PrismaClient['$transaction']>[0]>[0];
+const transactionContext = new AsyncLocalStorage<unknown>();
 
-const transactionContext = new AsyncLocalStorage<PrismaTransactionClient>();
-
-export function getTx(): PrismaTransactionClient | undefined {
-  return transactionContext.getStore();
+export function getTx<T = unknown>(): T | undefined {
+  return transactionContext.getStore() as T | undefined;
 }
 
-export function runInTransaction<R>(tx: PrismaTransactionClient, callback: () => Promise<R>): Promise<R> {
+export function runInTransaction<R>(tx: unknown, callback: () => Promise<R>): Promise<R> {
   return transactionContext.run(tx, callback);
 }
 ```
@@ -159,3 +156,18 @@ CommandBus.execute(command)
 ```
 
 The order is critical: Retry wraps Transaction so a retry creates a fresh transaction.
+
+---
+
+## Folder Structure & Clean Architecture
+
+The CQRS implementation dictates a strict directory separation based on Hexagonal Architecture:
+
+1. **`src/common/cqrs/`**: Contains the abstract definition of Commands, Queries, Handlers, and Middlewares. **Rule:** No domain-specific logic and no infra-specific imports (e.g., Prisma) are allowed here.
+2. **`src/common/database/`**: Contains generic database abstractions (`ITransactionManager`, `transaction.context.ts`). **Rule:** Completely agnostic of the underlying ORM.
+3. **`src/modules/[module]/domain/`**: Contains Entities, Value Objects, and Repository Interfaces. **Rule:** Pure TypeScript. No imports from external libraries or infra.
+4. **`src/modules/[module]/application/`**: Contains Command Handlers and Query Handlers. **Rule:** Orchestrates domain logic using Interfaces. Never imports Prisma or HTTP Request objects.
+5. **`src/modules/[module]/infrastructure/`**: Contains concrete Repository implementations (e.g., `PrismaUserRepository`). **Rule:** This is where `getTx()` is called and cast to `PrismaClient` to interact with the database.
+6. **`src/modules/[module]/presentation/`**: Contains Fastify routes/controllers. **Rule:** Translates HTTP requests into Commands/Queries and pushes them to the `CommandBus`.
+
+By strictly enforcing this folder structure, the core business logic remains fully decoupled from HTTP, Database, and Framework specifics.

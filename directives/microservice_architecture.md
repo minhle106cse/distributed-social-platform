@@ -43,4 +43,5 @@ Nếu phát hiện một microservice vi phạm cấu trúc này, Agent phải:
 1. Báo cáo các điểm sai lệch.
 2. Tự động refactor lại các file về đúng cấu trúc trên.
 3. Đảm bảo config Fastify được sao chép y hệt như tiêu chuẩn.
-4. Chạy `npm run build` để xác nhận tính toàn vẹn.
+4. Đảm bảo cấu trúc thư mục bên trong (`src/modules/[module]/domain`, `application`, `infrastructure`, `presentation`) tuân thủ tuyệt đối quy tắc Hexagonal Architecture (như đã quy định tại `directives/cqrs_pattern.md`), áp dụng đồng bộ cho CẢ Fastify thuần và NestJS.
+5. Chạy `npm run build` để xác nhận tính toàn vẹn.
