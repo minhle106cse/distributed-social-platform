@@ -1,5 +1,12 @@
 import pino from 'pino';
 
+export interface ILogger {
+  info(msg: string, ...args: any[]): void;
+  error(msg: string, ...args: any[]): void;
+  warn(msg: string, ...args: any[]): void;
+  debug(msg: string, ...args: any[]): void;
+}
+
 export const createLogger = (serviceName: string) => {
   const isDevelopment = process.env.NODE_ENV !== 'production';
 
