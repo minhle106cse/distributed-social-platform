@@ -25,6 +25,15 @@
     "db:format": {
       "cache": false
     },
+    "db:migrate": {
+      "cache": false
+    },
+    "db:deploy": {
+      "cache": false
+    },
+    "db:generate": {
+      "cache": false
+    },
     "db:studio": {
       "cache": false,
       "persistent": true

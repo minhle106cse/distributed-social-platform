@@ -18,186 +18,243 @@ Tài liệu này đặc tả các endpoint giao tiếp chính giữa **Web Clien
 
 ---
 
-## 2. HABIT & GARDEN ENDPOINTS
+## 2. PRODUCTIVITY — EMOTION CHECK-IN & PLANT GUARDIAN
 
-### 2.1. Lấy danh sách Thói quen (kèm trạng thái mầm cây)
-- **Endpoint:** `GET /habits/today`
-- **Mô tả:** Lấy danh sách thói quen cần làm trong ngày. Backend sẽ tự động nội suy xem có đang trong "Grace Period" (Sleepy Mode) hay không dựa vào Timestamp của Server.
-- **Header:** `Timezone-Offset` (Phục vụ đối soát giờ địa phương).
-- **Response (200 OK):**
-  ```json
-  "data": [
-    {
-      "id": "uuid-1",
-      "name": "Đọc sách 30 phút",
-      "type": "BUILD",
-      "plantState": "GROWING",
-      "isSleepy": false, // Trả về true nếu đang trong Grace Period (00:00 - 10:00)
-      "exp": 45,
-      "isCompleted": false
-    }
-  ]
-  ```
-
-### 2.2. Check-in Thói quen
-- **Endpoint:** `POST /habits/{habit_id}/check-in`
-- **Payload:** `{ "note": "Hôm nay tôi đã đọc cuốn Sapiens" }` (Note là optional).
+### 2.1. Lấy trạng thái Cây hôm nay
+- **Endpoint:** `GET /productivity/plant`
+- **Mô tả:** Lấy trạng thái Cây Vệ Thần và thông tin Check-in hôm nay.
+- **Header:** `Timezone-Offset` (phục vụ đối soát giờ địa phương).
 - **Response (200 OK):**
   ```json
   "data": {
-    "expGained": 10,
-    "karmaEarned": 10, // Sẽ trả về 0 nếu user đã chạm Daily Cap
-    "currentState": "GROWING",
-    "leveledUp": false
-  }
-  ```
-- **Xử lý Grace Period:** Nếu Client gọi API này lúc 8:00 sáng (cho ngày hôm qua), Backend sẽ tự động xử lý Logic "Early Bird" (Đánh thức cây).
-
-### 2.3. Báo cáo Phá giới (Quitting Habit Lapse)
-- **Endpoint:** `POST /habits/{habit_id}/lapse`
-- **Mô tả:** Dành riêng cho Habit `type: QUIT`. Chuyển trạng thái cây sang POISONED.
-- **Response (200 OK):**
-  ```json
-  "data": {
-    "currentState": "POISONED",
-    "message": "Cây Vệ thần đã trúng độc. Hãy dùng Karma để giải độc nhé."
+    "plantId": "uuid-plant",
+    "state": "GROWING",
+    "currentStreak": 14,
+    "highestStreak": 21,
+    "activeCheckinDays": 14,
+    "hasCheckedInToday": false,
+    "nextMilestone": { "days": 21, "reward": "STARDUST" }
   }
   ```
 
-### 2.4. Giải Độc Cây Vệ thần (Cure)
-- **Endpoint:** `POST /habits/{habit_id}/cure`
-- **Mô tả:** Tiêu hao Karma để đổi trạng thái POISONED về lại GROWING (Chạy qua Saga Pattern tương tự Gacha).
-- **Response (200 OK):**
-  ```json
-  "data": {
-    "karmaSpent": 50,
-    "currentState": "GROWING"
-  }
-  ```
-
----
-
-## 3. ISOMETRIC GARDEN (Bản đồ Khu vườn)
-
-### 3.1. Lấy tọa độ khu vườn
-- **Endpoint:** `GET /garden/layout`
-- **Mô tả:** Lấy danh sách vật phẩm và tọa độ trên lưới CSS Grid 2D.
-- **Response (200 OK):**
-  ```json
-  "data": {
-    "weather": "SUNNY",
-    "gridSize": { "x": 6, "y": 6 },
-    "placements": [
-      {
-        "itemId": "item-uuid-1",
-        "name": "Chậu Đất Nung",
-        "x": 2,
-        "y": 3,
-        "layer": 0,
-        "metadata": { "assetUrl": "/assets/pots/clay.png" } // Metadata từ InventoryItem
-      }
-    ]
-  }
-  ```
-
-### 3.2. Cập nhật vị trí kéo thả (Drag & Drop)
-- **Endpoint:** `PUT /garden/placement`
+### 2.2. Điểm danh Cảm xúc hằng ngày (Core Check-in)
+- **Endpoint:** `POST /productivity/checkin`
+- **Mô tả:** Hành động cốt lõi duy nhất mỗi ngày. Cập nhật streak, PlantGuardian, Wallet. Text Note được tách riêng sang Kafka/NoSQL.
 - **Payload:**
   ```json
   {
-    "itemId": "item-uuid-1",
-    "x": 4,
-    "y": 1
+    "emotionGrade": "B",
+    "note": "Hôm nay tôi cảm thấy khá hơn" // Optional
   }
   ```
-- **Response (200 OK):** Backend xác nhận vị trí lưu thành công. (Client đã tự check collision trước khi gọi).
+- **Response (200 OK):**
+  ```json
+  "data": {
+    "expGained": 15,
+    "karmaEarned": 20,
+    "newStreak": 15,
+    "activeCheckinDays": 15,
+    "plantState": "GROWING",
+    "milestoneReached": null
+  }
+  ```
+- **Lưu ý:** `karmaEarned` trả về 0 nếu đã chạm Daily Cap. Nếu `activeCheckinDays` đạt mốc 7/21/66, `milestoneReached` sẽ có giá trị và Bụi Sao được cộng.
+
+### 2.3. Rã đông Cây (Unfreeze / Hibernation Recovery)
+- **Endpoint:** `POST /productivity/plant/unfreeze`
+- **Mô tả:** Dùng Karma để rã đông Cây đang ở trạng thái `HIBERNATING`. Sau khi rã đông, Cây vào Hibernation Cooldown. Chi phí tăng theo Streak nhưng có Cap trần.
+- **Response (200 OK):**
+  ```json
+  "data": {
+    "karmaSpent": 80,
+    "plantState": "GROWING",
+    "cooldownActive": true,
+    "message": "Cây đang Dưỡng thương. Đừng bỏ điểm danh 3 ngày tới nhé!"
+  }
+  ```
 
 ---
 
-## 4. KINH TẾ & GACHA (Economy)
+## 3. KINH TẾ (Economy — Wallet, Gacha, Crafting)
 
-### 4.1. Lấy thông tin Ví
+### 3.1. Lấy thông tin Ví
 - **Endpoint:** `GET /economy/wallet`
 - **Response (200 OK):**
   ```json
   "data": {
-    "karma": 1250,
-    "stardustSpring": 40,
-    "legacyStardust": 15
+    "karmaBalance": 1250,
+    "stardustBalance": 40,
+    "pendingStash": 0
   }
   ```
 
-### 4.2. Quay Gacha
-- **Endpoint:** `POST /economy/gacha/roll`
-- **Mô tả:** Giao dịch trừ Karma và sinh vật phẩm ngẫu nhiên (chạy qua Saga Pattern).
-- **Payload:** `{ "banner_id": "spring-banner" }`
+### 3.2. Refresh Thương Nhân Thần Bí (Spend Karma)
+- **Endpoint:** `POST /economy/merchant/refresh`
+- **Mô tả:** Dùng Karma để làm mới danh sách hàng của Thương nhân.
+- **Response (200 OK):**
+  ```json
+  "data": {
+    "karmaSpent": 50,
+    "newInventory": [
+      { "itemType": "GACHA_BOX", "rarity": "RARE", "price": { "currency": "STARDUST", "amount": 30 } },
+      { "itemType": "DECORATION", "rarity": "COMMON", "price": { "currency": "STARDUST", "amount": 10 } }
+    ]
+  }
+  ```
+
+### 3.3. Mua vật phẩm từ Thương Nhân (Spend Stardust)
+- **Endpoint:** `POST /economy/merchant/purchase`
+- **Mô tả:** Dùng Bụi Sao để mua. Chạy Saga Pattern với Optimistic Locking. Nếu kết quả không ra Key, tự động cộng 1 Mảnh Vỡ Không gian (Pity System).
+- **Payload:** `{ "itemId": "merchant-slot-uuid" }`
+- **Response (200 OK):**
+  ```json
+  "data": {
+    "stardustSpent": 30,
+    "reward": { "itemType": "GACHA_BOX", "rarity": "RARE" },
+    "pity": { "keyFragmentsEarned": 1, "totalKeyFragments": 47 }
+  }
+  ```
+
+### 3.4. Mở Rương Gacha
+- **Endpoint:** `POST /economy/gacha/open`
+- **Mô tả:** Mở Rương Gacha từ Inventory. Seed-based RNG: Client gửi `seed` đã nhận trước từ Server để animation chạy ngay lập tức.
+- **Payload:** `{ "inventoryItemId": "gacha-box-uuid", "seed": "cryptographic-seed-hash" }`
+- **Response (200 OK):**
+  ```json
+  "data": {
+    "reward": { "itemType": "KEY", "rarity": "LEGENDARY" },
+    "pity": { "keyFragmentsEarned": 0, "totalKeyFragments": 47 }
+  }
+  ```
+
+### 3.5. Lò Rèn — Đúc vật phẩm (Crafting/Merging)
+- **Endpoint:** `POST /economy/forge`
+- **Mô tả:** Online-Only. Đốt 5 vật phẩm Common + Karma/Stardust để rèn ra 1 Epic. Hoặc đúc 100 Key Fragment thành 1 Key.
+- **Payload:**
+  ```json
+  {
+    "recipeType": "MERGE_COMMON_TO_EPIC",
+    "ingredientIds": ["uuid-1", "uuid-2", "uuid-3", "uuid-4", "uuid-5"]
+  }
+  ```
+- **Response (200 OK):**
+  ```json
+  "data": {
+    "consumed": 5,
+    "result": { "itemType": "DECORATION", "rarity": "EPIC", "name": "Đèn Lồng Huyền Ảo" }
+  }
+  ```
+
+### 3.6. Mở khóa Vùng Đất Mới (Legendary Gate)
+- **Endpoint:** `POST /economy/unlock-area`
+- **Mô tả:** Dùng số Key cần thiết để mở khóa một vùng đất mới.
+- **Payload:** `{ "areaId": "snow-greenhouse" }`
+- **Response (200 OK):**
+  ```json
+  "data": {
+    "keysSpent": 3,
+    "areaUnlocked": { "id": "snow-greenhouse", "name": "Nhà Kính Tuyết", "theme": "SNOW" }
+  }
+  ```
+
+---
+
+## 4. SOCIAL — NEIGHBORHOOD & FRIENDS
+
+### 4.1. Lấy thông tin Khu phố
+- **Endpoint:** `GET /social/neighborhood`
+- **Response (200 OK):**
+  ```json
+  "data": {
+    "id": "neighborhood-uuid",
+    "name": "Vườn Hoa Mộng",
+    "vibeScore": 850,
+    "monumentEnergy": 72,
+    "members": [
+      { "userId": "uuid-a", "username": "Minh", "role": "MAYOR", "contribution": 20, "lastOnline": "2026-06-02" },
+      { "userId": "uuid-b", "username": "Lan", "role": "CITIZEN", "contribution": 15, "lastOnline": "2026-06-02" }
+    ]
+  }
+  ```
+
+### 4.2. Tưới hộ cây bạn (Empathetic Watering)
+- **Endpoint:** `POST /social/neighbors/{neighbor_id}/water`
+- **Response (200 OK):**
+  ```json
+  "data": {
+    "karmaRewarded": 5,
+    "message": "Bạn đã giúp cây của Lan thoát khỏi đóng băng!"
+  }
+  ```
+
+### 4.3. Bảo lãnh Streak bạn bè (Karma Bailout)
+- **Endpoint:** `POST /social/friends/{friend_id}/bailout`
+- **Mô tả:** Trích Karma của mình để rã đông Streak cho bạn. Chạy qua Saga Pattern (trừ Karma người bảo lãnh, cứu Streak người được bảo lãnh).
+- **Payload:** `{ "karmaAmount": 100 }`
 - **Response (200 OK):**
   ```json
   "data": {
     "karmaSpent": 100,
-    "reward": {
-      "itemId": "new-uuid",
-      "rarity": "EPIC",
-      "name": "Bonsai Khởi Nguyên"
-    }
+    "friendStreakRestored": true,
+    "message": "Bạn đã cứu được chuỗi điểm danh của Lan!"
   }
   ```
-- **Response (400 Bad Request):** `"error": "INSUFFICIENT_FUNDS"`
 
----
-
-## 5. SOCIAL HEALING
-
-### 5.1. Tưới hộ cây (Empathetic Watering)
-- **Endpoint:** `POST /social/friends/{friend_id}/water`
+### 4.4. Tặng quà Cảm xúc (Emotional Gift)
+- **Endpoint:** `POST /social/neighbors/{neighbor_id}/gift`
+- **Payload:** `{ "inventoryItemId": "wind-chime-uuid" }`
 - **Response (200 OK):**
   ```json
   "data": {
-    "karmaRewarded": 5, // Trả về 0 nếu user đã chạm Daily Cap
-    "message": "Bạn đã cứu cái cây của Alex khỏi héo úa!"
+    "giftSent": true,
+    "message": "Chuông gió đã được gửi đến vườn của Lan."
   }
   ```
 
-### 5.2. Ghép cặp Ẩn danh (Match-making)
-- **Endpoint:** `GET /social/friends/match`
-- **Mô tả:** Hệ thống phân tích (Vector Search) tìm kiếm những user ẩn danh có cùng mục tiêu thói quen để đề xuất.
-- **Response (200 OK):**
-  ```json
-  "data": [
-    {
-      "matchId": "uuid-match-1",
-      "sharedHabit": "Không uống trà sữa",
-      "message": "Một người bạn ẩn danh cũng đang cố gắng giống bạn."
-    }
-  ]
-  ```
-
-### 5.3. Tạo Link Kết bạn (Invite-only)
+### 4.5. Tạo Link Kết bạn (Invite-only)
 - **Endpoint:** `POST /social/friends/invite`
 - **Response (200 OK):**
   ```json
   "data": {
     "inviteCode": "GROW-XYZ123",
+    "qrCodeUrl": "/api/v1/social/friends/invite/qr/GROW-XYZ123",
     "expiresIn": 86400
+  }
+  ```
+
+### 4.6. Gửi Thư mời Định cư Khu phố (Neighborhood Invite)
+- **Endpoint:** `POST /social/neighborhood/invite`
+- **Payload:** `{ "friendId": "uuid-b" }`
+- **Response (200 OK):** Xác nhận thư mời đã được gửi.
+
+### 4.7. Đuổi Thành viên (Mayor Eviction)
+- **Endpoint:** `DELETE /social/neighborhood/members/{member_id}`
+- **Mô tả:** Chỉ Thị trưởng (MAYOR) được phép gọi. Thành viên bị đuổi mất trắng `currentCycleContribution` (Sunk Cost, không hoàn trả).
+- **Response (200 OK):**
+  ```json
+  "data": {
+    "evicted": true,
+    "contributionForfeited": 35
   }
   ```
 
 ---
 
-## 6. OFFLINE SYNC
+## 5. OFFLINE SYNC
 
-### 6.1. Đồng bộ Hàng đợi Cục bộ (Offline Queue Sync)
+### 5.1. Đồng bộ Hàng đợi Cục bộ (Offline Queue Sync)
 - **Endpoint:** `POST /sync/offline-queue`
-- **Mô tả:** Nhận một mảng các actions đã thực hiện khi offline (ví dụ: check-in thói quen) và xử lý theo lô (batch processing).
+- **Mô tả:** Nhận mảng các actions đã thực hiện khi offline và xử lý theo lô. OCC kiểm tra version — nếu xung đột, Karma được hoàn vào Pending Stash.
 - **Payload:**
   ```json
-  "data": {
+  {
     "actions": [
       {
-        "type": "CHECK_IN",
-        "habitId": "uuid-1",
-        "timestamp": "2023-10-27T08:30:00Z",
-        "note": "Check-in trên tàu điện ngầm"
+        "type": "EMOTION_CHECKIN",
+        "plantVersion": 5,
+        "payload": { "emotionGrade": "C", "note": "Check-in trên tàu điện ngầm" },
+        "timestamp": "2026-06-02T08:30:00Z",
+        "idempotencyKey": "uuid-action-1"
       }
     ]
   }
@@ -206,6 +263,8 @@ Tài liệu này đặc tả các endpoint giao tiếp chính giữa **Web Clien
   ```json
   "data": {
     "processedCount": 1,
-    "failedCount": 0
+    "failedCount": 0,
+    "conflicts": [],
+    "pendingStashAdded": 0
   }
   ```

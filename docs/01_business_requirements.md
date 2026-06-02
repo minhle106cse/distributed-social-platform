@@ -1,111 +1,85 @@
-# 💼 BUSINESS REQUIREMENTS (YÊU CẦU NGHIỆP VỤ & TÂM LÝ HỌC NGƯỜI DÙNG)
+# 💼 BUSINESS REQUIREMENTS (YÊU CẦU NGHIỆP VỤ)
 
-Tài liệu này định nghĩa "Phần Hồn" của **Distributed Social Productivity Platform - Phiên bản "GrowthGarden V2" (Cozy & Healing)**. 
-Ứng dụng từ bỏ các mô hình ép buộc, trừng phạt hoặc mạng xã hội khoe khoang để hướng tới một trải nghiệm **"Chữa lành, Thẩm mỹ (Aesthetic) và Gắn bó Cảm xúc (Emotional Attachment)"**.
+Tài liệu này định nghĩa "Phần Hồn" của **GrowthGarden V2 (Aesthetic Social Game)**. 
 
-Lấy cảm hứng từ các tựa game Cozy (Animal Crossing, Tamagotchi), ứng dụng biến việc phát triển bản thân thành một hành trình chăm sóc một khu vườn nhỏ, nơi sự thấu cảm (Empathy) là chìa khóa giữ chân người dùng.
+Khẳng định cốt lõi: **Đây không phải là ứng dụng quản lý công việc tự kỷ. Chữa lành mà chơi một mình thì vô vị.** Ứng dụng này sinh ra để người dùng và hội bạn thân cùng nhau ghi nhận nhật ký cảm xúc hằng ngày (Daily Emotion Journaling), gắn kết thông qua một hệ sinh thái nông trại mang đậm tính thẩm mỹ (Aesthetic) và không hề gượng ép (Non-cringe).
 
-Hệ sinh thái được chia thành 3 Trụ Cột (Pillars) chính:
-
----
-
-# 🏛️ TRỤ CỘT 1: TAMAGOTCHI HABITS (Sự gắn bó cảm xúc cá nhân)
-
-Thay vì dọa nạt người dùng bằng việc trừ điểm hay mất chuỗi (Streak), chúng ta sử dụng "Sự thương xót" để tạo động lực.
-
-## 1.1. Sinh linh Thói quen (Habit Pets/Plants)
-- **Cơ chế:** Mỗi thói quen (VD: Học Tiếng Anh) là một mầm cây có linh hồn. **Giới hạn Vùng Đất (Zone Limits):** Để tối ưu UI/UX và tránh quá tải không gian, mỗi Khu vườn chỉ chứa tối đa 3-5 thói quen. Muốn trồng thêm, người dùng phải dùng Karma để mở khóa Khu vườn mới.
-- **Sự thấu cảm & Loss Aversion:** 
-  - Nếu người dùng quên làm task, họ không bị "Shadowban" hay reset Streak. Thay vào đó, mầm cây sẽ đổi trạng thái sang **Héo úa (Sad/Wilted)** kèm theo biểu cảm ủ rũ.
-  - Người dùng không mở app vì sợ bị phạt, họ mở app vì *không muốn thấy cái cây bé nhỏ của mình buồn*.
-  - Hành động hoàn thành task = **Tưới nước / Vuốt ve**. Cây sẽ vui vẻ, lấp lánh trở lại và dần lớn lên.
-
-## 1.2. Nhật ký Thời tiết (Emotion Weather)
-- Không chỉ là log cảm xúc khô khan, tâm trạng của người dùng quyết định **Thời tiết** của toàn bộ khu vườn ngày hôm đó (Nắng đẹp, Cầu vồng, Mưa phùn, Sương mù).
-- **Phần thưởng của nỗi buồn (Tránh vòng lặp trầm cảm):** Thay vì làm cây mọc chậm lại (trừng phạt tâm lý), nếu trời mưa liên tục, cơn mưa sẽ tự động "tưới nước" cho cây (không cần làm task cây vẫn không héo). Nỗi buồn còn có tỷ lệ sinh ra "Nấm phát sáng" (vật phẩm hiếm). Sự an ủi này giúp người dùng nhận ra nỗi buồn của họ cũng tạo ra giá trị.
-
-## 1.3. Onboarding & Hiệu ứng Thỏa mãn tức thì (Instant Gratification)
-- **Cơ chế 3 ngày đầu:** Để người dùng không bị nản khi chờ cây lớn, trong 3 ngày đầu tiên, mọi tương tác đều tạo ra kết quả ngay lập tức (VD: Tưới nước lần đầu cây nảy mầm và nở hoa ngay lập tức).
-- **Phần thưởng khởi đầu:** Tặng ngay một "Hạt giống hiếm" hoặc "Phông nền thời tiết" khi hoàn thành chuỗi 3 ngày đầu. Điều này tạo ra động lực mạnh mẽ để họ gắn bó qua giai đoạn Onboarding - khoảng thời gian dễ bỏ cuộc nhất.
-
-## 1.4. Trạng thái Ngủ đông (Hibernation vs Permadeath)
-- Nếu người dùng bỏ app quá 7 ngày, khu vườn bước vào **Trạng thái Ngủ đông (Overgrown Garden):** Cỏ dại mọc um tùm, dây leo bao phủ, tiến trình phát triển bị đóng băng (không chết vĩnh viễn để tránh gây áp lực tội lỗi).
-- **Dọn dẹp mùa xuân (Decoupled Spring Cleaning):** Khi quay lại, thay vì bắt người dùng thực hiện toàn bộ 5 thói quen cùng lúc (gây áp lực quá tải), họ chỉ cần chọn ra 1 **Thói quen Cốt lõi (Keystone Habit)**. Chỉ cần duy trì thói quen duy nhất này trong 3 ngày liên tiếp, toàn bộ băng giá và cỏ dại sẽ bị phá vỡ, khu vườn được rã đông. Bước đệm tâm lý này giúp họ lấy lại động lực một cách nhẹ nhàng.
-
-## 1.5. Cơ chế Ân xá (Grace Period & Hồi tố)
-- **Vấn đề:** Người dùng đã làm thói quen ngoài đời thực nhưng mệt quá ngủ quên, không mở app log. Sáng hôm sau thấy cây héo sẽ sinh ra sự phẫn nộ và bất công.
-- **Giải pháp - Grace Period (UI Ngái ngủ & Múi giờ):** Cung cấp "Quyền Hồi tố" đến 10h sáng hôm sau. Backend quản lý bằng múi giờ gốc (Primary Timezone) do user thiết lập để chống hack đổi giờ. Từ 00:00 đến 10:00, UI ở trạng thái "Ngái ngủ" (Pending) để chờ user. 
-  - *Đánh thức Cây (Early Bird):* Trạng thái Ngái ngủ chỉ là hiển thị. Nếu user dậy sớm (ví dụ 5:30 sáng) và làm task, cây lập tức thức giấc và nhận kinh nghiệm bình thường, không cản trở người có kỷ luật.
-  - *Dịch chuyển Múi giờ (Relocation):* Không theo dõi GPS ngầm (không yêu cầu quyền Web Geolocation API). Thay vào đó, khi người dùng chủ động truy cập Web App và check-in, hệ thống sẽ so sánh Timestamp của Trình duyệt (Browser) và Server. Nếu lệch quá 2 tiếng trong 3 lần check-in liên tiếp, hệ thống mới hiển thị pop-up gợi ý cập nhật Primary Timezone (Giới hạn đổi tối đa 2 lần/năm).
-- **Giới hạn Bình tưới Thời gian (Hard Cap):** Thỉnh thoảng Cụ Rùa bán "Bình tưới quay ngược thời gian". Để chống lạm dụng, vật phẩm này là Unique: Túi đồ chỉ chứa tối đa 1 bình, và chỉ bán 2 lần/tháng.
-
-## 1.6. Thói quen Từ bỏ (Quitting Habits & Guardian Plants)
-- **Vấn đề:** Nhiều người dùng tìm đến ứng dụng để "cai" thói quen xấu (ngừng thức khuya, bỏ trà sữa). Việc ép luồng "từ bỏ" vào cơ chế "tưới nước cho cây lớn" là khiên cưỡng và sai logic.
-- **Giải pháp - Cây Vệ Thần (Guardian Plant):** Các thói quen cần từ bỏ sẽ được đại diện bởi các Sinh vật / Cây Vệ thần.
-  - *Vòng đời Task đảo ngược:* Hệ thống không ghi nhận thành tựu ngay khi bấm nút. User chỉ nhận điểm khi kết thúc ngày (00:00) mà KHÔNG có báo cáo vi phạm. Lúc đó, cây sẽ tự sinh ra "Khiên năng lượng" hoặc nở hoa.
-  - *Trạng thái Trúng độc:* Nếu lỡ phá giới (uống trà sữa), cây không héo úa (để tránh tạo áp lực tiêu cực kép), mà rơi vào trạng thái "Trúng độc". User phải dùng điểm Karma để mua thuốc giải cứu cây. Thiết kế này biến sự trừng phạt thành sự bảo vệ.
-
-## 1.7. Trải nghiệm Chữa lành Không Gián đoạn (Offline-First)
-- **Vấn đề:** Người dùng đang trên tàu điện ngầm hoặc vùng sóng yếu, muốn check-in thói quen nhưng nhận được thông báo "Lỗi kết nối mạng". Cảm xúc "chữa lành" sẽ bị phá vỡ ngay lập tức.
-- **Giải pháp - Optimistic UI:** Giao diện ứng dụng phải phản hồi lập tức. Ngay khi bấm "Hoàn thành", cây lập tức lấp lánh và nhận EXP (Optimistic Update). Ở dưới ngầm, hệ thống đẩy thao tác này vào Hàng đợi Cục bộ (Local Queue) và tự động đồng bộ (Background Sync) với Backend khi có mạng trở lại, đảm bảo sự mượt mà tuyệt đối.
+Hệ thống được chia thành 3 Trụ Cột (Pillars) sắc bén:
 
 ---
 
-# 🏛️ TRỤ CỘT 2: BẢN ĐỒ KHU PHỐ (The Cozy Social Island)
+# 🏛️ TRỤ CỘT 1: KINH TẾ NÔNG TRẠI (Farming & Aesthetic Economy)
 
-Loại bỏ hoàn toàn Feed "Tin tức" cuộn dọc (nhàm chán và dễ gây áp lực đồng trang lứa). Mạng xã hội giờ đây là một sự tương tác không gian.
+Vòng lặp kinh tế là mồi nhử tạo ra sự "Nghiện" lành mạnh. Người dùng điểm danh cảm xúc không phải vì sợ bị phạt, mà vì khao khát có một khu vườn đẹp độc nhất vô nhị.
 
-## 2.1. Thăm Vườn (Garden Hopping) & Tưới Hộ (Empathetic Help)
-- **Cơ chế:** Người dùng không "đăng bài". Khu vườn của họ chính là profile của họ. Người dùng khác có thể "ghé thăm" vườn của bạn bè.
-- **Tương tác chữa lành (Chống Lạm dụng & Free-rider):**
-  - Nếu A ốm không vào app, cây héo. B ghé thăm có thể dùng Nước của mình để **Tưới hộ**.
-  - **Giới hạn Cân bằng:** Nước tưới hộ chỉ giúp cây của A *cầm cự* (không héo thêm), nhưng KHÔNG làm cây lớn lên. Chỉ có "Nước chính chủ" mới kích hoạt sự phát triển. Mỗi người dùng chỉ được tưới hộ tối đa 3 lần/ngày để tránh tình trạng nhóm bạn "cày Karma chéo" bỏ quên thói quen thật.
+## 1.1. Pháo đài Tiền tệ Kép (Karma & Bụi Sao)
+- Hệ thống phân định rạch ròi 2 loại tiền tệ để đập tan lỗ hổng "cày clone rửa đồ".
+- **Karma (Tiền mềm):** Nhận được hằng ngày qua việc Điểm danh cảm xúc. Chỉ dùng để hỗ trợ như: làm mới (refresh) Thương nhân thần bí, rã đông/khởi động lại chuỗi, hoặc bảo lãnh cứu giúp bạn bè.
+- **Bụi Sao (Tiền cứng):** Nhận được rất hạn chế (rớt ra khi đạt các mốc chuỗi lớn như 7, 21, 66 ngày, rớt từ Rương Co-op, hoặc quà AI NPC). Đây là điều kiện BẮT BUỘC để mua trực tiếp vật phẩm trong Shop Thương nhân hoặc nâng cấp vật phẩm lên phẩm chất cao hơn theo tỷ lệ nhất định.
+- **Gieo mầm Cảm xúc & Thu hoạch:** Hành trình tâm lý của người dùng được đại diện bởi một mầm cây đồ họa Indie/Cozy. Mỗi ngày người dùng **Điểm danh bằng cách chọn Cảm xúc (A-F) kèm Note** -> Cây lập tức nhận EXP và rớt ra phần thưởng nhỏ là Karma. Điểm danh càng đều, chuỗi (Streak) càng cao thì lượng Karma nhận được mỗi ngày càng lớn. Khi đạt các mốc chuỗi quan trọng (7, 21, 66 ngày), cây hóa Cổ thụ và rớt ra **Bụi Sao**. Người dùng có thể chuyển Cổ Thụ vào Nhà Kính Kỷ Niệm.
 
-## 2.2. Cây Thần Đồng Đội (Co-op World Tree)
-- Thay vì các nhóm "Thi đua" căng thẳng, một nhóm bạn có thể cùng nhau trồng chung một Cây Thần ở trung tâm khu phố.
-- **Đóng góp cân bằng (Fair-play):** Tránh tình trạng 1 người gánh 90% nước. Cây Thần có các nhánh rẽ khác nhau. Nhánh của ai người nấy tưới, cây chỉ tiến hóa (upgrade form) khi TẤT CẢ các nhánh đều đạt mốc yêu cầu.
-- **Xử lý Dead Branch (Khối tạ):** Nếu một thành viên bỏ app quá 7 ngày, khu vườn của họ rơi vào Ngủ đông. Nhánh cây của họ trên Cây Thần sẽ hóa thành "Nhánh Tinh Linh" (Ghost Branch) - trong suốt. Hệ thống TẠM THỜI LOẠI TRỪ nhánh này khỏi điều kiện tiến hóa của Cây Thần để những người còn lại vẫn có thể lên cấp.
-- **Chống Thao túng (Catch-up Lock):** Để chống việc 3 người cố tình nghỉ để "báo" 2 người gánh, sau đó quay lại nhận thưởng: Khi Nhánh Tinh Linh tái kết nối với một Cây Thần ĐÃ tiến hóa, người dùng đó sẽ bị **Khóa phần thưởng**. Họ buộc phải thực hiện chuỗi "Tưới nước bù" (ví dụ: làm task 5 ngày liên tục) để nhánh của họ bắt kịp hình thái mới của Cây Thần thì mới được nhận thưởng.
+## 1.2. Thương Nhân Thần Bí (Gacha & Tiêu thụ Tiền tệ)
+- Có Karma rồi làm gì? Dùng Karma để **Refresh (làm mới)** cửa hàng của NPC **Thương nhân Thần bí**.
+- Để MUA vật phẩm trong Shop Thương nhân, bắt buộc phải dùng **Bụi Sao**.
+- Thương nhân có khả năng bán/rớt ra các mặt hàng: Rương Gacha, Vật phẩm trang trí lẻ, hoặc **Key (Cực kỳ hiếm)**. (Đặc biệt: Rương Gacha khi mở ra có thể rớt tất cả các loại: Karma, Bụi sao, Vật phẩm trang trí, hoặc Key).
+- *Lưu ý:* Tuyệt đối không bán đồ bằng tiền thật (No Pay-to-Win).
+- **Seed-based RNG (Chống Hack & Xóa Latency):** Tính năng Gacha bắt buộc Online. Tuy nhiên, để UX mượt mà không bị khựng (Latency), Server sẽ cấp trước một mã băm ngẫu nhiên ẩn (Cryptographic Seed) cho Client khi mở Cửa hàng. Khi bấm "Mở rương", Client dùng Seed này để chạy Animation lấp lánh ngay lập tức. Dưới nền, Client đẩy Seed lên Server xác thực. Nếu phát hiện hack DevTools đổi kết quả, Server sẽ từ chối giao dịch dựa trên Seed gốc.
 
-## 2.3. Mạng lưới Xã hội Khép kín (Private Social Graph)
-- **Không tìm kiếm tự do:** Để bảo vệ sự an toàn cảm xúc và tránh quấy rối, ứng dụng KHÔNG có tính năng tìm kiếm user công khai.
-- **Kết nối chọn lọc:** User chỉ có thể làm bạn qua 2 hình thức:
-  - *Invite-only:* Quét mã QR hoặc gửi link Invite cho những người bạn thân thiết thực sự ở ngoài đời.
-  - *Anonymous Match-making:* Hệ thống tự động ghép cặp ẩn danh những user có chung mục tiêu thói quen (VD: Cùng trồng Guardian Plant "Bỏ hút thuốc"). Điều này giúp tạo ra một cộng đồng chất lượng, thấu cảm và có cùng mức độ cam kết với bản thân.
+## 1.3. Lò Rèn Thẩm Mỹ (Merging) - Vũ khí Chống Lạm Phát
+- **Vấn đề lạm phát:** Nếu người chơi liên tục mở rương, đồ đạc Common sẽ tràn ngập, Karma bị mất giá trị.
+- **Giải pháp - Nâng cấp & Đúc (Crafting/Merging):** Đồ đạc dư thừa không được phép đem bán lại (vì game cấm Trading giữa người chơi để chống Smurf). Thay vào đó, người chơi sử dụng tính năng Đúc: Đốt 5 vật phẩm Common + 1 lượng lớn Karma/Stardust để có tỷ lệ rèn ra 1 vật phẩm Epic.
+- Đây là một **Hố đen tiêu thụ tiền tệ (Currency Sink)** tuyệt vời, vừa giải quyết lượng đồ rác, vừa tạo ra mục tiêu tối thượng cho người cày cuốc. (Lưu ý: Giống như Gacha, tính năng Đúc là **Online-Only**).
+
+## 1.4. Legendary Gate & Key (Mở Khóa Vùng Đất Mới)
+- Khi người chơi thu thập đủ số lượng **Key** (Chìa khóa) từ Thương nhân thần bí hoặc Rương Gacha, họ có thể dùng Key để mở khóa một Vùng Không Gian mới cho Khu vườn (Ví dụ: Nhà Kính Tuyết, Vườn Trên Mây). Phải cần **vài Key** mới mở được một vùng đất để tránh việc phá vỡ end-game nhờ may mắn.
+- **Hệ thống Bảo hiểm rủi ro (Pity System) & Mảnh Vỡ Key:** Để tránh nút thắt cổ chai tiến trình do RNG gây ức chế, mỗi khi người chơi mở Rương Gacha hoặc Refresh Shop mà KHÔNG ra Key, họ sẽ nhận được 1 **"Mảnh vỡ Không gian" (Key Fragment)**. Khi tích lũy đủ 100 Mảnh vỡ, người chơi có thể dùng Lò rèn để đúc thành 1 Key hoàn chỉnh. Cơ chế này đảm bảo mọi nỗ lực đều được đền đáp công bằng.
 
 ---
 
-# 🏛️ TRỤ CỘT 3: VÒNG LẶP KINH TẾ (Marketplace of Aesthetics)
+# 🏛️ TRỤ CỘT 2: TƯƠNG TÁC XÃ HỘI (The Social Lifeline)
 
-Sử dụng sức mạnh của Gamification và Kiến trúc phân tán (Event-Driven) để tạo ra sự "Nghiện" lành mạnh.
+Chúng ta loại bỏ hoàn toàn News Feed cuộn dọc. Mạng xã hội ở đây là một sự **tương tác không gian**. Nếu không có bạn bè, game sẽ chỉ bộc lộ 30% giá trị. Đây là nơi tạo ra sự ràng buộc và động lực sâu sắc nhất.
 
-## 3.1. Karma & Cửa hàng Thẩm mỹ (Aesthetic Shop)
-- **Tích luỹ Karma:** Nhận được khi duy trì thói quen, hoặc làm việc tốt (Đi tưới cây hộ bạn bè).
-  - *Kiểm soát Vĩ mô (Global Daily Cap):* Để chống lạm phát kinh tế do user tạo nhiều thói quen "rác" để farm Karma, hệ thống thiết lập mức trần tối đa Karma kiếm được mỗi ngày. Khi đạt giới hạn, user vẫn check-in được để duy trì sự sống cho cây, nhưng không nhận thêm tiền tệ. Van an toàn này giữ cho vật phẩm Legendary luôn có giá trị.
-  - *Vết kiểm toán Không thể Sửa đổi (Immutable Ledger):* Để quản trị viên thực sự kiểm soát được dòng chảy tiền tệ (Cash flow) và lạm phát, mọi giao dịch sinh/tiêu Karma BẮT BUỘC phải được ghi vào một Sổ Cái (Ledger) chỉ cho phép thêm mới (Append-only). Điều này cung cấp Data-driven cho việc vận hành.
-- **Tiêu Karma:** Thay vì thuê người làm task (quá nghiêm túc), người dùng dùng Karma để mua sắm đồ trang trí: Chậu cây hiếm, Mũ cho cây, Phông nền Mưa Sao Băng...
-- **Tâm lý học:** Giới trẻ thích cái Đẹp (Aesthetics). Khả năng custom hóa (trang trí) khu vườn độc bản của riêng mình chính là động lực lớn nhất để họ cày Karma mỗi ngày.
+## 2.1. Khu Phố Thẩm Mỹ (The Neighborhood)
+- **Tự động quy tụ:** Khi những người bạn kết nối với nhau, không gian của họ sẽ tự động ghép nối lại thành một **Khu Phố (Neighborhood)**. Không có bang hội đông đúc phức tạp, chỉ là một góc nhỏ cho bạn và những người thân thiết.
+- **Chỉ số Vibe & Không gian chung:** Khu phố sở hữu một **Chỉ số Thẩm mỹ chung (Neighborhood Vibes)** - tổng hòa từ điểm cá nhân của từng khu vườn. Chỉ số này sẽ mở khóa các hiệu ứng thời tiết chung tuyệt đẹp cho cả khu phố (Mưa sao băng, Cực quang, Đom đóm). Một người bỏ bê vườn tược có thể kéo lùi vẻ đẹp chung, tạo ra áp lực trách nhiệm nhẹ nhàng.
 
-## 3.2. Cấp độ Vật phẩm (Rarity Levels) & Healing Gacha (Hạt giống kỳ bí)
-- **Cấp độ Vật phẩm:** Để kích thích sự khao khát sưu tầm (Collection), các chậu cây, phông nền, phụ kiện được chia thành 4 cấp bậc: 
-  - 🟢 **Common (Thường):** Dễ kiếm, mua trực tiếp bằng Karma.
-  - 🔵 **Rare (Hiếm):** Thiết kế đẹp hơn, có hiệu ứng nhẹ, mua bằng Karma hoặc quay trúng.
-  - 🟣 **Epic (Sử thi):** Hiệu ứng thời tiết/lấp lánh cực đẹp, chỉ có được nhờ sự chăm chỉ tích luỹ hoặc quay trúng.
-  - 🟡 **Legendary (Huyền thoại):** Thay đổi hoàn toàn không gian vườn, siêu hiếm. Đòi hỏi nỗ lực cực lớn hoặc "nhân phẩm" cao.
-- **Cơ chế Healing Gacha (Hạt giống kỳ bí):** 
-  - Tuyệt đối không dùng tiền thật. NPC *Cụ Rùa Bán Dạo* thỉnh thoảng sẽ ghé thăm khu vườn và bán "Hạt giống kỳ bí" bằng Karma. Khi gieo hạt, sau một thời gian sẽ nảy mầm ra vật phẩm ngẫu nhiên theo tỷ lệ cấp độ (Rarity) bên trên.
-  - **Pity System (Lòng bao dung):** Không bao giờ có sự xui xẻo vĩnh viễn. Nếu mở liên tục 9 hạt giống Common, hạt thứ 10 CHẮC CHẮN là Rare trở lên. 
-  - **Tái chế & Kinh tế Mùa giải (Seasons):** Đồ trùng lặp được quy đổi thành "Bụi Lấp Lánh" (Stardust) để đổi thẳng vật phẩm Epic/Legendary. Tuy nhiên, để **chống lạm phát (Stardust Inflation)** và cạn kiệt nội dung End-game, hệ thống áp dụng cơ chế Mùa giải. Stardust của Mùa Xuân chỉ đổi được đồ Mùa Xuân. Sang Mùa Hè, BST mới xuất hiện yêu cầu loại Stardust mới, giữ cho nền kinh tế luôn cân bằng và có mục tiêu mới.
-  - **Chống Smurf & Chợ Đen (Account-Bound):** Để ngăn chặn việc tạo tài khoản ảo cày Karma lấy đồ Legendary rồi tuồn về tài khoản chính, TOÀN BỘ vật phẩm Gacha đều là **Soulbound (Khóa chặt vào tài khoản)**. Ứng dụng CẤM HOÀN TOÀN tính năng Giao dịch (Trading) vật phẩm giữa người chơi. Tương tác kinh tế duy nhất giữa người chơi là Tip Karma cho nhau khi tưới hộ.
+## 2.2. Hỗ Trợ Đa Dạng & Bảo Lãnh (Empathetic Help & Bailout)
+- **Tưới hộ cứu bạn:** Cây sẽ héo úa nếu lười biếng. Bạn bè dạo quanh Khu phố có thể dùng "Nước" của mình để "tưới hộ", giúp cây thoát khỏi bờ vực cái chết. Sự nhắc nhở tinh tế này mạnh hơn mọi Noti khô khan.
+- **Cứu rỗi Streak (Bảo lãnh Karma):** Tình bạn đích thực là khi bạn sẵn sàng trả nợ thay bạn mình. Nếu một người lỡ phá giới và vỡ Streak, nhưng không đủ tiền Karma để thanh lọc, bạn bè có thể trích Karma của mình ra để **Bảo lãnh** và khôi phục Streak cho người đó.
+- **AI NPC Hỗ trợ Tâm lý:** Hệ thống có AI đóng vai NPC (vd: Cáo lang thang, Cú mèo) thỉnh thoảng ghé thăm vườn khi bạn đi dạo nhà hàng xóm, hoặc xuất hiện khi bạn phục hồi từ Ngủ đông. NPC tặng quà ngẫu nhiên (Karma, Bụi sao). Việc RNG này kích hoạt cho user *active*, chặn triệt để hành vi "Fake Churn" (cố tình nghỉ game để lừa AI phát quà níu kéo).
+- **Tặng quà Cảm xúc:** Hỗ trợ nhau bằng việc tặng các vật phẩm trang trí nhỏ (Chuông gió, Hạc giấy, Thiệp viết tay) để động viên tinh thần.
 
-## 3.3. AI Người Làm Vườn (The Empathetic Gardener)
-- AI không bao giờ bóc phốt. AI đóng vai trò như một NPC (Nhân vật ảo) dễ thương trong game.
-- **Giới hạn quyền năng (Chống Exploit):** Dựa trên RAG (đọc lịch sử cảm xúc), AI sẽ để lại những bức thư tay nhỏ: *"Dạo này khu vườn hay sương mù, chắc bạn đang stress lắm. Gửi tặng bạn chút Bụi Lấp Lánh động viên nhé."*
-- AI **TUYỆT ĐỐI KHÔNG** can thiệp vào Logic trạng thái cốt lõi (không đóng băng hay khóa trạng thái héo úa của cây). Điều này tránh việc người dùng nhận ra mô hình và cố tình khai báo "buồn" liên tục để AI dung túng cho sự trì hoãn (Procrastination). Background Worker của AI chỉ có quyền Read lịch sử, gửi Message và tặng Stardust lượng nhỏ.
+## 2.3. Sự Kiện Khu Phố & Bảng Xếp Hạng Tinh Tế (Co-op & Leaderboard)
+- **Công Trình Khu Phố (Neighborhood Monument):** Ở trung tâm mỗi Khu phố có một công trình chung (Đài phun nước, Tháp đồng hồ...). Việc điểm danh cảm xúc mỗi ngày của các thành viên sẽ đóng góp "Năng lượng" vào công trình này. Khi công trình được sạc đầy, nó sẽ kích hoạt và thả xuống "Rương Co-op" (chứa vật phẩm Gacha siêu hiếm).
+- **Chống Ký Sinh (Contribution Threshold):** Để ngăn chặn việc một người không đóng góp gì nhưng vẫn nhận Rương Co-op khi đồng đội cày kéo, hệ thống ép buộc một mức đóng góp tối thiểu. Cụ thể: Chỉ những thành viên có mức năng lượng đóng góp > 0 (hoặc vượt ngưỡng X%) trong chu kỳ hiện tại mới đủ điều kiện mở Rương Co-op.
+- **Leaderboard Tinh tế:** Game áp dụng hệ thống Bảng xếp hạng giữa các Khu Phố với nhau. Tuy nhiên, nó không xếp hạng dựa trên sự "cày cuốc bạt mạng", mà xếp hạng dựa trên "Độ kiên trì nhóm" và "Chỉ số Thẩm mỹ (Vibes)". Khu phố nào kiên cường nhất và decor đẹp nhất sẽ được vinh danh bằng Cúp Tinh Tú.
 
-## 3.4. Mô hình Sinh tồn (Monetization & Freemium)
-Sự chữa lành không tự chi trả được chi phí vận hành khổng lồ của LLM, Kafka và Database. Ứng dụng cần một mô hình sinh tồn thực tế nhưng không được vi phạm triết lý cốt lõi.
-- **Nguyên tắc cốt lõi:** Không Pay-to-Win. Khóa hoàn toàn đồ Gacha và Karma khỏi các giao dịch tiền thật để bảo vệ tính nguyên bản của trải nghiệm và giá trị của sự nỗ lực.
-- **Gói Đăng ký (Premium Subscription):** Bán "Sự tiện lợi" và "Không gian mở rộng":
-  - *Mở rộng không gian:* User miễn phí có 1 khu vườn (giới hạn số cây). User Premium được mở khóa "Nhà kính tuyết" hoặc "Vườn trên mây" để theo dõi nhiều thói quen hơn.
-  - *Deep AI Insights:* User Premium được cấp quyền truy cập vào các bản báo cáo phân tích tâm lý chuyên sâu định kỳ từ AI Gardener, dựa trên lưu trữ log cảm xúc dài hạn.
+## 2.4. Mạng lưới Xã hội & Luật Cư Trú (Topology & Neighborhood Rules)
+Để tránh rắc rối về sự chồng chéo các mối quan hệ (Ví dụ: A, B, C ở chung khu phố. D kết bạn với A thì D có vào khu phố không? Nếu A hủy kết bạn D thì sao?), hệ thống phân định rạch ròi giữa **Bạn bè (1-1)** và **Hàng xóm (Nhóm)**:
+
+- **Bạn Bè (1-1):** Kết bạn thông qua quét mã QR hoặc Link mời. Bạn bè có thể thăm vườn của nhau và tưới hộ, nhưng không tự động bị ép vào chung một Khu phố.
+- **Luật Định Cư & Mời Gọi (Neighborhood Invites):** Để vào chung một không gian, người chơi phải gửi "Thư mời định cư". Ngoài ra, người chơi có thể Tìm kiếm (Search) và nộp "Đơn xin lưu trú" vào các Khu phố đang công khai tuyển thành viên.
+- **Hiệu ứng Bắc Cầu (Hàng xóm):** Khi A mời D vào Khu phố chung (đang có A, B, C), D nghiễm nhiên trở thành **Hàng xóm** của B và C. Hàng xóm có đặc quyền tương tác (tưới hộ, góp năng lượng công trình chung) mà không cần thiết lập kết bạn 1-1.
+- **Trải nghiệm Rời đi sòng phẳng (Sunk Cost Exit):** Việc đuổi (Evict) một thành viên là **đặc quyền của Thị trưởng (Chủ khu phố)**. Thị trưởng có toàn quyền quyết định việc giữ hay mời một thành viên rời khỏi Khu phố. ĐẶC BIỆT: Khi một người rời đi (tự nguyện hoặc bị đuổi), họ sẽ **mất trắng** toàn bộ công sức đóng góp cho Công Trình Chung. Không hoàn trả tài nguyên, không trừ điểm công trình. Cơ chế này khóa chặt hành vi bào tài nguyên và giải phóng Backend NestJS khỏi các luồng compensating transactions phức tạp.
+- **Khu phố ma & Phế truất tự động (Auto-Transfer):** Một Khu phố giới hạn tối đa **8-10 người** (đảm bảo tính Cozy). Nếu Thị trưởng không đăng nhập liên tục quá 14 ngày, hệ thống sẽ tự động giáng chức Thị trưởng xuống làm thành viên thường và chuyển giao quyền lực. Thuật toán chọn Tân Thị trưởng ưu tiên theo thứ tự: (1) Phó Thị trưởng (nếu có), (2) Người có tổng mức năng lượng đóng góp (Contribution) cho Công trình chung cao nhất, (3) Người có thời gian online gần nhất. Nếu toàn bộ xóm đóng băng, người còn active duy nhất có quyền "Đơn phương ly khai" để tìm Khu phố mới mà không cần chờ duyệt.
+
+---
+
+# 🏛️ TRỤ CỘT 3: Ý CHÍ & SỰ KIÊN CƯỜNG (Non-Cringe Resilience)
+
+Chúng ta loại bỏ hoàn toàn các ngôn từ "gượng ép, trẻ con". Đối tượng là GenZ và người trưởng thành cần sự tinh tế.
+
+## 3.1. Nhật Ký Cảm Xúc (Emotion Check-in) & Khôi Phục Chuỗi
+- **Core Mechanic - Emotion Check-in:** Trò chơi loại bỏ hoàn toàn khái niệm "Task/Thói quen". Mỗi ngày, người dùng chỉ cần vào app, thực hiện hành động duy nhất: **Điểm danh bằng cách ghi lại Cảm xúc (A - F) kèm theo Ghi chú (Note)**. Đây là hành động bắt buộc để giữ Chuỗi (Streak). Ghi chú là tùy chọn để chống người dùng gõ bừa ép lấy thưởng.
+- **Lưu ý về Phần thưởng & Mốc Điểm Danh Thực Tế:** Mỗi ngày điểm danh chỉ rớt một lượng Karma nhỏ. Chuỗi càng cao, lượng Karma hằng ngày càng lớn (có Cap trần). Để giải quyết triệt để lỗ hổng lách chuỗi bằng cách ngủ đông, các Mốc Chuỗi (7, 21, 66 ngày) để nhận Bụi Sao được tính bằng **Số ngày điểm danh thực tế (Active Check-ins)** thay vì ngày lịch. Những ngày ngủ đông sẽ không được cộng dồn vào tiến trình này.
+- **Storage Isolation & Chống Phình Data (Text Bloat):** Việc Note là Tùy chọn xóa bỏ động cơ "gõ bừa". Về mặt hệ thống, luồng lưu Note văn bản bị cách ly hoàn toàn khỏi Core DB. API Gateway nhận text -> đẩy vào Message Queue (Kafka/SQS) -> Worker insert dần vào một NoSQL Database (hoặc Partitioned Table riêng). Schema Core không bao giờ bị nghẽn I/O hay vướng bận Schema Drift khi lưu hàng chục triệu dòng text.
+- **Đóng băng & Cooldown Rã đông:** Khi mất chuỗi, hệ thống cho phép dùng Karma rã đông trong vòng 3 ngày (chi phí bị áp Cap trần). ĐẶC BIỆT: Sau khi rã đông, Cây Vệ Thần rơi vào trạng thái "Dưỡng thương" (Hibernation Cooldown). Nếu người dùng tiếp tục bỏ điểm danh trong 3 ngày tiếp theo, cây sẽ chết lập tức và chuỗi bị Reset về 0 mà không được phép dùng Karma cứu nữa. Điều này ngăn chặn vòng lặp "điểm danh 1 ngày, nghỉ 3 ngày".
+
+## 3.2. Trải nghiệm Chữa lành Không Gián đoạn (Offline-First)
+- Đang điểm danh mà bị báo "Mất mạng" thì cảm xúc sẽ bị tuột dốc ngay lập tức. Tính năng Offline-First chỉ áp dụng rạch ròi cho **Trụ cột 1 & 2** (Điểm danh cảm xúc, Tương tác xã hội).
+- **Optimistic UI & OCC (Chống Race Condition):** Bấm điểm danh -> Cây lấp lánh nhận EXP tức thì. Dữ liệu đẩy vào Hàng đợi Cục bộ (IndexedDB) qua Service Workers. Khi có mạng, Background Sync đồng bộ ngầm. ĐỂ TRÁNH XUNG ĐỘT (VD: bạn bè vừa cứu cây trong lúc bạn offline), hệ thống dùng Optimistic Concurrency Control (OCC) với trường `@Version`. Nếu Server phát hiện Version Client bị cũ, nó từ chối ghi đè, trả về State mới nhất, và hoàn lại Karma (nếu có) vào Pending Stash.
+
+## 3.3. Túi Karma Tạm (Pending Stash) & Ngủ Đông
+- **Pending Stash:** Để chống farm rác, Karma nhận hằng ngày bị giới hạn (Global Daily Cap). Nếu Offline xong có mạng lại, đồng bộ ngầm mà bị vượt hạn mức, hệ thống TUYỆT ĐỐI không báo "Lỗi" hay trừ ngược tiền. Phần Karma dư sẽ vào **Pending Stash**, hiển thị pop-up dễ thương: *"Túi tiền đã đầy, số Karma dư sẽ được dùng để tưới mát thảm cỏ chung của khu phố"*.
+- **Ngủ đông (Hibernation) & Phục hồi có kiểm soát:** Cho phép user mất chuỗi tối đa 3 ngày trước khi Cây bị đóng băng và mọc cỏ dại. Để rã đông, chỉ cần dùng Karma để phục hồi (chi phí tăng theo chuỗi nhưng có áp Cap trần). Một bước đệm tâm lý hoàn hảo kéo user quay lại mà không gây áp lực. Trong quá trình rã đông, AI NPC có thể ngẫu nhiên xuất hiện tặng quà khích lệ.

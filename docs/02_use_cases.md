@@ -4,78 +4,124 @@ Tài liệu này đặc tả các luồng tương tác giữa User và System th
 
 ---
 
-## 1. THÓI QUEN & GAMIFICATION (Habit & Garden)
+## 1. TRỤ CỘT 1 — KINH TẾ NÔNG TRẠI (Farming & Economy)
 
-### UC1.1: Trải nghiệm Check-in Thói quen Tích cực (Build Habit)
-- **Pre-condition:** Hôm nay user A có thói quen "Đọc sách 30 phút". Mầm cây đang ở trạng thái `GROWING`.
-- **Action:** User A click hoàn thành thói quen trên Web App.
-- **Expected Result:** UI bắn tia sáng tưới vào cây. Cây nhận điểm EXP. Nếu đủ EXP, cây tiến hóa sang cấp độ tiếp theo. Backend lưu `Habit` và bắn event `HABIT_COMPLETED` vào bảng `EventOutbox`.
+### UC1.1: Điểm danh Cảm xúc hằng ngày (Core Check-in)
+- **Pre-condition:** User A đang có Cây Vệ Thần ở trạng thái `GROWING`. Hôm nay chưa điểm danh.
+- **Action:** User A vào app, chọn cảm xúc hôm nay (A–F) và tùy chọn thêm Ghi chú (Note).
+- **Expected Result:** UI bắn hiệu ứng lấp lánh tưới vào cây (Optimistic UI). Cây nhận EXP. Streak tăng 1. `activeCheckinDays` tăng 1. Backend lưu `EmotionCheckin` và bắn event `CHECKIN_COMPLETED` vào bảng `OutboxEvent`. Karma được cộng vào Wallet (trừ khi đã chạm Daily Cap).
 
-### UC1.2: Xử lý Trạng thái "Ngái ngủ" (Grace Period)
-- **Pre-condition:** Đã qua 00:00 ngày mới, nhưng chưa tới 10:00 sáng. User chưa check-in hôm qua.
-- **Action:** User A truy cập Web App lúc 8:00 sáng.
-- **Expected Result:** Cây hiển thị icon `ZZZ` (Ngái ngủ) qua mask mờ. User A click check-in hồi tố cho ngày hôm qua. Cây lập tức tỉnh dậy (bỏ mask), nhận EXP bình thường và không bị héo úa. 
+### UC1.2: Chạm mốc Chuỗi lớn (Streak Milestone)
+- **Pre-condition:** User A có `activeCheckinDays = 21` (21 ngày điểm danh thực tế).
+- **Action:** User A điểm danh ngày hôm nay, đạt mốc 21 ngày.
+- **Expected Result:** Cây hóa `ANCIENT` (Cổ thụ), rớt ra **Bụi Sao**. UI hiển thị animation đặc biệt chúc mừng. Cây cũ có thể được chuyển vào Nhà Kính Kỷ Niệm.
 
-### UC1.3: Dọn dẹp Mùa Xuân (Spring Cleaning)
-- **Pre-condition:** User A bỏ app 10 ngày. Trạng thái User là `HIBERNATING`. Toàn bộ vườn bị "Băng phong".
-- **Action:** User A quay lại, hoàn thành thói quen "Đọc sách" liên tục trong 3 ngày.
-- **Expected Result:** Ngày thứ 3 hoàn thành, hệ thống tự động rã đông toàn bộ khu vườn. Cây cối trở về trạng thái bình thường mà không bị trừ cấp độ.
+### UC1.3: Ngủ đông & Rã đông (Hibernation & Recovery)
+- **Pre-condition:** User A bỏ điểm danh 3 ngày liên tiếp. Cây bị `HIBERNATING` (đóng băng, mọc cỏ dại). Streak chưa bị mất.
+- **Action:** User A quay lại, dùng Karma để rã đông Cây.
+- **Expected Result:** Cây trở lại trạng thái `GROWING`. Streak được bảo toàn. Cây bước vào trạng thái "Dưỡng thương" (Hibernation Cooldown). Nếu User tiếp tục bỏ điểm danh trong 3 ngày tiếp theo sau khi rã đông, Cây chết ngay lập tức, Streak về 0, không thể dùng Karma cứu lần nữa. AI NPC có thể xuất hiện tặng quà khích lệ.
 
-### UC1.4: Trải nghiệm Thói quen Từ bỏ (Quitting Habit) & Cây Vệ thần
-- **Pre-condition:** User A thiết lập thói quen "Không uống trà sữa" (Type: QUIT). Cây Vệ thần đang ở trạng thái `GROWING`.
-- **Action 1 (Thành công):** User A KHÔNG làm gì cả. Khi hệ thống điểm danh lúc 00:00 (thông qua Cronjob/Kafka), hệ thống xác nhận không có event vi phạm trong ngày.
-- **Expected Result 1:** Cây Vệ thần nhận EXP và sinh ra hiệu ứng "Khiên Năng Lượng".
-- **Action 2 (Phá giới):** User A lỡ uống trà sữa và bấm nút "Report Lapse" trên UI.
-- **Expected Result 2:** Cây lập tức chuyển sang trạng thái `POISONED` (Trúng độc). User phải tiêu Karma để gọi API `/cure` (Giải độc), nếu không cây sẽ không thể phát triển vào ngày hôm sau.
+### UC1.4: Thương Nhân Thần Bí & Gacha (Merchant Shop)
+- **Pre-condition:** User A có đủ Bụi Sao để mua vật phẩm trong shop.
+- **Action 1 (Refresh):** User A dùng Karma để làm mới (Refresh) danh sách hàng của Thương nhân.
+- **Action 2 (Mua):** User A dùng Bụi Sao để mua một Rương Gacha. Kết quả không ra Key.
+- **Expected Result:** Vật phẩm được thêm vào Inventory. **Hệ thống Pity:** Do không ra Key, User nhận 1 **Mảnh vỡ Không gian (Key Fragment)**. `metadata.keyFragments` trong Inventory tăng 1. Seed-based RNG đảm bảo kết quả không thể bị hack qua DevTools.
 
----
+### UC1.5: Đúc Key từ Mảnh Vỡ (Pity Crafting)
+- **Pre-condition:** User A tích lũy đủ 100 Mảnh vỡ Không gian.
+- **Action:** User A vào Lò Rèn, chọn "Đúc Key".
+- **Expected Result:** 100 Mảnh vỡ bị tiêu hao, User nhận 1 Key hoàn chỉnh vào Inventory. Tính năng Đúc là Online-Only.
 
-## 2. SOCIAL HEALING (Tương tác Chữa lành)
+### UC1.6: Mở khóa Vùng Đất Mới (Legendary Gate)
+- **Pre-condition:** User A tích đủ số Key cần thiết (vài Key) để mở một vùng đất.
+- **Action:** User A dùng Key để mở khóa "Nhà Kính Tuyết" hoặc "Vườn Trên Mây".
+- **Expected Result:** Vùng đất mới được mở khóa trong Khu vườn của User A. Giao diện chuyển đổi sang không gian mới với bảng màu và theme độc quyền.
 
-### UC2.1: Tưới hộ Cây (Empathetic Watering)
-- **Pre-condition:** User B (bạn của A) hôm nay bận rộn, chưa check-in. Cây của B sắp héo.
-- **Action:** User A ghé thăm khu vườn của B, bấm "Tưới nước" giúp B.
-- **Expected Result:** Cây của B sống sót qua hôm đó. User A nhận được điểm `Karma` như một phần thưởng vì lòng tốt. Giới hạn tưới hộ: 3 lần/tháng đối với 1 người bạn cụ thể.
-
-### UC2.2: Xử lý "Ghost Branch" (Cây thần Đồng đội)
-- **Pre-condition:** Nhóm 5 người cùng góp nước trồng "Cây Thần". User C trong nhóm đột nhiên biến mất 4 ngày (AFK).
-- **Action:** Cronjob kiểm tra hoạt động nhóm.
-- **Expected Result:** Hệ thống biến phần đóng góp của C thành "Ghost Branch" (Cành tinh linh - trong suốt). Nhóm 4 người còn lại vẫn có thể tiếp tục trồng cây thần mà không bị block. Khi C quay lại và hoàn thành chuỗi 3 ngày, Ghost Branch mới phục hồi thành cành thật.
-
-### UC2.3: Xây dựng Mạng lưới Xã hội Khép kín
-- **Pre-condition:** User A muốn tìm bạn bè để tương tác.
-- **Action 1 (Invite):** User A tạo Link/Mã QR Invite và gửi cho User B qua tin nhắn riêng. User B bấm vào Link.
-- **Action 2 (Match-making):** User A bật tính năng "Tìm bạn cùng mục tiêu". Hệ thống quét các user ẩn danh đang trồng cùng loại Guardian Plant "Không uống trà sữa" và đề xuất kết bạn.
-- **Expected Result:** Hai user trở thành bạn bè và có thể thấy Khu vườn của nhau. Tính năng tìm kiếm bằng tên tự do bị vô hiệu hóa hoàn toàn để tránh quấy rối.
+### UC1.7: Lò Rèn Thẩm Mỹ (Merging/Crafting)
+- **Pre-condition:** User A tích lũy 5 vật phẩm Common.
+- **Action:** User A vào Lò Rèn, đốt 5 vật phẩm Common + một lượng Karma/Bụi Sao để đúc.
+- **Expected Result:** 5 vật phẩm Common bị xóa. Hệ thống tính toán tỷ lệ và rớt ra 1 vật phẩm Epic. Lò Rèn là Online-Only.
 
 ---
 
-## 3. KINH TẾ BỀN VỮNG (Economy & Gacha)
+## 2. TRỤ CỘT 2 — TƯƠNG TÁC XÃ HỘI (Social Lifeline)
 
-### UC3.1: Gacha Hạt Giống Hiếm
-- **Pre-condition:** User A có 500 `Karma`.
-- **Action:** User A dùng 100 `Karma` để quay Gacha lấy Hạt giống.
-- **Expected Result:** Lệnh mua được bọc trong `Saga Pattern`. Trừ 100 Karma. Nếu rơi ra "Bonsai Khởi Nguyên", vật phẩm tự động được gán `isSoulbound = true` và đưa vào Inventory. Không thể chuyển nhượng vật phẩm này cho bất kỳ ai.
+### UC2.1: Kết bạn & Lập Khu phố
+- **Pre-condition:** User A và User B chưa là bạn bè.
+- **Action 1 (Kết bạn):** User A tạo Link/Mã QR và gửi cho User B. User B bấm vào Link để kết bạn.
+- **Expected Result 1:** A và B trở thành bạn bè (Friendship 1-1). Có thể thăm vườn của nhau và tưới hộ. Họ chưa tự động vào chung một Khu phố.
+- **Action 2 (Lập Khu phố):** User A gửi "Thư mời định cư" cho B (và C, D). Tất cả chấp nhận.
+- **Expected Result 2:** Một Khu Phố mới được tạo ra. A là Thị trưởng. B, C, D là Công dân (Citizen). Họ trở thành Hàng xóm của nhau và có thể tương tác (tưới hộ, góp năng lượng công trình) mà không cần kết bạn 1-1.
 
-### UC3.2: Tái chế Vật Phẩm (Stardust System)
-- **Pre-condition:** User A có 1 chậu cây dư thừa.
-- **Action:** A chọn "Tái chế" chậu cây.
-- **Expected Result:** Vật phẩm bị xóa khỏi Inventory. User nhận được `StardustSpring` (Bụi mùa giải hiện tại). Nếu hết mùa giải (Season kết thúc), bụi này tự động convert thành `LegacyStardust` (Giảm 50% giá trị).
+### UC2.2: Tưới hộ cứu bạn (Empathetic Watering)
+- **Pre-condition:** Cây của User B đang `HIBERNATING`. User A là bạn của B.
+- **Action:** User A ghé thăm vườn B, bấm "Tưới nước" giúp.
+- **Expected Result:** Cây của B thoát khỏi `HIBERNATING`. User A nhận Karma thưởng vì lòng tốt.
 
-### UC3.3: Chạm ngưỡng Cày Karma (Global Daily Cap)
-- **Pre-condition:** User A đã kiếm đủ 500 Karma trong ngày hôm nay.
-- **Action:** User A tiếp tục check-in hoàn thành 1 thói quen (Build Habit).
-- **Expected Result:** Hành động check-in vẫn lưu thành công. Cây nhận EXP lớn lên bình thường. Tuy nhiên, API trả về `karmaEarned: 0` do đã chạm ngưỡng Daily Cap. UI hiện popup thông báo: "Bạn đã làm rất tốt hôm nay, nhưng túi Karma đã đầy rồi! Hãy nghỉ ngơi nhé."
+### UC2.3: Bảo lãnh Streak (Karma Bailout)
+- **Pre-condition:** User B vỡ Streak nhưng không có đủ Karma để rã đông.
+- **Action:** User A (bạn của B) vào vườn B và chọn "Bảo lãnh" — trích Karma của mình ra giúp B.
+- **Expected Result:** Karma của A bị trừ. Streak của B được khôi phục. Cây của B rã đông.
 
-### UC3.4: Đăng ký Gói Sinh tồn (Premium Subscription)
-- **Pre-condition:** User A muốn trồng thêm thói quen thứ 6, nhưng Khu vườn 1 đã chật (giới hạn 5 cây).
-- **Action:** User A thanh toán gói Premium qua cổng thanh toán.
-- **Expected Result:** Hệ thống nâng `UserTier` lên `PREMIUM`. User A được mở khóa khu "Nhà kính tuyết" (Khu vườn 2) và tính năng "AI Phân tích Chuyên sâu". Tuyệt đối không nhận được vật phẩm Gacha hay Karma từ giao dịch này.
+### UC2.4: Tặng quà Cảm xúc (Emotional Gift)
+- **Pre-condition:** User B vừa có một ngày điểm danh tệ (cảm xúc F). User A muốn động viên.
+- **Action:** User A ghé vườn B, chọn "Tặng quà" và gửi một vật phẩm trang trí nhỏ (Chuông gió, Hạc giấy, Thiệp viết tay).
+- **Expected Result:** Vật phẩm xuất hiện trong Khu vườn của B. B nhận thông báo và cảm thấy được động viên.
+
+### UC2.5: Xây Công Trình Khu Phố & Nhận Rương Co-op
+- **Pre-condition:** Khu phố có 5 thành viên. Đài phun nước trung tâm cần X Năng lượng để kích hoạt.
+- **Action:** Tất cả 5 thành viên điểm danh cảm xúc mỗi ngày, tự động đóng góp Năng lượng cho công trình.
+- **Expected Result:** Khi công trình sạc đầy, nó kích hoạt và thả xuống "Rương Co-op". Chỉ những thành viên có `currentCycleContribution > 0` mới được mở Rương (Chống ký sinh).
+
+### UC2.6: Thị trưởng Đuổi Thành viên Toxic (Mayor Eviction)
+- **Pre-condition:** Khu phố có User X liên tục phá hoại không khí (toxic). Thị trưởng là User A.
+- **Action:** Thị trưởng A vào trang quản lý Khu phố, chọn User X và thực hiện "Evict".
+- **Expected Result:** User X bị đuổi khỏi Khu phố ngay lập tức. Toàn bộ đóng góp của X cho Công trình Chung bị mất trắng (Sunk Cost, không hoàn trả). Backend không cần chạy compensating transaction phức tạp.
+
+### UC2.7: Auto-Transfer Quyền Thị Trưởng
+- **Pre-condition:** Thị trưởng User A không đăng nhập liên tục 14 ngày.
+- **Action:** Hệ thống tự động kích hoạt Auto-Transfer.
+- **Expected Result:** User A bị giáng xuống làm Công dân. Thuật toán chọn Tân Thị trưởng theo thứ tự: (1) Phó Thị trưởng nếu có, (2) Người có `currentCycleContribution` cao nhất, (3) Người online gần nhất. Tân Thị trưởng nhận thông báo.
+
+### UC2.8: AI NPC Ghé thăm (Healing NPC Visit)
+- **Pre-condition:** User A vừa phục hồi từ Ngủ đông (rã đông thành công).
+- **Action:** Hệ thống xác suất kích hoạt sự kiện AI NPC.
+- **Expected Result:** Một AI NPC (Cáo lang thang, Cú mèo...) xuất hiện trong vườn của A, tặng một phần thưởng nhỏ (Karma hoặc Bụi Sao). NPC chỉ xuất hiện với user **đang active** để chặn hành vi "Fake Churn" (cố tình nghỉ game để nhử AI phát quà).
 
 ---
 
-## 4. XỬ LÝ BACKGROUND (Cronjob & AI Sourcing)
+## 3. TRỤ CỘT 3 — Ý CHÍ & SỰ KIÊN CƯỜNG (Non-Cringe Resilience)
 
-### UC4.1: Đồng bộ Log cho AI (UserAuditLog)
-- **Action:** Khi User hoàn thành một Habit, hoặc báo cáo Cảm xúc (Emotion).
-- **Expected Result:** Thay vì lưu chung vào bảng nghiệp vụ làm nặng DB, hệ thống tách riêng và ghi dữ liệu dạng JSONB vào bảng `UserAuditLog`. AI Agent (Langchain/MCP) sau đó sẽ query bảng này theo dạng Timeseries để phân tích chu kỳ cảm xúc của User mà không gây ảnh hưởng (Lock) tới các giao dịch tài chính hay thói quen hiện tại.
+### UC3.1: Mất chuỗi & Cứu Streak bằng Karma
+- **Pre-condition:** User A quên điểm danh 1 ngày. Cây bước vào trạng thái có nguy cơ đóng băng.
+- **Action:** User A nhận ra và dùng Karma để rã đông trong vòng 3 ngày cho phép.
+- **Expected Result:** Streak được bảo toàn. Chi phí Karma tăng dần theo độ dài Streak nhưng có Cap trần. Cây bước vào trạng thái "Dưỡng thương" (Hibernation Cooldown).
+
+### UC3.2: Chạm Daily Cap Karma
+- **Pre-condition:** User A đã điểm danh và nhận đủ Karma tối đa trong ngày.
+- **Action:** User A thực hiện thêm một hành động khác cũng tạo ra Karma.
+- **Expected Result:** Hành động vẫn được ghi nhận. Cây nhận EXP bình thường. Tuy nhiên, `karmaEarned` trả về 0. Nếu có Karma dư (từ Offline Sync), nó không bị xóa mà vào **Pending Stash**. UI hiển thị pop-up dễ thương: *"Túi tiền đã đầy, số Karma dư sẽ được dùng để tưới mát thảm cỏ chung của khu phố"*.
+
+### UC3.3: Lách Chuỗi bị Chặn (Anti-Hibernation Loop)
+- **Pre-condition:** User A cố tình điểm danh 1 ngày, nghỉ 3 ngày, rã đông, rồi lại nghỉ 3 ngày...
+- **Cơ chế phòng thủ của hệ thống:**
+  - Mốc Bụi Sao (7, 21, 66 ngày) tính bằng `activeCheckinDays` (số ngày điểm danh THỰC TẾ), **không phải ngày lịch**. Ngày ngủ đông không được cộng vào.
+  - Sau khi rã đông, Cây bước vào trạng thái "Dưỡng thương". Nếu tiếp tục nghỉ thêm 3 ngày, Cây chết lập tức và Streak về 0 mà không được phép dùng Karma cứu.
+- **Expected Result:** Hành vi lách chuỗi không mang lại lợi ích nào. Người chơi phải điểm danh thực sự để tiến tới các mốc Bụi Sao.
+
+### UC3.4: Offline-First & Đồng bộ khi có mạng
+- **Pre-condition:** User A đang trên tàu điện ngầm, mất kết nối mạng.
+- **Action:** User A vẫn điểm danh cảm xúc bình thường trên app.
+- **Expected Result:** Optimistic UI cập nhật tức thì (Cây lấp lánh, EXP tăng). Dữ liệu được lưu vào IndexedDB qua Service Worker. Khi có mạng, Background Sync tự động đẩy lên Server. OCC với `@version` phát hiện xung đột (nếu có bạn bè vừa tưới hộ) và hoàn Karma vào Pending Stash thay vì báo lỗi.
+
+---
+
+## 4. XỬ LÝ NỀN (Background & Cronjob)
+
+### UC4.1: Cronjob Đánh giá Trạng thái Cây (Nightly Job)
+- **Action:** Mỗi ngày lúc 00:00, Cronjob nhẹ trigger event `EVALUATE_PLANT_STATUS` vào Kafka.
+- **Expected Result:** Worker Nodes consume event và xử lý bất đồng bộ, cập nhật trạng thái từng Cây (kiểm tra ai đã điểm danh, ai chưa, ai cần `HIBERNATING`). Tránh lock table hay CPU spike.
+
+### UC4.2: Đồng bộ Ghi chú cho AI (Storage Isolation)
+- **Action:** Khi User A gửi Ghi chú (Note) trong lúc Check-in.
+- **Expected Result:** Text không lưu vào Core DB (PostgreSQL). API Gateway nhận text, đẩy vào Message Queue (Kafka/SQS). Worker sau đó insert vào NoSQL Database (hoặc Partitioned Table). Core DB không bao giờ bị nghẽn I/O vì text dài.

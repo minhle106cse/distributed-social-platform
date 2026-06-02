@@ -1,165 +1,92 @@
-# 🗄️ Cấu trúc Cơ sở dữ liệu (Database Schema)
+# 🗄️ Lược đồ Cơ sở dữ liệu (Database Schema)
 
-Tài liệu này định nghĩa cấu trúc cơ sở dữ liệu cho dự án **GrowthGarden V2**. Lược đồ được thiết kế theo chuẩn Prisma ORM, áp dụng triết lý Modular Monolith với ranh giới Domain rõ ràng.
+Tài liệu này định nghĩa cấu trúc cơ sở dữ liệu cho dự án **GrowthGarden V2**. Lược đồ được thiết kế bằng **Prisma ORM**, áp dụng triết lý **Modular Monolith** kết hợp **Optimistic Concurrency Control (OCC)** và **Storage Isolation** để giải quyết các bài toán về Concurrency và Data Bloat.
 
 ---
 
 ## 1. Môi trường & Quy chuẩn
-- **Database Engine:** PostgreSQL
-- **Format:** Prisma Schema
-- **Design Pattern:** JSONB cho đa hình (Polymorphism), Event Sourcing cho dữ liệu lịch sử AI, Tách biệt Schema theo Context.
+- **Database Engine:** PostgreSQL (Core) & MongoDB/DynamoDB (Dành cho Storage Isolation).
+- **Format:** Prisma Schema (`schema.prisma`).
+- **Kiến trúc:** Phân tách logic theo Schema Context. Tuyệt đối KHÔNG gài Foreign Key (Ràng buộc toàn vẹn) chéo giữa các Domain khác biệt để phục vụ tách Microservices trong tương lai.
 
 ---
 
-## 2. Lược đồ Dữ liệu Chi tiết (Prisma Schema)
+## 2. Lược đồ Dữ liệu Chi tiết
 
-### 2.1. Identity & Core Context
+### 🟢 2.1. Module Identity & Auth
 Quản lý thông tin định danh và cài đặt cơ bản của người dùng.
 
 ```prisma
 model User {
   id               String   @id @default(uuid())
   email            String   @unique
-  primaryTimezone  String   @default("UTC") 
+  username         String
   status           UserStatus @default(ACTIVE)
-  tier             UserTier   @default(FREE)
   
-  // Relations
-  karmaWallet      KarmaWallet?
-  karmaLedgers     KarmaLedger[]
-  gardens          Garden[]
-  habits           Habit[]
-  placements       Placement[]
+  // Relations nội bộ Domain
+  authIdentities   AuthIdentity[]
   
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 }
 
+model AuthIdentity {
+  id               String   @id @default(uuid())
+  userId           String
+  provider         AuthProvider @default(LOCAL)
+  passwordHash     String?
+  refreshToken     String?
+  
+  user             User     @relation(fields: [userId], references: [id])
+}
+
 enum UserStatus {
   ACTIVE
-  HIBERNATING // Trạng thái Ngủ đông (Bỏ app > 7 ngày)
+  BANNED
 }
 
-enum UserTier {
-  FREE
-  PREMIUM
-}
-```
-
-### 2.2. Habit & Garden Context
-Quản lý hệ thống Gamification: tiến trình thói quen, trạng thái mầm cây và không gian hiển thị (Garden Layout) theo lưới Isometric.
-
-```prisma
-model Habit {
-  id          String     @id @default(uuid())
-  userId      String
-  name        String
-  type        HabitType  @default(BUILD)
-  isKeystone  Boolean    @default(false) // Thói quen cốt lõi dùng để rã đông
-  
-  // Trạng thái của Cây (Habit Pet)
-  plantState  PlantState @default(SEED)
-  exp         Int        @default(0)
-  
-  isDeleted   Boolean    @default(false)
-  deletedAt   DateTime?
-  
-  user        User       @relation(fields: [userId], references: [id])
-}
-
-enum HabitType {
-  BUILD
-  QUIT
-}
-
-enum PlantState {
-  SEED        // Hạt giống
-  GROWING     // Đang lớn
-  WITHERED    // Héo úa (Mất Loss Aversion)
-  POISONED    // Trúng độc (Phá giới Quitting Habit)
-  GHOST       // Nhánh tinh linh (Dead branch trong nhóm Co-op)
-  MAX_LEVEL   // Đạt cấp tối đa
-}
-
-model Garden {
-  id          String     @id @default(uuid())
-  userId      String
-  type        GardenType @default(STANDARD)
-  weather     String     @default("SUNNY") // SUNNY, RAINY, GLOOMY (Dựa trên Emotion)
-  
-  isDeleted   Boolean    @default(false)
-  deletedAt   DateTime?
-  
-  user        User       @relation(fields: [userId], references: [id])
-}
-
-enum GardenType {
-  STANDARD
-  GREENHOUSE
-  CLOUD
-}
-
-// Bảng lưu tọa độ Isometric 2D cho các vật phẩm trong vườn
-model Placement {
-  id          String     @id @default(uuid())
-  userId      String
-  itemId      String     // Tham chiếu đến ID Vật phẩm trong Inventory
-  
-  x           Int        // Tọa độ X trên Grid (VD: Grid 6x6)
-  y           Int        // Tọa độ Y trên Grid
-  layer       Int        @default(0) // Ground=0, Object=1, Sky=2
-  
-  isDeleted   Boolean    @default(false)
-  deletedAt   DateTime?
-  
-  user        User       @relation(fields: [userId], references: [id])
+enum AuthProvider {
+  LOCAL
+  GOOGLE
+  APPLE
 }
 ```
 
-### 2.3. Economy & Inventory Context
-Hệ thống tài chính nội bộ. Thiết kế này có Audit Log (Ledger) để dễ dàng kiểm toán trước khi tách thành Microservice độc lập (`economy-microservice`) trong Phase 5.
+### 🟡 2.2. Module Economy & Inventory
+Xử lý giao dịch Tiền tệ và Túi đồ vật phẩm. Chứa cơ chế OCC để bắt Race Condition.
 
 ```prisma
-// Bảng lưu vết kiểm toán kinh tế (Immutable Ledger)
-model KarmaLedger {
-  id             String    @id @default(uuid())
-  userId         String
-  amount         Int       // Số lượng Karma thay đổi (+/-)
-  reason         String    // VD: CHECK_IN, GACHA_ROLL, CURE_POISON
-  referenceId    String?   // ID tham chiếu (Habit ID, Item ID)
+model Wallet {
+  id               String   @id @default(uuid())
+  userId           String   @unique // Không FK cứng đến User table
   
-  createdAt      DateTime  @default(now())
+  karmaBalance     Int      @default(0) // Tiền mềm
+  stardustBalance  Int      @default(0) // Tiền cứng
   
-  user           User      @relation(fields: [userId], references: [id])
+  // Cơ chế OCC: Cứ mỗi lần transaction (cộng/trừ), version tăng 1. 
+  // Chặn đứng Double Spending và Xung đột khi Offline Sync.
+  version          Int      @default(0) 
   
-  @@index([userId, createdAt])
-}
-
-model KarmaWallet {
-  id             String    @id @default(uuid())
-  userId         String    @unique
-  balanceKarma   Int       @default(0)
-  dailyEarned    Int       @default(0) // Track giới hạn Karma mỗi ngày
-  lastEarnDate   DateTime? // Ngày cuối cùng nhận Karma
-  stardustSpring Int       @default(0) // Bụi mùa giải (Tái chế)
-  legacyStardust Int       @default(0) // Bụi di sản
-  version        Int       @default(0) // Cho Optimistic Locking chống Double-spending
-  
-  user           User      @relation(fields: [userId], references: [id])
+  updatedAt        DateTime @updatedAt
 }
 
 model InventoryItem {
-  id          String     @id @default(uuid())
-  userId      String
-  itemRefId   String     // ID Catalog của vật phẩm hệ thống
-  rarity      Rarity
-  isSoulbound Boolean    @default(true) // 100% Khóa tài khoản, cấm Chợ đen
+  id               String   @id @default(uuid())
+  userId           String   // Không FK cứng
+  itemType         ItemType
+  rarity           Rarity   @default(COMMON)
   
-  // JSONB giải quyết bài toán Đa hình (Polymorphism)
-  // Có thể lưu linh hoạt: { "glow_color": "blue", "water_capacity": 5 }
-  metadata    Json?    
+  // JSONB lưu các tính chất động (Ví dụ: Số lượng mảnh vỡ, Tên vật phẩm trang trí)
+  metadata         Json?    
   
-  createdAt   DateTime   @default(now())
+  createdAt        DateTime @default(now())
+}
+
+enum ItemType {
+  DECORATION       // Vật trang trí
+  GACHA_BOX        // Rương Gacha
+  KEY              // Chìa khóa mở vùng đất
+  KEY_FRAGMENT     // Mảnh vỡ Không gian (Pity System)
 }
 
 enum Rarity {
@@ -167,45 +94,161 @@ enum Rarity {
   RARE
   EPIC
   LEGENDARY
-  UNIQUE
 }
 ```
 
-### 2.4. Event Sourcing & AI Context
-Đóng vai trò là xương sống (Backbone) cho kiến trúc phân tán và tạo nguồn dữ liệu siêu nhanh cho AI mà không gây "Data Bloat" lên các bảng nghiệp vụ.
+### 🔵 2.3. Module Productivity (Nhật ký Cảm xúc)
+Quản lý tiến trình Cây Vệ Thần và Chuỗi (Streak) điểm danh. Cấu trúc này tối giản Text Bloat.
 
 ```prisma
-model EventOutbox {
-  id             String      @id @default(uuid())
-  eventType      String      // VD: "CheckHabitStatusEvent", "RefundKarmaEvent"
+model PlantGuardian {
+  id               String   @id @default(uuid())
+  userId           String   // Không FK cứng
   
-  // Dữ liệu event bắt buộc chứa targetDate và idempotencyKey để Replay DLQ an toàn
-  payload        Json     
-  status         EventStatus @default(PENDING)
-  createdAt      DateTime    @default(now())
+  state            PlantState @default(SEED)
+  
+  // Tiến trình chuỗi (Streak)
+  currentStreak    Int      @default(0)
+  highestStreak    Int      @default(0)
+  activeCheckinDays Int     @default(0) // Số ngày điểm danh THỰC TẾ (Ngăn lách luật ngủ đông)
+  
+  version          Int      @default(0) // OCC bắt xung đột khi bạn bè vừa tưới hộ lúc đang offline
+  
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  
+  checkins         EmotionCheckin[]
 }
 
-model UserAuditLog {
-  id             String      @id @default(uuid())
-  userId         String
-  action         String      // Loại hoạt động (VD: EMOTION_LOGGED, HABIT_COMPLETED)
+model EmotionCheckin {
+  id               String   @id @default(uuid())
+  plantId          String
   
-  // Dữ liệu bối cảnh cho RAG (AI truy xuất vector)
-  context        Json     
-  timestamp      DateTime    @default(now())
+  checkinDate      DateTime @db.Date // Chỉ lưu ngày lịch
+  emotionGrade     EmotionGrade
   
-  @@index([userId, timestamp]) // Index tối ưu cho truy xuất chuỗi thời gian của AI
+  plant            PlantGuardian @relation(fields: [plantId], references: [id])
+}
+
+enum PlantState {
+  SEED           // Hạt giống
+  GROWING        // Đang lớn
+  HIBERNATING    // Dưỡng thương / Rã đông
+  DEAD           // Chết (Rạn nứt Khiên)
+  ANCIENT        // Cổ thụ (Hoàn thành mốc lớn)
+}
+
+enum EmotionGrade {
+  A
+  B
+  C
+  D
+  E
+  F
+}
+```
+
+#### 🛡️ Storage Isolation (Bên ngoài Prisma Core)
+Note văn bản của Check-in không nằm trong PostgreSQL Prisma Schema trên để chặn hiện tượng Text Bloat. Hệ thống đẩy Text qua Kafka sang một Collection NoSQL (VD: MongoDB) hoặc bảng Partition riêng lẻ:
+```json
+// Cấu trúc NoSQL Collection: EmotionNotes
+{
+  "_id": "uuid",
+  "checkinId": "UUID tham chiếu sang EmotionCheckin của Core DB",
+  "userId": "UUID",
+  "noteText": "Nội dung nhật ký dài hàng nghìn chữ...",
+  "createdAt": "ISODate"
+}
+```
+
+### 🔴 2.4. Module Social & Topology
+Kết nối Khu phố, Bầu cử, và Chống Ký sinh.
+
+```prisma
+model Neighborhood {
+  id               String   @id @default(uuid())
+  name             String
+  vibeScore        Int      @default(0) // Chỉ số thẩm mỹ tổng
+  monumentEnergy   Int      @default(0) // Năng lượng sạc cho Công trình chung
+  
+  createdAt        DateTime @default(now())
+  
+  members          NeighborhoodMember[]
+}
+
+model NeighborhoodMember {
+  userId           String   // Không FK cứng
+  neighborhoodId   String
+  
+  role             NeighborhoodRole @default(CITIZEN)
+  
+  // Chống Lỗ hổng Ký sinh: Phải > 0 mới được chia rương Co-op khi Monument đầy năng lượng
+  currentCycleContribution Int @default(0) 
+  
+  joinedAt         DateTime @default(now())
+  
+  neighborhood     Neighborhood @relation(fields: [neighborhoodId], references: [id], onDelete: Cascade)
+  
+  @@id([userId, neighborhoodId])
+}
+
+model Friendship {
+  userId1          String
+  userId2          String
+  status           FriendshipStatus @default(PENDING)
+  
+  createdAt        DateTime @default(now())
+  
+  @@id([userId1, userId2])
+}
+
+enum NeighborhoodRole {
+  MAYOR
+  CITIZEN
+}
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+}
+```
+
+### ⚙️ 2.5. Module Event-Driven (Outbox)
+Trái tim của hệ thống Phân tán và Sự kiện.
+
+```prisma
+model OutboxEvent {
+  id               String      @id @default(uuid())
+  aggregateType    String      // VD: "Wallet", "PlantGuardian", "Neighborhood"
+  aggregateId      String      
+  eventType        String      // VD: "CheckinCompleted", "CoopChestRewarded"
+  
+  payload          Json        // Nội dung event để Worker/Kafka đẩy đi
+  status           EventStatus @default(PENDING)
+  
+  createdAt        DateTime    @default(now())
+  processedAt      DateTime?
 }
 
 enum EventStatus {
   PENDING
   PROCESSED
-  FAILED_DLQ // Event lỗi (VD: Schema drift) sẽ bị giam vào đây để kỹ sư xử lý
+  FAILED_DLQ // Giam vào Dead Letter Queue nếu Worker lỗi liên tục
 }
 ```
 
 ---
 
-## 3. Rủi ro & Lưu ý Kỹ thuật
-- **Saga Pattern:** Các tương tác giữa `KarmaWallet` và các bảng khác (VD mua vật phẩm thêm vào `InventoryItem`) phải được gói trong logic Saga. Bất kỳ lỗi nào xảy ra ở Consumer cũng phải kích hoạt Event `RefundKarmaEvent` đẩy vào `EventOutbox`.
-- **UI Grid Render:** Web Client (Next.js/React) cần chịu trách nhiệm khóa Grid (VD chỉ cho kéo thả trong vùng tọa độ 0-5) bằng kỹ thuật CSS Grid hoặc thao tác kéo thả HTML5, và tính toán va chạm (Collision) trước khi gọi API cập nhật bảng `Placement`.
+## 3. Lý giải Kiến trúc Nâng cao
+
+1. **Không Dùng Khóa Ngoại (Foreign Keys) Xuyên Domain:** 
+   Các ID như `userId` trong `Wallet` hay `NeighborhoodMember` chỉ lưu dưới dạng `String` thuần túy ở tầng Database. Chúng ta duy trì tính toàn vẹn thông qua Logic Code (Saga Pattern) và `OutboxEvent`. Điều này giúp việc tách Database cho từng Microservice sau này diễn ra vô cùng êm ái.
+
+2. **Cơ chế OCC (Optimistic Concurrency Control):**
+   Trường `version` ở `Wallet` và `PlantGuardian` dùng để bắt xung đột. Ví dụ:
+   - Client đang offline, điểm danh Cây, lúc có mạng Client gọi API Sync với Version = 5.
+   - Cùng lúc đó ở Server, bạn bè vừa "Tưới hộ" và tăng Version của Cây lên 6.
+   - Khi Client Sync lên, Prisma update query dạng `where: { id, version: 5 }` sẽ fail. Backend lập tức từ chối thao tác của Client, hoàn tiền Karma vào pending stash và ép Client đồng bộ lại State mới nhất.
+
+3. **Chống Phình Data (Storage Isolation):**
+   Nếu 1 triệu người viết nhật ký dài 500 chữ mỗi ngày, bảng `EmotionCheckin` sẽ sụp đổ về mặt Read/Write I/O do TOAST table của PostgreSQL. Việc tách riêng `EmotionNotes` sang một hệ lưu trữ Document-based (NoSQL) và nối bằng Kafka giúp Prisma Core mãi mãi nhỏ gọn và nhanh như chớp.

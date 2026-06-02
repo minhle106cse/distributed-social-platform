@@ -6,209 +6,255 @@ Tài liệu này biểu diễn Luồng Dữ liệu (Data Flow) và Sơ đồ CSD
 
 ## 1. CORE ENTITY RELATIONSHIP DIAGRAM (ERD)
 
-Mô tả sự cô lập dữ liệu theo các Context đã định nghĩa trong lược đồ Prisma.
+Mô tả sự cô lập dữ liệu theo các Context đã định nghĩa trong lược đồ Prisma. Tuyệt đối không có Foreign Key xuyên Domain để phục vụ tách Microservices trong tương lai.
 
 ```mermaid
 erDiagram
-    %% Core & Habit Context
+    %% Identity Context
     User {
         uuid id PK
         string email
-        string status "ACTIVE, HIBERNATING"
-        string tier "FREE, PREMIUM"
+        string username
+        enum status "ACTIVE, BANNED"
     }
-    Habit {
+    AuthIdentity {
         uuid id PK
-        uuid user_id FK
-        string name
-        string type "BUILD, QUIT"
-        boolean is_keystone
-        string plant_state "SEED, GROWING, WITHERED, GHOST, POISONED"
-        int exp
-        boolean is_deleted
-        timestamp deleted_at
-    }
-    Garden {
-        uuid id PK
-        uuid user_id FK
-        string weather "SUNNY, RAINY"
-        string type "STANDARD, GREENHOUSE"
-        boolean is_deleted
-        timestamp deleted_at
-    }
-    
-    %% Garden Grid (Isometric)
-    Placement {
-        uuid id PK
-        uuid user_id FK
-        uuid item_id FK
-        int x
-        int y
-        int layer
-        boolean is_deleted
-        timestamp deleted_at
+        string userId "Loose ref"
+        enum provider "LOCAL, GOOGLE, APPLE"
+        string passwordHash
+        string refreshToken
     }
 
-    %% Economy & Inventory Context
-    KarmaLedger {
+    %% Economy Context (wallet-module -> economy-module)
+    Wallet {
         uuid id PK
-        uuid user_id FK
-        int amount
-        string reason "Giao dịch (+/-)"
-        string reference_id
-        timestamp created_at
-    }
-    KarmaWallet {
-        uuid user_id PK, FK
-        int balanceKarma
-        int dailyEarned
-        timestamp lastEarnDate
-        int stardustSpring
-        int legacyStardust
-        int version
+        string userId "Loose ref (no FK)"
+        int karmaBalance
+        int stardustBalance
+        int version "OCC - chống Double Spending"
     }
     InventoryItem {
         uuid id PK
-        uuid user_id FK
-        string rarity
-        boolean isSoulbound
-        jsonb metadata "Đa hình: Lưu chỉ số tùy biến"
+        string userId "Loose ref"
+        enum itemType "DECORATION, GACHA_BOX, KEY, KEY_FRAGMENT"
+        enum rarity "COMMON, RARE, EPIC, LEGENDARY"
+        json metadata "Số lượng mảnh vỡ, asset URL..."
     }
 
-    %% Event Sourcing & AI
-    EventOutbox {
+    %% Productivity Context
+    PlantGuardian {
         uuid id PK
-        string event_type
-        jsonb payload
-        string status "PENDING, PROCESSED, FAILED_DLQ"
+        string userId "Loose ref"
+        enum state "SEED, GROWING, HIBERNATING, DEAD, ANCIENT"
+        int currentStreak
+        int highestStreak
+        int activeCheckinDays "Ngày điểm danh thực tế - chống lách luật"
+        int version "OCC - chống Race Condition khi tưới hộ offline"
     }
-    UserAuditLog {
+    EmotionCheckin {
         uuid id PK
-        uuid user_id FK
-        string action
-        jsonb context
-        timestamp time
+        string plantId FK
+        date checkinDate
+        enum emotionGrade "A, B, C, D, E, F"
+    }
+
+    %% Social Context
+    Neighborhood {
+        uuid id PK
+        string name
+        int vibeScore
+        int monumentEnergy
+    }
+    NeighborhoodMember {
+        string userId "Loose ref"
+        string neighborhoodId FK
+        enum role "MAYOR, DEPUTY_MAYOR, CITIZEN"
+        int currentCycleContribution "Phải > 0 mới nhận Rương Co-op"
+    }
+    Friendship {
+        string userId1 "Loose ref"
+        string userId2 "Loose ref"
+        enum status "PENDING, ACCEPTED"
+    }
+
+    %% Event Sourcing
+    OutboxEvent {
+        uuid id PK
+        string aggregateType "Wallet, PlantGuardian, Neighborhood..."
+        string aggregateId
+        string eventType "CheckinCompleted, CoopChestRewarded..."
+        json payload
+        enum status "PENDING, PROCESSED, FAILED_DLQ"
     }
 
     %% Relationships
-    User ||--o{ Habit : "tracks"
-    User ||--o| Garden : "owns"
-    User ||--o{ Placement : "configures"
-    User ||--o| KarmaWallet : "has"
-    User ||--o{ InventoryItem : "collects"
-    User ||--o{ UserAuditLog : "generates"
+    User ||--o{ AuthIdentity : "authenticates via"
+    User ||--o| Wallet : "has wallet"
+    User ||--o{ InventoryItem : "owns items"
+    User ||--o| PlantGuardian : "grows plant"
+    PlantGuardian ||--o{ EmotionCheckin : "records checkins"
+    User ||--o{ NeighborhoodMember : "lives in"
+    Neighborhood ||--o{ NeighborhoodMember : "has members"
 ```
 
 ---
 
 ## 2. SEQUENCE DIAGRAMS (LUỒNG DỮ LIỆU CẤP THẤP)
 
-### Luồng 1: Hoàn thành Thói quen & Tách rời Dữ liệu AI (Outbox Pattern)
-Bảo vệ Transaction của Habit, đồng thời cung cấp dữ liệu cho AI rảnh tay xử lý.
+### Luồng 1: Điểm danh Cảm xúc & Cách ly Dữ liệu Text (Outbox + Storage Isolation)
+Bảo vệ Transaction Core, đồng thời tách rời Note văn bản sang NoSQL để chống Text Bloat.
 
 ```mermaid
 sequenceDiagram
-    actor User as Web Client
-    participant API as core-api (Habit Module)
-    participant DB as Postgres (Habit Table)
-    participant Outbox as Postgres (EventOutbox)
+    actor User as Web Client (Optimistic UI)
+    participant SW as Service Worker (IndexedDB)
+    participant API as core-api (Productivity Module)
+    participant DB as Postgres (PlantGuardian + EmotionCheckin)
+    participant Outbox as Postgres (OutboxEvent)
     participant Kafka as Kafka (core-events)
-    participant AIAgent as AI RAG Worker
-    participant AuditDB as Postgres (UserAuditLog)
+    participant Worker as Worker Service
+    participant NoSQL as NoSQL DB (EmotionNotes)
 
-    User->>API: POST /api/habits/{id}/check-in
+    User->>SW: Click Check-in (Emotion + Note)
+    SW-->>User: Optimistic UI: Cây lấp lánh ngay lập tức (không cần chờ API)
+    SW->>API: POST /api/v1/checkin (Background Sync khi online)
+
     Note over API: Start DB Transaction
-    API->>DB: Update Habit EXP & Plant State
-    API->>Outbox: Insert EVENT_HABIT_COMPLETED
-    Note over API: Commit DB Transaction
-    API-->>User: HTTP 200 OK (UI Tưới cây)
+    API->>DB: UPDATE PlantGuardian (streak++, activeCheckinDays++, version++)
+    API->>DB: INSERT EmotionCheckin (date, grade)
+    API->>DB: UPDATE Wallet (karmaBalance + X)
+    API->>Outbox: INSERT OutboxEvent {type: "CheckinCompleted"}
+    Note over API: Commit Transaction
 
-    %% Async flow
-    Outbox-->>Kafka: CDC Connector streams event
-    Kafka-->>AIAgent: Consume EVENT_HABIT_COMPLETED
-    AIAgent->>AuditDB: Insert into UserAuditLog (for future Vector querying)
+    API-->>User: HTTP 200 OK {expGained, karmaEarned, newStreak}
+
+    %% Async: Note text vào NoSQL
+    alt User đã nhập Note
+        API->>Kafka: Publish NOTE_TEXT_EVENT {checkinId, noteText}
+        Kafka-->>Worker: Consume event
+        Worker->>NoSQL: INSERT EmotionNote {checkinId, userId, noteText}
+    end
+
+    %% Async: Kafka event cho các service khác
+    Outbox-->>Kafka: CDC Connector streams CheckinCompleted
+    Kafka-->>Worker: Cập nhật Neighborhood Monument Energy
 ```
 
 ---
 
-### Luồng 2: Saga Pattern - Quay Gacha (Chống Double-Spending)
-Luồng mua vật phẩm sử dụng Optimistic Locking và Saga Compensating Transaction.
+### Luồng 2: Gacha & Pity System (Chống Double-Spending + Chống RNG Xui Xẻo)
+Luồng mua vật phẩm kết hợp Optimistic Locking, Seed-based RNG và tích lũy Pity Fragment.
 
 ```mermaid
 sequenceDiagram
     actor User as Web Client
     participant API as core-api (Economy Module)
-    participant WalletDB as Postgres (KarmaWallet)
+    participant WalletDB as Postgres (Wallet)
     participant InvDB as Postgres (InventoryItem)
-    
-    User->>API: POST /api/gacha/roll (Cost: 100 Karma)
-    
-    %% Bước 1: Trừ tiền (Optimistic Locking)
-    API->>WalletDB: UPDATE KarmaWallet SET balance = balance - 100, version = 2 WHERE version = 1 AND balance >= 100
-    alt Update Fails (Version mismatch / No money)
+    participant Outbox as Postgres (OutboxEvent)
+
+    User->>API: POST /api/v1/economy/gacha/roll {seed}
+
+    Note over API: Seed-based RNG — Server xác thực seed Client gửi lên
+    API->>WalletDB: UPDATE Wallet SET stardustBalance = stardustBalance - X, version = N+1 WHERE version = N AND stardustBalance >= X
+
+    alt Optimistic Lock Fail (version mismatch / không đủ tiền)
         WalletDB-->>API: 0 rows affected
-        API-->>User: HTTP 400 Bad Request
-    else Update Success
-        WalletDB-->>API: 1 row affected
-        
-        %% Bước 2: Sinh vật phẩm ngẫu nhiên
-        Note over API: Random logic -> Gets "Epic Seed"
-        API->>InvDB: INSERT INTO InventoryItem (metadata: {...})
-        
-        alt Insert Fails (e.g. DB Down)
-            %% Compensating Transaction
-            Note over API: Trigger Saga Compensation
-            API->>WalletDB: UPDATE KarmaWallet SET balance = balance + 100 (Refund)
-            API-->>User: HTTP 500 Internal Error (Refunded)
-        else Insert Success
-            API-->>User: HTTP 200 OK (Returns Epic Seed)
+        API-->>User: HTTP 400 INSUFFICIENT_FUNDS
+    else Lock Success
+        Note over API: Tính kết quả Gacha (Server-side, dùng Seed)
+
+        alt Kết quả ra KEY
+            API->>InvDB: INSERT InventoryItem {itemType: KEY}
+        else Kết quả KHÔNG ra KEY (Pity Trigger)
+            API->>InvDB: INSERT InventoryItem {vật phẩm thường}
+            API->>InvDB: UPDATE InventoryItem (metadata.keyFragments++) "Cộng Mảnh Vỡ"
         end
+
+        API->>Outbox: INSERT OutboxEvent {type: "GachaRolled"}
+        API-->>User: HTTP 200 OK {reward, keyFragmentsTotal}
     end
 ```
 
 ---
 
-### Luồng 3: Cập nhật Tọa độ Isometric Garden
-Web Client kéo thả HTML5 và gửi tọa độ để lưu vào DB.
+### Luồng 3: OCC khi Đồng bộ Offline (Tưới hộ vs. Self Check-in)
+Xử lý xung đột dữ liệu khi bạn bè tưới cây lúc User đang Offline.
 
 ```mermaid
 sequenceDiagram
-    actor User as Web Client
-    participant UI as Web UI (CSS Grid)
-    participant API as core-api (Garden Module)
-    participant DB as Postgres (Placement Table)
+    actor UserA as User A (Offline)
+    actor UserB as User B (Online)
+    participant SW as Service Worker A
+    participant API as core-api
+    participant DB as Postgres (PlantGuardian)
 
-    Note over UI: User kéo thả Item A sang tọa độ (X:2, Y:3)
-    UI->>UI: Tính toán Collision (Va chạm) Local
-    alt Collision Detected (Ô đã có vật phẩm)
-        UI-->>User: Đẩy vật phẩm về chỗ cũ (Animation)
-    else Path Clear
-        UI->>API: PUT /api/garden/placement {itemId: A, x: 2, y: 3}
-        API->>DB: UPDATE Placement SET x=2, y=3 WHERE item_id = A
-        DB-->>API: Success
-        API-->>UI: HTTP 200 OK
-    end
+    Note over UserA: A đang offline, tưới cây của mình
+    UserA->>SW: Check-in (Optimistic UI cập nhật local, version=5)
+
+    Note over UserB: B online, tưới hộ cây của A
+    UserB->>API: POST /social/neighbors/{a_id}/water
+    API->>DB: UPDATE PlantGuardian SET state=GROWING, version=6 WHERE id=plant_a AND version=5
+    DB-->>API: Success
+
+    Note over UserA: A có mạng trở lại, Background Sync chạy
+    SW->>API: POST /sync (plantVersion: 5)
+    API->>DB: UPDATE PlantGuardian WHERE id=plant_a AND version=5
+    DB-->>API: 0 rows (version đã là 6 — xung đột!)
+
+    API-->>SW: HTTP 409 Conflict {latestState, karmaRefunded: 10}
+    SW-->>UserA: UI đồng bộ state mới, pop-up "Karma dư đã vào Pending Stash"
 ```
 
 ---
 
-### Luồng 4: Tính điểm Thói quen Từ bỏ (Quitting Habit) lúc 00:00
-Cronjob chạy để thưởng cho user nếu không vi phạm (không gọi hàm Lapse) trong ngày.
+### Luồng 4: Auto-Transfer Quyền Thị Trưởng (Mayor Auto-Transfer)
+Tự động chuyển giao quyền lực khi Thị trưởng offline quá 14 ngày.
 
 ```mermaid
 sequenceDiagram
     participant Cronjob as Nightly Cronjob
     participant Kafka as Kafka (core-events)
-    participant Worker as core-api Worker
-    participant DB as Postgres (Habit Table)
+    participant Worker as Worker Service
+    participant DB as Postgres (NeighborhoodMember)
+    participant NotifSvc as Notification Service
 
-    Cronjob->>Kafka: Publish EVALUATE_QUITTING_HABITS
-    Kafka-->>Worker: Consume Event
-    Note over Worker: Quét các Habit type=QUIT
-    Worker->>DB: Check nếu không có LapseEvent hôm nay
-    alt Không vi phạm
-        Worker->>DB: Tăng EXP, sinh Khiên Năng Lượng cho Cây Vệ thần
-    else Có vi phạm (Đã report Lapse trước đó)
-        Worker->>DB: Bỏ qua (Đã chuyển sang POISONED từ lúc Report)
+    Cronjob->>Kafka: Publish CHECK_MAYOR_ACTIVITY
+    Kafka-->>Worker: Consume event
+    Worker->>DB: Query Neighborhoods có Mayor offline > 14 ngày
+
+    alt Mayor offline > 14 ngày
+        Note over Worker: Thuật toán chọn Tân Thị trưởng:
+        Note over Worker: 1. Phó Thị trưởng (DEPUTY_MAYOR) nếu có
+        Note over Worker: 2. Cao nhất currentCycleContribution
+        Note over Worker: 3. Online gần nhất
+        Worker->>DB: UPDATE NeighborhoodMember SET role=CITIZEN (Mayor cũ)
+        Worker->>DB: UPDATE NeighborhoodMember SET role=MAYOR (Tân Thị trưởng)
+        Worker->>NotifSvc: Push thông báo cho Tân Thị trưởng
     end
+```
+
+---
+
+### Luồng 5: Chống Ký sinh — Phân phối Rương Co-op (Monument Chest)
+Đảm bảo chỉ thành viên có đóng góp mới được nhận Rương khi Monument đầy năng lượng.
+
+```mermaid
+sequenceDiagram
+    participant Worker as Worker Service
+    participant DB as Postgres (Neighborhood + NeighborhoodMember)
+    participant InvDB as Postgres (InventoryItem)
+    participant NotifSvc as Notification Service
+
+    Note over Worker: Detect: Neighborhood X đã đầy Monument Energy
+    Worker->>DB: SELECT members WHERE neighborhoodId=X AND currentCycleContribution > 0
+    Note over Worker: Chỉ lấy những người có contribution > 0
+
+    loop Với mỗi thành viên hợp lệ
+        Worker->>InvDB: INSERT InventoryItem {itemType: GACHA_BOX, rarity: RARE}
+        Worker->>NotifSvc: Push thông báo "Bạn nhận được Rương Co-op!"
+    end
+
+    Worker->>DB: UPDATE Neighborhood SET monumentEnergy=0
+    Worker->>DB: UPDATE NeighborhoodMember SET currentCycleContribution=0 (Reset chu kỳ)
 ```
