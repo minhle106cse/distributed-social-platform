@@ -66,7 +66,11 @@ Check `execution/` per your directive. If you need a scraper or a log parser and
 5. Log bài học: docker exec agent-sandbox python execution/memory_manager.py log ...
 ```
 
-
+**Rule #3 — Mandatory Citation Protocol (Bắt buộc Trích dẫn):**
+> Để loại bỏ hoàn toàn việc AI tự biên tự diễn (hallucinate) và đảm bảo sự tuân thủ tuyệt đối với các tài liệu dự án: 
+> 1. Mọi bản kế hoạch (`implementation_plan.md`) được sinh ra ĐỀU PHẢI chứa một section tên là **"References & Compliance"**.
+> 2. Trong section này, Agent BẮT BUỘC phải liệt kê rõ: Đã dùng tool đọc file SOP nào trong `directives/` và file nghiệp vụ nào trong `docs/`, trích dẫn chính xác lấy logic từ đâu.
+> 3. Nếu thiếu phần này, User có quyền tự động Reject (Hủy) Plan ngay lập tức mà không cần giải thích.
 
 ## Self-annealing & Evolution Loop
 

@@ -163,11 +163,12 @@ The order is critical: Retry wraps Transaction so a retry creates a fresh transa
 
 The CQRS implementation dictates a strict directory separation based on Hexagonal Architecture:
 
-1. **`src/common/cqrs/`**: Contains the abstract definition of Commands, Queries, Handlers, and Middlewares. **Rule:** No domain-specific logic and no infra-specific imports (e.g., Prisma) are allowed here.
-2. **`src/common/database/`**: Contains generic database abstractions (`ITransactionManager`, `transaction.context.ts`). **Rule:** Completely agnostic of the underlying ORM.
-3. **`src/modules/[module]/domain/`**: Contains Entities, Value Objects, and Repository Interfaces. **Rule:** Pure TypeScript. No imports from external libraries or infra.
-4. **`src/modules/[module]/application/`**: Contains Command Handlers and Query Handlers. **Rule:** Orchestrates domain logic using Interfaces. Never imports Prisma or HTTP Request objects.
-5. **`src/modules/[module]/infrastructure/`**: Contains concrete Repository implementations (e.g., `PrismaUserRepository`). **Rule:** This is where `getTx()` is called and cast to `PrismaClient` to interact with the database.
-6. **`src/modules/[module]/presentation/`**: Contains Fastify routes/controllers. **Rule:** Translates HTTP requests into Commands/Queries and pushes them to the `CommandBus`.
+1. **`src/common/cqrs/`**: Contains the pure abstractions and implementations of Commands, Queries, Events, Handlers, Middlewares, and Buses. **Rule:** Pure TypeScript (POJO). No domain-specific logic, no infra-specific imports (e.g., Prisma), and **ABSOLUTELY NO framework decorators** (like NestJS `@Injectable()`, `@Module()`). Bus classes (`CommandBus`, `QueryBus`, `EventBus`) must be pure classes.
+2. **`src/infrastructure/cqrs/`** (or `container/` for pure Fastify apps): Contains the Dependency Injection wiring and framework-specific Modules (e.g., `cqrs.module.ts` in NestJS). **Rule:** This is where pure CQRS classes are instantiated and provided to the framework's DI container.
+3. **`src/common/database/`**: Contains generic database abstractions (`ITransactionManager`, `transaction.context.ts`). **Rule:** Completely agnostic of the underlying ORM.
+4. **`src/modules/[module]/domain/`**: Contains Entities, Value Objects, and Repository Interfaces. **Rule:** Pure TypeScript. No imports from external libraries or infra.
+5. **`src/modules/[module]/application/`**: Contains Command Handlers and Query Handlers. **Rule:** Orchestrates domain logic using Interfaces. Never imports Prisma or HTTP Request objects.
+6. **`src/modules/[module]/infrastructure/`**: Contains concrete Repository implementations (e.g., `PrismaUserRepository`). **Rule:** This is where `getTx()` is called and cast to `PrismaClient` to interact with the database.
+7. **`src/modules/[module]/presentation/`**: Contains Fastify routes/controllers. **Rule:** Translates HTTP requests into Commands/Queries and pushes them to the `CommandBus`.
 
-By strictly enforcing this folder structure, the core business logic remains fully decoupled from HTTP, Database, and Framework specifics.
+By strictly enforcing this folder structure and the "Pure POJO" rule for the CQRS core, the business logic and messaging patterns remain fully decoupled from HTTP, Database, and Framework specifics (like NestJS DI).

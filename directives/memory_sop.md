@@ -67,6 +67,16 @@ Khi nhận một task phức tạp (liên quan đến cấu trúc, lỗi khó, h
 
 ---
 
+## 🔄 Tự Động Hóa Tri Thức (Self-Annealing Loop)
+
+**QUY TẮC SỐNG CÒN (KHÔNG ĐỢI USER NHẮC NHỞ):**
+Nếu trong quá trình refactor hoặc code, một design pattern mới được chốt, hoặc một ranh giới kiến trúc (architectural boundary) được làm rõ (ví dụ: "chuyển framework code ra khỏi thư mục common"), Agent **BẮT BUỘC** phải tự động:
+1. Ghi bài học đó vào Memory thông qua `execution/memory_manager.py log`.
+2. Mở file `.md` liên quan trong thư mục `directives/` (hoặc tạo mới nếu cần) và cập nhật quy tắc đó ngay lập tức vào văn bản.
+3. Việc này phải được diễn ra **TRƯỚC KHI** báo cáo task hoàn thành hoặc chuyển sang bước commit. Không được hứa suông "sẽ cập nhật", phải hành động ngay trong cùng một window context.
+
+---
+
 ## ⚠️ Quy tắc an toàn
 
 - Không bao giờ chạy `python execution/memory_manager.py` trực tiếp trên host.

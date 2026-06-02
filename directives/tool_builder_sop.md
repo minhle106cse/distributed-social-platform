@@ -2,6 +2,15 @@
 
 **Mục đích:** Khi Agent Orchestrator gặp một tác vụ lặp đi lặp lại hoặc cần truy xuất dữ liệu từ API/Web mà trong `execution/` chưa có công cụ nào đáp ứng, Agent được cấp quyền (và khuyến khích) tự viết ra các script (tools) mới để sử dụng lâu dài. Đây là bước đệm tiến lên Cấp độ 5.
 
+## 🛡️ Kiến trúc An Toàn Bắt Buộc (The Circuit Breaker Pattern)
+
+**QUY TẮC TỐI THƯỢNG (KHÔNG ĐƯỢC VI PHẠM):**
+1. **Sandbox Read-Only:** Môi trường `agent-sandbox` (Docker) **LUÔN LUÔN** bị giới hạn ở quyền Read-Only (`:ro`) đối với toàn bộ source code (`apps/`, `packages/`). Không bao giờ được phép cấp quyền Read-Write (`:rw`) cho Sandbox để sửa code trực tiếp.
+2. **Quy trình Report ➡️ Execute:**
+   - Nếu một Python Script cần sửa source code (như `bulk_import_fixer.py`), script đó **BẮT BUỘC** phải chạy với chế độ `--dry-run` hoặc được thiết kế để chỉ xuất ra một báo cáo (JSON/Patch) vào thư mục `.tmp/` (nơi duy nhất có quyền `:rw`).
+   - AI Orchestrator (chính là Agent) sẽ đóng vai trò **Circuit Breaker (Cầu dao an toàn)**. Agent có nhiệm vụ đọc file báo cáo từ `.tmp/`, kiểm tra, và tự tay dùng bộ công cụ sửa file gốc của mình (như `replace_file_content`) để áp dụng thay đổi vào mã nguồn.
+3. **Mục đích:** Đảm bảo không một script nào (dù là do AI viết hay có sẵn) có thể tự ý phá hoại mã nguồn của dự án trong trường hợp chạy sai hoặc sinh lỗi ảo giác.
+
 ## Vòng lặp tự xây dựng công cụ (Tool Builder Loop)
 
 Khi bạn quyết định tạo ra một Tool mới, hãy tuân thủ nghiêm ngặt 4 bước sau:

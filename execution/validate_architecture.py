@@ -12,6 +12,14 @@ REQUIRED_FILES = [
     "src/bootstrap/fastify.ts"
 ]
 
+REQUIRED_DIRS = [
+    "src/bootstrap",
+    "src/common",
+    "src/config",
+    "src/infrastructure",
+    "src/modules"
+]
+
 def validate_apps(workspace_root: str):
     apps_dir = os.path.join(workspace_root, "apps")
     if not os.path.isdir(apps_dir):
@@ -23,16 +31,28 @@ def validate_apps(workspace_root: str):
 
     for app in apps:
         app_path = os.path.join(apps_dir, app)
+        if not os.path.isfile(os.path.join(app_path, "package.json")):
+            logger.info(f"Bỏ qua thư mục rỗng/chưa khởi tạo: {app}")
+            continue
+
         logger.info(f"Đang kiểm tra kiến trúc của microservice: {app}...")
         
         passed = True
         for req_file in REQUIRED_FILES:
             file_path = os.path.join(app_path, req_file)
             if not os.path.isfile(file_path):
-                logger.error(f"  [THIẾU] {req_file}")
+                logger.error(f"  [THIẾU FILE] {req_file}")
                 passed = False
             else:
-                logger.info(f"  [ĐẠT] {req_file}")
+                logger.info(f"  [ĐẠT FILE] {req_file}")
+                
+        for req_dir in REQUIRED_DIRS:
+            dir_path = os.path.join(app_path, req_dir)
+            if not os.path.isdir(dir_path):
+                logger.error(f"  [THIẾU THƯ MỤC] {req_dir}")
+                passed = False
+            else:
+                logger.info(f"  [ĐẠT THƯ MỤC] {req_dir}")
         
         if passed:
             logger.info(f"✅ Microservice '{app}' hoàn toàn tuân thủ kiến trúc chuẩn.")

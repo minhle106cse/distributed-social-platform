@@ -14,9 +14,9 @@ src/
 │   ├── server.ts                    # listen(), graceful shutdown
 │   └── swagger.ts                   # OpenAPI / Swagger setup
 ├── common/                          # Cross-cutting ABSTRACTIONS only — NO infrastructure code
-│   ├── cqrs/                        # Command/Query bus abstractions & middlewares
+│   ├── cqrs/                        # Command/Query bus abstractions & middlewares (PURE POJO ONLY)
 │   │   ├── index.ts                 # ICommand, ICommandHandler, CommandBus, IEvent, EventBus
-│   │   └── middlewares/
+│   │   └── middlewares/             # NO @Injectable or NestJS decorators allowed here
 │   │       ├── logging.middleware.ts
 │   │       ├── retry.middleware.ts
 │   │       └── transaction.middleware.ts
@@ -83,22 +83,13 @@ src/
 
 ---
 
-## core-api vs auth-service — Diff Hiện Tại (Cần Sửa)
+## core-api vs auth-service — Trạng Thái Đồng Bộ
 
-> Trạng thái tính đến 2026-06-01. Agent phải resolve những sai lệch này khi làm việc với `core-api`.
+> Trạng thái tính đến 2026-06-01: `core-api` đã được refactor thành công để tuân thủ kiến trúc chuẩn.
 
-| Vấn đề | Vị trí hiện tại (sai) | Vị trí đúng |
-|---|---|---|
-| `global-exception.filter.ts` | `common/filters/` | `infrastructure/http/filter/` |
-| `http-logging.interceptor.ts` | `common/interceptors/` | `infrastructure/http/hooks/` |
-| `response.interceptor.ts` | `common/interceptors/` | `infrastructure/http/hooks/` |
-| `logger.service.ts` | `common/logger/` | `infrastructure/logger/` |
-| `domain.exception.ts` | `common/exceptions/` | `common/errors/` |
-| `prisma-transaction-manager.ts` | `prisma/` (root src) | `infrastructure/database/prisma/` |
-| `prisma.module.ts` | `prisma/` (root src) | `infrastructure/database/prisma/` |
-| `prisma.service.ts` | `prisma/` (root src) | `infrastructure/database/prisma/` |
-| Thiếu `container/` | — | Cần tạo `container/infra.ts` + `container/usecases.ts` |
-| Thiếu `infrastructure/` | — | Cần tạo toàn bộ `infrastructure/` |
+- Toàn bộ các component infra (Prisma, Logger, HTTP Interceptors, Filters) đã được di dời từ `common/` sang `infrastructure/`.
+- CQRS buses ở `common/cqrs/` đã trở thành Pure POJO, framework module được đẩy sang `infrastructure/cqrs/`.
+- **Lưu ý:** `core-api` là NestJS app nên sử dụng `infrastructure/http/interceptors` thay vì `hooks` (như trong Fastify thuần của `auth-service`), và dùng cơ chế DI Module của NestJS thay vì thư mục `container/` thủ công.
 
 ---
 
