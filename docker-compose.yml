@@ -152,8 +152,118 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  # --------------------------------------------------------
+  # 9. Prometheus (Metrics Collector)
+  # --------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: dsp-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker-init/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    restart: always
+
+  # --------------------------------------------------------
+  # 10. Grafana (Metrics Dashboard)
+  # --------------------------------------------------------
+  grafana:
+    image: grafana/grafana:latest
+    container_name: dsp-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./docker-init/grafana/provisioning:/etc/grafana/provisioning
+    depends_on:
+      - prometheus
+    restart: always
+
+  # --------------------------------------------------------
+  # 11. Node Exporter (Host Metrics)
+  # --------------------------------------------------------
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: dsp-node-exporter
+    ports:
+      - "9100:9100"
+    restart: always
+
+
+  # --------------------------------------------------------
+  # 12. Postgres Exporter
+  # --------------------------------------------------------
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:latest
+    container_name: dsp-postgres-exporter
+    environment:
+      DATA_SOURCE_NAME: "postgresql://${DB_USER:-root}:${DB_PASSWORD:-rootpassword}@postgres:5432/${CORE_DB_NAME:-core_db}?sslmode=disable"
+    ports:
+      - "9187:9187"
+    depends_on:
+      - postgres
+    restart: always
+
+  # --------------------------------------------------------
+  # 13. Redis Exporter
+  # --------------------------------------------------------
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: dsp-redis-exporter
+    environment:
+      REDIS_ADDR: "redis:6379"
+    ports:
+      - "9121:9121"
+    depends_on:
+      - redis
+    restart: always
+
+  # --------------------------------------------------------
+  # 14. Kafka Exporter
+  # --------------------------------------------------------
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:latest
+    container_name: dsp-kafka-exporter
+    command: ["--kafka.server=kafka:29092"]
+    ports:
+      - "9308:9308"
+    depends_on:
+      - kafka
+    restart: always
+
+  # --------------------------------------------------------
+  # 15. Elasticsearch Exporter
+  # --------------------------------------------------------
+  elasticsearch-exporter:
+    image: prometheuscommunity/elasticsearch-exporter:latest
+    container_name: dsp-elasticsearch-exporter
+    command: ["--es.uri=http://elasticsearch:9200"]
+    ports:
+      - "9114:9114"
+    depends_on:
+      - elasticsearch
+    restart: always
+
+  # --------------------------------------------------------
+  # 16. Nginx Exporter
+  # --------------------------------------------------------
+  nginx-exporter:
+    image: nginx/nginx-prometheus-exporter:latest
+    container_name: dsp-nginx-exporter
+    command: ["-nginx.scrape-uri=http://api-gateway:80/stub_status"]
+    ports:
+      - "9113:9113"
+    depends_on:
+      - api-gateway
+    restart: always
+
 volumes:
   postgres_data:
   redis_data:
   kafka_data:
   es_data:
+  prometheus_data:
+  grafana_data:
