@@ -147,6 +147,11 @@ vite.config.ts.timestamp-*
 credentials.json
 token.json
 
+# AI Knowledge System — memory data is local, but index & builder are shared
+.ai/memory/
+!.ai/KNOWLEDGE_INDEX.md
+!.ai/knowledge_builder.py
+
 # Turborepo
 .turbo
 

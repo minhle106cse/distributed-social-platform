@@ -22,6 +22,7 @@
     "agent:down": "docker-compose -f docker-compose.agent.yml down",
     "lint": "turbo run lint",
     "test": "turbo run test",
+    "test:cov": "turbo run test:cov",
     "format": "prettier --write \"**/*.{ts,tsx,md}\""
   },
   "keywords": [],

@@ -1,260 +1,462 @@
-# 🏗️ SYSTEM ARCHITECTURE & TECHNICAL SPECIFICATIONS (GrowthGarden V2)
+# 🏗️ KIẾN TRÚC HỆ THỐNG & SƠ ĐỒ LUỒNG DỮ LIỆU
 
-Tài liệu này biểu diễn Luồng Dữ liệu (Data Flow) và Sơ đồ CSDL (Physical Schema) dựa trên kiến trúc Web-First, Modular Monolith và Event-Driven.
+> 📖 **[English Version](./en/03_system_architecture_diagrams.md)**
+
+Tài liệu biểu diễn Entity Relationship, Data Flow và Sequence Diagrams cho kiến trúc Modular Monolith + Event-Driven.
 
 ---
 
 ## 1. CORE ENTITY RELATIONSHIP DIAGRAM (ERD)
 
-Mô tả sự cô lập dữ liệu theo các Context đã định nghĩa trong lược đồ Prisma. Tuyệt đối không có Foreign Key xuyên Domain để phục vụ tách Microservices trong tương lai.
-
 ```mermaid
 erDiagram
-    %% Identity Context
+    %% Identity Context (auth-service DB)
     User {
         uuid id PK
         string email
         string username
+        string avatarUrl
         enum status "ACTIVE, BANNED"
     }
     AuthIdentity {
         uuid id PK
         string userId "Loose ref"
-        enum provider "LOCAL, GOOGLE, APPLE"
+        enum provider "LOCAL, GOOGLE"
         string passwordHash
         string refreshToken
     }
 
-    %% Economy Context (wallet-module -> economy-module)
-    Wallet {
-        uuid id PK
-        string userId "Loose ref (no FK)"
-        int karmaBalance
-        int stardustBalance
-        int version "OCC - chống Double Spending"
-    }
-    InventoryItem {
-        uuid id PK
-        string userId "Loose ref"
-        enum itemType "DECORATION, GACHA_BOX, KEY, KEY_FRAGMENT"
-        enum rarity "COMMON, RARE, EPIC, LEGENDARY"
-        json metadata "Số lượng mảnh vỡ, asset URL..."
-    }
-
-    %% Productivity Context
-    PlantGuardian {
-        uuid id PK
-        string userId "Loose ref"
-        enum state "SEED, GROWING, HIBERNATING, DEAD, ANCIENT"
-        int currentStreak
-        int highestStreak
-        int activeCheckinDays "Ngày điểm danh thực tế - chống lách luật"
-        int version "OCC - chống Race Condition khi tưới hộ offline"
-    }
-    EmotionCheckin {
-        uuid id PK
-        string plantId FK
-        date checkinDate
-        enum emotionGrade "A, B, C, D, E, F"
-    }
-
-    %% Social Context
-    Neighborhood {
+    %% Group Context
+    FinanceGroup {
         uuid id PK
         string name
-        int vibeScore
-        int monumentEnergy
+        string description
+        enum type "PERSISTENT, TRIP, QUICK_SPLIT"
+        enum status "ACTIVE, SETTLED, ARCHIVED"
+        string baseCurrency "VND, USD, EUR..."
+        date startDate
+        date endDate
+        int version "OCC"
     }
-    NeighborhoodMember {
-        string userId "Loose ref"
-        string neighborhoodId FK
-        enum role "MAYOR, DEPUTY_MAYOR, CITIZEN"
-        int currentCycleContribution "Phải > 0 mới nhận Rương Co-op"
+    GroupMember {
+        uuid id PK
+        string userId "Loose ref - no FK"
+        string groupId FK
+        enum role "OWNER, ADMIN, MEMBER, VIEWER"
+        datetime joinedAt
     }
-    Friendship {
-        string userId1 "Loose ref"
-        string userId2 "Loose ref"
-        enum status "PENDING, ACCEPTED"
+    GroupInvite {
+        uuid id PK
+        string groupId FK
+        string inviteCode "UNIQUE"
+        string invitedByUserId
+        datetime expiresAt
     }
 
-    %% Event Sourcing
+    %% Expense Context (Write Model)
+    Expense {
+        uuid id PK
+        string groupId "Loose ref"
+        string description
+        int totalAmount "Stored in smallest unit"
+        string currency
+        decimal exchangeRate "Pinned at creation"
+        int convertedAmount "In base currency"
+        enum splitMethod "EQUAL, EXACT, PERCENTAGE, SHARES"
+        enum category "FOOD, TRANSPORT..."
+        string noteText
+        string receiptUrl
+        date expenseDate
+        boolean isDeleted "Soft delete"
+        int version "OCC"
+        datetime createdAt
+        string createdByUserId "Loose ref"
+    }
+    ExpensePayer {
+        uuid id PK
+        string expenseId FK
+        string userId "Loose ref"
+        int amount "Amount this payer paid"
+    }
+    ExpenseSplit {
+        uuid id PK
+        string expenseId FK
+        string userId "Loose ref"
+        int amount "Amount this user owes"
+        decimal percentage "If PERCENTAGE split"
+        int shares "If SHARES split"
+    }
+
+    %% Settlement Context
+    Settlement {
+        uuid id PK
+        string groupId "Loose ref"
+        string fromUserId "Loose ref - person paying"
+        string toUserId "Loose ref - person receiving"
+        int amount
+        string currency
+        decimal exchangeRate
+        int convertedAmount
+        enum type "FULL, PARTIAL, RECORD_ONLY"
+        datetime createdAt
+        string createdByUserId
+    }
+
+    %% Event Store (Event Sourcing)
+    EventStore {
+        uuid id PK
+        string aggregateType "Expense, Settlement, Group"
+        string aggregateId
+        string eventType "ExpenseCreated, SettlementCreated..."
+        int version "Per aggregate"
+        json payload
+        string userId "Who triggered"
+        datetime createdAt
+    }
+
+    %% Balance Read Model (CQRS)
+    BalanceSummary {
+        uuid id PK
+        string groupId "Loose ref"
+        string fromUserId "Person who owes"
+        string toUserId "Person who is owed"
+        int balance "Positive = fromUser owes toUser"
+        string currency "Base currency of group"
+        datetime updatedAt
+    }
+
+    %% Infrastructure
     OutboxEvent {
         uuid id PK
-        string aggregateType "Wallet, PlantGuardian, Neighborhood..."
+        string aggregateType
         string aggregateId
-        string eventType "CheckinCompleted, CoopChestRewarded..."
+        string eventType
         json payload
         enum status "PENDING, PROCESSED, FAILED_DLQ"
+        datetime createdAt
+        datetime processedAt
+    }
+    IdempotencyRecord {
+        string key PK "X-Idempotency-Key"
+        json response "Cached response"
+        datetime createdAt
+        datetime expiresAt
     }
 
     %% Relationships
     User ||--o{ AuthIdentity : "authenticates via"
-    User ||--o| Wallet : "has wallet"
-    User ||--o{ InventoryItem : "owns items"
-    User ||--o| PlantGuardian : "grows plant"
-    PlantGuardian ||--o{ EmotionCheckin : "records checkins"
-    User ||--o{ NeighborhoodMember : "lives in"
-    Neighborhood ||--o{ NeighborhoodMember : "has members"
+    User ||--o{ GroupMember : "belongs to groups"
+    FinanceGroup ||--o{ GroupMember : "has members"
+    FinanceGroup ||--o{ GroupInvite : "has invites"
+    Expense ||--o{ ExpensePayer : "paid by"
+    Expense ||--o{ ExpenseSplit : "split among"
 ```
 
 ---
 
-## 2. SEQUENCE DIAGRAMS (LUỒNG DỮ LIỆU CẤP THẤP)
+## 2. SEQUENCE DIAGRAMS
 
-### Luồng 1: Điểm danh Cảm xúc & Cách ly Dữ liệu Text (Outbox + Storage Isolation)
-Bảo vệ Transaction Core, đồng thời tách rời Note văn bản sang NoSQL để chống Text Bloat.
-
-```mermaid
-sequenceDiagram
-    actor User as Web Client (Optimistic UI)
-    participant SW as Service Worker (IndexedDB)
-    participant API as core-api (Productivity Module)
-    participant DB as Postgres (PlantGuardian + EmotionCheckin)
-    participant Outbox as Postgres (OutboxEvent)
-    participant Kafka as Kafka (core-events)
-    participant Worker as Worker Service
-    participant NoSQL as NoSQL DB (EmotionNotes)
-
-    User->>SW: Click Check-in (Emotion + Note)
-    SW-->>User: Optimistic UI: Cây lấp lánh ngay lập tức (không cần chờ API)
-    SW->>API: POST /api/v1/checkin (Background Sync khi online)
-
-    Note over API: Start DB Transaction
-    API->>DB: UPDATE PlantGuardian (streak++, activeCheckinDays++, version++)
-    API->>DB: INSERT EmotionCheckin (date, grade)
-    API->>DB: UPDATE Wallet (karmaBalance + X)
-    API->>Outbox: INSERT OutboxEvent {type: "CheckinCompleted"}
-    Note over API: Commit Transaction
-
-    API-->>User: HTTP 200 OK {expGained, karmaEarned, newStreak}
-
-    %% Async: Note text vào NoSQL
-    alt User đã nhập Note
-        API->>Kafka: Publish NOTE_TEXT_EVENT {checkinId, noteText}
-        Kafka-->>Worker: Consume event
-        Worker->>NoSQL: INSERT EmotionNote {checkinId, userId, noteText}
-    end
-
-    %% Async: Kafka event cho các service khác
-    Outbox-->>Kafka: CDC Connector streams CheckinCompleted
-    Kafka-->>Worker: Cập nhật Neighborhood Monument Energy
-```
-
----
-
-### Luồng 2: Gacha & Pity System (Chống Double-Spending + Chống RNG Xui Xẻo)
-Luồng mua vật phẩm kết hợp Optimistic Locking, Seed-based RNG và tích lũy Pity Fragment.
+### Luồng 1: Tạo Expense (Outbox + Event Sourcing + Notification)
 
 ```mermaid
 sequenceDiagram
     actor User as Web Client
-    participant API as core-api (Economy Module)
-    participant WalletDB as Postgres (Wallet)
-    participant InvDB as Postgres (InventoryItem)
+    participant API as core-api (Expense Module)
+    participant ES as Postgres (EventStore)
+    participant DB as Postgres (Expense + Splits)
+    participant RM as Postgres (BalanceSummary)
     participant Outbox as Postgres (OutboxEvent)
+    participant Kafka as Kafka
+    participant Notif as Notification Service
+    participant WS as WebSocket (Online Members)
 
-    User->>API: POST /api/v1/economy/gacha/roll {seed}
+    User->>API: POST /api/v1/groups/{id}/expenses<br/>X-Idempotency-Key: uuid-123
 
-    Note over API: Seed-based RNG — Server xác thực seed Client gửi lên
-    API->>WalletDB: UPDATE Wallet SET stardustBalance = stardustBalance - X, version = N+1 WHERE version = N AND stardustBalance >= X
+    Note over API: Check Idempotency Key
+    API->>DB: SELECT FROM idempotency_records WHERE key = 'uuid-123'
+    alt Key exists
+        DB-->>API: Cached response
+        API-->>User: HTTP 200 (cached)
+    else Key not found
+        Note over API: BEGIN TRANSACTION
+        API->>ES: INSERT EventStore {type: ExpenseCreated, payload: {...}}
+        API->>DB: INSERT Expense + ExpensePayers + ExpenseSplits
+        API->>RM: UPDATE BalanceSummary (recalculate pairwise balances)
+        API->>Outbox: INSERT OutboxEvent {type: ExpenseCreated}
+        API->>DB: INSERT IdempotencyRecord {key: uuid-123, response: {...}}
+        Note over API: COMMIT TRANSACTION
 
-    alt Optimistic Lock Fail (version mismatch / không đủ tiền)
-        WalletDB-->>API: 0 rows affected
-        API-->>User: HTTP 400 INSUFFICIENT_FUNDS
-    else Lock Success
-        Note over API: Tính kết quả Gacha (Server-side, dùng Seed)
+        API-->>User: HTTP 201 Created
 
-        alt Kết quả ra KEY
-            API->>InvDB: INSERT InventoryItem {itemType: KEY}
-        else Kết quả KHÔNG ra KEY (Pity Trigger)
-            API->>InvDB: INSERT InventoryItem {vật phẩm thường}
-            API->>InvDB: UPDATE InventoryItem (metadata.keyFragments++) "Cộng Mảnh Vỡ"
-        end
-
-        API->>Outbox: INSERT OutboxEvent {type: "GachaRolled"}
-        API-->>User: HTTP 200 OK {reward, keyFragmentsTotal}
+        Note over Outbox: CDC / Polling Publisher
+        Outbox-->>Kafka: Publish ExpenseCreated event
+        Kafka-->>Notif: Consume event
+        Notif->>WS: Push to online members
+        Notif->>Notif: Queue push notification for offline members
     end
 ```
 
 ---
 
-### Luồng 3: OCC khi Đồng bộ Offline (Tưới hộ vs. Self Check-in)
-Xử lý xung đột dữ liệu khi bạn bè tưới cây lúc User đang Offline.
+### Luồng 2: Settlement — Saga Pattern + Idempotency
 
 ```mermaid
 sequenceDiagram
-    actor UserA as User A (Offline)
-    actor UserB as User B (Online)
-    participant SW as Service Worker A
+    actor UserB as User B (Debtor)
+    participant API as core-api (Settlement Module)
+    participant Idem as IdempotencyRecord Table
+    participant ES as EventStore
+    participant DB as Settlement Table
+    participant RM as BalanceSummary
+    participant Outbox as OutboxEvent
+    participant Kafka as Kafka
+    participant Notif as Notification Service
+
+    UserB->>API: POST /api/v1/settlements<br/>X-Idempotency-Key: settle-456<br/>{toUserId: A, amount: 200000}
+
+    API->>Idem: CHECK key 'settle-456'
+    Note over API: Key not found — proceed
+
+    Note over API: Saga Step 1: Validate
+    API->>RM: SELECT balance WHERE from=B, to=A, group=X
+    RM-->>API: balance = 200000 ✅ (B owes A 200k)
+
+    Note over API: Saga Step 2: Create Settlement Event
+    Note over API: BEGIN TRANSACTION
+    API->>ES: INSERT EventStore {type: SettlementCreated}
+    API->>DB: INSERT Settlement {from: B, to: A, amount: 200000}
+
+    Note over API: Saga Step 3: Update Read Model
+    API->>RM: UPDATE BalanceSummary SET balance = balance - 200000
+
+    alt Step 3 Success
+        API->>Outbox: INSERT OutboxEvent {type: SettlementCreated}
+        API->>Idem: INSERT IdempotencyRecord {key: settle-456}
+        Note over API: COMMIT TRANSACTION
+        API-->>UserB: HTTP 200 OK {settled: true}
+
+        Outbox-->>Kafka: Publish SettlementCreated
+        Kafka-->>Notif: Notify User A "B vừa trả bạn 200k!"
+    else Step 3 Fails (DB Error)
+        Note over API: ROLLBACK TRANSACTION
+        Note over API: Compensating: Nothing persisted (transaction rollback)
+        API-->>UserB: HTTP 500 "Settlement failed, please retry"
+    end
+```
+
+---
+
+### Luồng 3: OCC — Xung đột Sửa Expense Đồng thời
+
+```mermaid
+sequenceDiagram
+    actor UserA as User A
+    actor UserB as User B
     participant API as core-api
-    participant DB as Postgres (PlantGuardian)
+    participant DB as Postgres (Expense)
+    participant ES as EventStore
 
-    Note over UserA: A đang offline, tưới cây của mình
-    UserA->>SW: Check-in (Optimistic UI cập nhật local, version=5)
+    Note over UserA,UserB: Cả 2 đang mở form Edit cho Expense "Ăn trưa" (version = 3)
 
-    Note over UserB: B online, tưới hộ cây của A
-    UserB->>API: POST /social/neighbors/{a_id}/water
-    API->>DB: UPDATE PlantGuardian SET state=GROWING, version=6 WHERE id=plant_a AND version=5
-    DB-->>API: Success
+    UserA->>API: PUT /expenses/{id}<br/>{amount: 600000, version: 3}
+    Note over API: BEGIN TRANSACTION
+    API->>DB: UPDATE expense SET amount=600000, version=4<br/>WHERE id=X AND version=3
+    DB-->>API: 1 row affected ✅
+    API->>ES: INSERT EventStore {type: ExpenseUpdated, version: 4}
+    Note over API: COMMIT
+    API-->>UserA: HTTP 200 OK {version: 4}
 
-    Note over UserA: A có mạng trở lại, Background Sync chạy
-    SW->>API: POST /sync (plantVersion: 5)
-    API->>DB: UPDATE PlantGuardian WHERE id=plant_a AND version=5
-    DB-->>API: 0 rows (version đã là 6 — xung đột!)
+    UserB->>API: PUT /expenses/{id}<br/>{note: "thêm đồ uống", version: 3}
+    Note over API: BEGIN TRANSACTION
+    API->>DB: UPDATE expense SET note='...', version=4<br/>WHERE id=X AND version=3
+    DB-->>API: 0 rows affected ❌ (version already 4)
+    Note over API: ROLLBACK
+    API-->>UserB: HTTP 409 Conflict<br/>{currentVersion: 4, currentState: {amount: 600000}}
 
-    API-->>SW: HTTP 409 Conflict {latestState, karmaRefunded: 10}
-    SW-->>UserA: UI đồng bộ state mới, pop-up "Karma dư đã vào Pending Stash"
+    Note over UserB: User B sees diff, retries with version: 4
 ```
 
 ---
 
-### Luồng 4: Auto-Transfer Quyền Thị Trưởng (Mayor Auto-Transfer)
-Tự động chuyển giao quyền lực khi Thị trưởng offline quá 14 ngày.
+### Luồng 4: Circuit Breaker — Exchange Rate API
 
 ```mermaid
 sequenceDiagram
-    participant Cronjob as Nightly Cronjob
-    participant Kafka as Kafka (core-events)
-    participant Worker as Worker Service
-    participant DB as Postgres (NeighborhoodMember)
-    participant NotifSvc as Notification Service
+    participant API as core-api (Currency Module)
+    participant CB as Circuit Breaker
+    participant Cache as Redis (Exchange Rate Cache)
+    participant ExtAPI as External API (Fixer.io)
 
-    Cronjob->>Kafka: Publish CHECK_MAYOR_ACTIVITY
-    Kafka-->>Worker: Consume event
-    Worker->>DB: Query Neighborhoods có Mayor offline > 14 ngày
+    Note over CB: State: CLOSED (normal)
 
-    alt Mayor offline > 14 ngày
-        Note over Worker: Thuật toán chọn Tân Thị trưởng:
-        Note over Worker: 1. Phó Thị trưởng (DEPUTY_MAYOR) nếu có
-        Note over Worker: 2. Cao nhất currentCycleContribution
-        Note over Worker: 3. Online gần nhất
-        Worker->>DB: UPDATE NeighborhoodMember SET role=CITIZEN (Mayor cũ)
-        Worker->>DB: UPDATE NeighborhoodMember SET role=MAYOR (Tân Thị trưởng)
-        Worker->>NotifSvc: Push thông báo cho Tân Thị trưởng
+    API->>CB: getRate(JPY, VND)
+    CB->>Cache: GET rate:JPY:VND
+    alt Cache HIT (< 1 hour old)
+        Cache-->>CB: 175.0
+        CB-->>API: 175.0 (cached)
+    else Cache MISS
+        CB->>ExtAPI: GET /latest?base=JPY&symbols=VND
+        alt API Success
+            ExtAPI-->>CB: {rate: 176.2}
+            CB->>Cache: SET rate:JPY:VND = 176.2 TTL 3600s
+            CB-->>API: 176.2
+        else API Failure (5th consecutive)
+            Note over CB: State: CLOSED → OPEN
+            CB->>Cache: GET rate:JPY:VND (stale cache)
+            Cache-->>CB: 175.0 (2 hours old)
+            CB-->>API: 175.0 (fallback) + warning flag
+
+            Note over CB: After 30 seconds → HALF-OPEN
+            CB->>ExtAPI: Test 1 request
+            alt Test Success
+                Note over CB: HALF-OPEN → CLOSED
+            else Test Failure
+                Note over CB: HALF-OPEN → OPEN (reset timer)
+            end
+        end
     end
 ```
 
 ---
 
-### Luồng 5: Chống Ký sinh — Phân phối Rương Co-op (Monument Chest)
-Đảm bảo chỉ thành viên có đóng góp mới được nhận Rương khi Monument đầy năng lượng.
+### Luồng 5: Debt Simplification Algorithm
 
 ```mermaid
 sequenceDiagram
+    actor User as User A
+    participant API as core-api
     participant Worker as Worker Service
-    participant DB as Postgres (Neighborhood + NeighborhoodMember)
-    participant InvDB as Postgres (InventoryItem)
-    participant NotifSvc as Notification Service
+    participant DB as Postgres (BalanceSummary)
 
-    Note over Worker: Detect: Neighborhood X đã đầy Monument Energy
-    Worker->>DB: SELECT members WHERE neighborhoodId=X AND currentCycleContribution > 0
-    Note over Worker: Chỉ lấy những người có contribution > 0
+    User->>API: POST /api/v1/groups/{id}/simplify-debts
+    API->>Worker: Queue SimplifyDebtsCommand via Kafka
 
-    loop Với mỗi thành viên hợp lệ
-        Worker->>InvDB: INSERT InventoryItem {itemType: GACHA_BOX, rarity: RARE}
-        Worker->>NotifSvc: Push thông báo "Bạn nhận được Rương Co-op!"
+    Worker->>DB: SELECT all pairwise balances for group
+
+    Note over Worker: Step 1: Calculate Net Balance
+    Note over Worker: A: +350k, B: -200k, C: +100k, D: -150k, E: -100k
+
+    Note over Worker: Step 2: Separate Debtors and Creditors
+    Note over Worker: Debtors: [B: -200k, D: -150k, E: -100k]
+    Note over Worker: Creditors: [A: +350k, C: +100k]
+
+    Note over Worker: Step 3: Greedy Matching (sort by absolute value)
+    Note over Worker: Match B(-200k) → A(+350k): B pays A 200k. A remaining: +150k
+    Note over Worker: Match D(-150k) → A(+150k): D pays A 150k. A remaining: 0
+    Note over Worker: Match E(-100k) → C(+100k): E pays C 100k. Both done.
+
+    Worker-->>API: Suggested Settlements
+    API-->>User: HTTP 200<br/>[{from:B, to:A, amount:200k},<br/>{from:D, to:A, amount:150k},<br/>{from:E, to:C, amount:100k}]
+
+    Note over User: 3 transactions instead of up to 10!
+    Note over User: User confirms each one individually
+```
+
+---
+
+### Luồng 6: Event Sourcing — Rebuild Balance (Replay)
+
+```mermaid
+sequenceDiagram
+    participant Admin as Admin Trigger
+    participant Worker as Worker Service
+    participant ES as EventStore
+    participant RM as BalanceSummary (Read Model)
+
+    Admin->>Worker: POST /admin/groups/{id}/rebuild-balance
+
+    Worker->>RM: DELETE all BalanceSummary WHERE groupId = X
+    Note over Worker: Read Model wiped clean
+
+    Worker->>ES: SELECT * FROM event_store<br/>WHERE aggregateType IN ('Expense','Settlement')<br/>AND groupId = X<br/>ORDER BY createdAt ASC
+
+    loop For each event in chronological order
+        alt ExpenseCreatedEvent
+            Worker->>RM: Add pairwise balances from splits
+        else ExpenseUpdatedEvent
+            Worker->>RM: Apply delta (old splits → new splits)
+        else ExpenseDeletedEvent
+            Worker->>RM: Reverse all splits
+        else SettlementCreatedEvent
+            Worker->>RM: Reduce balance between payer↔receiver
+        end
     end
 
-    Worker->>DB: UPDATE Neighborhood SET monumentEnergy=0
-    Worker->>DB: UPDATE NeighborhoodMember SET currentCycleContribution=0 (Reset chu kỳ)
+    Worker-->>Admin: Rebuild complete. Verified: new == old ✅
+```
+
+---
+
+## 3. HIGH-LEVEL ARCHITECTURE DIAGRAM
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    CLIENT LAYER                              │
+│  ┌─────────────────────────────────────────────────────┐     │
+│  │  React SPA (Vite)                                   │     │
+│  │  ├── Dashboard (Charts, Balances)                   │     │
+│  │  ├── Expense Forms (Create/Edit)                    │     │
+│  │  ├── Settlement Flow                                │     │
+│  │  ├── Group Management                               │     │
+│  │  └── WebSocket Client (Real-time updates)           │     │
+│  └─────────────────────────────────────────────────────┘     │
+└───────────────────────┬──────────────────────────────────────┘
+                        │ HTTPS + WebSocket
+                        ▼
+┌──────────────────────────────────────────────────────────────┐
+│                 API GATEWAY / INGRESS                        │
+│  ├── /auth/*        → auth-service (Fastify :3001)           │
+│  ├── /api/v1/*      → core-api (NestJS :3000)                │
+│  ├── /ws/*          → notification-service (:3004)           │
+│  └── /exchange/*    → exchange-rate-service (:3005)           │
+└───────────────────────┬──────────────────────────────────────┘
+                        │
+        ┌───────────────┼───────────────────┐
+        ▼               ▼                   ▼
+┌──────────────┐ ┌──────────────────┐ ┌─────────────────┐
+│ auth-service │ │    core-api      │ │ exchange-rate    │
+│  (Fastify)   │ │   (NestJS)       │ │   -service       │
+│              │ │                  │ │                  │
+│ • JWT Auth   │ │ ┌──────────────┐ │ │ • Circuit Breaker│
+│ • Refresh    │ │ │ group-module │ │ │ • Rate Caching   │
+│   Rotation   │ │ ├──────────────┤ │ │ • Fallback       │
+│ • Rate Limit │ │ │expense-module│ │ └──────┬──────────┘
+└──────┬───────┘ │ ├──────────────┤ │        │
+       │         │ │settle-module │ │        ▼
+       ▼         │ ├──────────────┤ │  ┌──────────────┐
+┌──────────────┐ │ │balance-module│ │  │ Fixer.io /   │
+│  PostgreSQL  │ │ │ (Read Model) │ │  │ ExchangeRate │
+│  (Auth DB)   │ │ ├──────────────┤ │  │  (3rd-party) │
+└──────────────┘ │ │currency-mod  │ │  └──────────────┘
+                 │ └──────────────┘ │
+                 └────────┬─────────┘
+                          │
+          ┌───────────────┼────────────────┐
+          ▼               ▼                ▼
+   ┌──────────────┐ ┌──────────┐  ┌──────────────┐
+   │  PostgreSQL  │ │  Redis   │  │   Outbox      │
+   │  (Core DB)   │ │ (Cache)  │  │   Table       │
+   │              │ │          │  └──────┬────────┘
+   │ • EventStore │ │ • Balance│         │ CDC/Polling
+   │ • Expenses   │ │   Cache  │         ▼
+   │ • Settlements│ │ • Rate   │  ┌──────────────┐
+   │ • Balances   │ │   Cache  │  │    KAFKA      │
+   │ • Idempotency│ │ • Pub/Sub│  │              │
+   └──────────────┘ └──────────┘  │ Topics:      │
+                                  │ • expense-*  │
+                                  │ • settle-*   │
+                                  │ • group-*    │
+                                  │ • *-dlq      │
+                                  └──┬───┬───┬───┘
+                                     │   │   │
+                     ┌───────────────┘   │   └────────────┐
+                     ▼                   ▼                ▼
+              ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+              │ worker-svc   │  │ notif-svc    │  │ search-svc   │
+              │              │  │              │  │              │
+              │ • Debt Simplify│ │ • WebSocket  │  │ • ES Index   │
+              │ • Ledger Check│  │ • Push Notif │  │ • Full-text  │
+              │ • Export PDF  │  │ • Redis PubSub│ │   Search     │
+              │ • Auto-Archive│  │              │  │              │
+              └──────────────┘  └──────────────┘  └──────────────┘
 ```

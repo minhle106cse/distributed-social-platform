@@ -27,7 +27,7 @@ src/
 ├── config/                          # Environment config loading & validation
 ├── container/                       # Manual DI wiring (bắt buộc vì Fastify không có DI)
 │   ├── infra.ts                     # Wires infrastructure deps (repositories, services, logger)
-│   └── usecases.ts                  # Wires use-case/command handlers
+│   └── application.ts               # Wires application layer (CommandBus, QueryBus, Handlers)
 ├── infrastructure/                  # Concrete implementations — framework-specific code ĐI VÀO ĐÂY
 │   ├── database/
 │   │   └── prisma/
@@ -43,14 +43,23 @@ src/
 │   │   └── hooks/
 │   │       ├── http-logging.hook.ts
 │   │       └── http-response.hook.ts
-│   └── logger/
-│       └── logger.ts                # Concrete Pino logger (implements ILogger from shared-kernel)
+
 ├── modules/                         # Feature modules — business logic by domain
 │   └── <domain>/
-│       ├── application/
-│       ├── domain/
-│       ├── infrastructure/
-│       └── presentation/
+│       ├── application/             # Application Layer (Orchestration & CQRS)
+│       │   ├── commands/            # Command Handlers (Write Model)
+│       │   ├── queries/             # Query Handlers (Read Model)
+│       │   └── repositories/        # Query Repository Interfaces (returns DTOs)
+│       ├── domain/                  # Domain Layer (Core Business Rules)
+│       │   ├── entities/            # Aggregate Roots & Entities
+│       │   ├── value-objects/       # Immutable Value Objects
+│       │   └── repositories/        # Command Repository Interfaces (returns Entities)
+│       ├── infrastructure/          # Infrastructure Layer (Concrete Implementations)
+│       │   ├── mappers/             # Domain <-> Persistence Mappers
+│       │   └── repositories/        # Concrete Prisma Repositories (Flat structure, both queries/commands)
+│       └── presentation/            # UI/Delivery Layer
+│           ├── routes/              # HTTP Routes (Fastify)
+│           └── schemas/             # Zod Validation Schemas
 ├── app.ts                           # Root Fastify app factory
 ├── main.ts                          # Entrypoint (local)
 └── main.lambda.ts                   # Entrypoint (AWS Lambda)
@@ -64,7 +73,7 @@ src/
 |---|---|
 | Đặt filter/interceptor/hook Fastify vào `common/` | `common/` chỉ chứa ABSTRACTION, không chứa infrastructure framework cụ thể |
 | Đặt Prisma module/service vào thư mục riêng `prisma/` ở root src | Prisma là infrastructure detail → phải nằm trong `infrastructure/database/prisma/` |
-| Đặt logger concrete implementation vào `common/logger/` | `common/` chứa interface, implementation nằm trong `infrastructure/logger/` |
+| Đặt logger concrete implementation vào `common/logger/` | `common/` chứa interface, implementation dùng chung đã nằm trong `packages/shared-kernel` |
 | Đặt `ILogger` interface bên trong một service app (e.g. `auth-service/src/common/logger.ts`) | Interface dùng chung phải nằm trong `packages/shared-kernel` |
 | Tạo folder ngoài 5 thành phần chính khi không có lý do cụ thể | Phá vỡ tính nhất quán giữa các service |
 

@@ -1,127 +1,335 @@
-# 📋 SYSTEM USE CASES (GrowthGarden V2)
+# 📋 KỊCH BẢN SỬ DỤNG (SYSTEM USE CASES)
 
-Tài liệu này đặc tả các luồng tương tác giữa User và System theo định hướng "Cozy & Healing". Dựa vào đây để đội ngũ QA/Developer nắm bắt luồng nghiệp vụ thực tế.
+> 📖 **[English Version](./en/02_use_cases.md)**
 
----
-
-## 1. TRỤ CỘT 1 — KINH TẾ NÔNG TRẠI (Farming & Economy)
-
-### UC1.1: Điểm danh Cảm xúc hằng ngày (Core Check-in)
-- **Pre-condition:** User A đang có Cây Vệ Thần ở trạng thái `GROWING`. Hôm nay chưa điểm danh.
-- **Action:** User A vào app, chọn cảm xúc hôm nay (A–F) và tùy chọn thêm Ghi chú (Note).
-- **Expected Result:** UI bắn hiệu ứng lấp lánh tưới vào cây (Optimistic UI). Cây nhận EXP. Streak tăng 1. `activeCheckinDays` tăng 1. Backend lưu `EmotionCheckin` và bắn event `CHECKIN_COMPLETED` vào bảng `OutboxEvent`. Karma được cộng vào Wallet (trừ khi đã chạm Daily Cap).
-
-### UC1.2: Chạm mốc Chuỗi lớn (Streak Milestone)
-- **Pre-condition:** User A có `activeCheckinDays = 21` (21 ngày điểm danh thực tế).
-- **Action:** User A điểm danh ngày hôm nay, đạt mốc 21 ngày.
-- **Expected Result:** Cây hóa `ANCIENT` (Cổ thụ), rớt ra **Bụi Sao**. UI hiển thị animation đặc biệt chúc mừng. Cây cũ có thể được chuyển vào Nhà Kính Kỷ Niệm.
-
-### UC1.3: Ngủ đông & Rã đông (Hibernation & Recovery)
-- **Pre-condition:** User A bỏ điểm danh 3 ngày liên tiếp. Cây bị `HIBERNATING` (đóng băng, mọc cỏ dại). Streak chưa bị mất.
-- **Action:** User A quay lại, dùng Karma để rã đông Cây.
-- **Expected Result:** Cây trở lại trạng thái `GROWING`. Streak được bảo toàn. Cây bước vào trạng thái "Dưỡng thương" (Hibernation Cooldown). Nếu User tiếp tục bỏ điểm danh trong 3 ngày tiếp theo sau khi rã đông, Cây chết ngay lập tức, Streak về 0, không thể dùng Karma cứu lần nữa. AI NPC có thể xuất hiện tặng quà khích lệ.
-
-### UC1.4: Thương Nhân Thần Bí & Gacha (Merchant Shop)
-- **Pre-condition:** User A có đủ Bụi Sao để mua vật phẩm trong shop.
-- **Action 1 (Refresh):** User A dùng Karma để làm mới (Refresh) danh sách hàng của Thương nhân.
-- **Action 2 (Mua):** User A dùng Bụi Sao để mua một Rương Gacha. Kết quả không ra Key.
-- **Expected Result:** Vật phẩm được thêm vào Inventory. **Hệ thống Pity:** Do không ra Key, User nhận 1 **Mảnh vỡ Không gian (Key Fragment)**. `metadata.keyFragments` trong Inventory tăng 1. Seed-based RNG đảm bảo kết quả không thể bị hack qua DevTools.
-
-### UC1.5: Đúc Key từ Mảnh Vỡ (Pity Crafting)
-- **Pre-condition:** User A tích lũy đủ 100 Mảnh vỡ Không gian.
-- **Action:** User A vào Lò Rèn, chọn "Đúc Key".
-- **Expected Result:** 100 Mảnh vỡ bị tiêu hao, User nhận 1 Key hoàn chỉnh vào Inventory. Tính năng Đúc là Online-Only.
-
-### UC1.6: Mở khóa Vùng Đất Mới (Legendary Gate)
-- **Pre-condition:** User A tích đủ số Key cần thiết (vài Key) để mở một vùng đất.
-- **Action:** User A dùng Key để mở khóa "Nhà Kính Tuyết" hoặc "Vườn Trên Mây".
-- **Expected Result:** Vùng đất mới được mở khóa trong Khu vườn của User A. Giao diện chuyển đổi sang không gian mới với bảng màu và theme độc quyền.
-
-### UC1.7: Lò Rèn Thẩm Mỹ (Merging/Crafting)
-- **Pre-condition:** User A tích lũy 5 vật phẩm Common.
-- **Action:** User A vào Lò Rèn, đốt 5 vật phẩm Common + một lượng Karma/Bụi Sao để đúc.
-- **Expected Result:** 5 vật phẩm Common bị xóa. Hệ thống tính toán tỷ lệ và rớt ra 1 vật phẩm Epic. Lò Rèn là Online-Only.
+Tài liệu đặc tả các luồng tương tác giữa User và System. Dựa vào đây để Developer/QA nắm bắt luồng nghiệp vụ thực tế và viết test cases.
 
 ---
 
-## 2. TRỤ CỘT 2 — TƯƠNG TÁC XÃ HỘI (Social Lifeline)
+## 1. TRỤ CỘT 1 — QUẢN LÝ NHÓM & CHI PHÍ
 
-### UC2.1: Kết bạn & Lập Khu phố
-- **Pre-condition:** User A và User B chưa là bạn bè.
-- **Action 1 (Kết bạn):** User A tạo Link/Mã QR và gửi cho User B. User B bấm vào Link để kết bạn.
-- **Expected Result 1:** A và B trở thành bạn bè (Friendship 1-1). Có thể thăm vườn của nhau và tưới hộ. Họ chưa tự động vào chung một Khu phố.
-- **Action 2 (Lập Khu phố):** User A gửi "Thư mời định cư" cho B (và C, D). Tất cả chấp nhận.
-- **Expected Result 2:** Một Khu Phố mới được tạo ra. A là Thị trưởng. B, C, D là Công dân (Citizen). Họ trở thành Hàng xóm của nhau và có thể tương tác (tưới hộ, góp năng lượng công trình) mà không cần kết bạn 1-1.
+### UC1.1: Tạo Nhóm Tài chính
 
-### UC2.2: Tưới hộ cứu bạn (Empathetic Watering)
-- **Pre-condition:** Cây của User B đang `HIBERNATING`. User A là bạn của B.
-- **Action:** User A ghé thăm vườn B, bấm "Tưới nước" giúp.
-- **Expected Result:** Cây của B thoát khỏi `HIBERNATING`. User A nhận Karma thưởng vì lòng tốt.
+- **Pre-condition:** User A đã đăng nhập.
+- **Action:** User A tạo nhóm mới với tên "Du lịch Đà Lạt", loại `TRIP`, Base Currency `VND`, ngày bắt đầu/kết thúc.
+- **Expected Result:**
+  - Nhóm được tạo, User A trở thành `OWNER`.
+  - Hệ thống sinh Invite Link và QR Code.
+  - Event: `GroupCreatedEvent` ghi vào Event Store.
+  - Balance table khởi tạo: tất cả balance = 0.
 
-### UC2.3: Bảo lãnh Streak (Karma Bailout)
-- **Pre-condition:** User B vỡ Streak nhưng không có đủ Karma để rã đông.
-- **Action:** User A (bạn của B) vào vườn B và chọn "Bảo lãnh" — trích Karma của mình ra giúp B.
-- **Expected Result:** Karma của A bị trừ. Streak của B được khôi phục. Cây của B rã đông.
+### UC1.2: Mời Thành viên vào Nhóm
 
-### UC2.4: Tặng quà Cảm xúc (Emotional Gift)
-- **Pre-condition:** User B vừa có một ngày điểm danh tệ (cảm xúc F). User A muốn động viên.
-- **Action:** User A ghé vườn B, chọn "Tặng quà" và gửi một vật phẩm trang trí nhỏ (Chuông gió, Hạc giấy, Thiệp viết tay).
-- **Expected Result:** Vật phẩm xuất hiện trong Khu vườn của B. B nhận thông báo và cảm thấy được động viên.
+- **Pre-condition:** User A là Owner/Admin của nhóm "Du lịch Đà Lạt".
+- **Action:** User A gửi Invite Link cho User B, C, D qua chat.
+- **Expected Result:**
+  - B, C, D bấm link → Hiển thị trang xác nhận → Chấp nhận → Trở thành `MEMBER`.
+  - Event: `MemberJoinedEvent` cho mỗi người.
+  - Balance table cập nhật: thêm cặp balance mới (A↔B, A↔C, A↔D, B↔C, B↔D, C↔D).
 
-### UC2.5: Xây Công Trình Khu Phố & Nhận Rương Co-op
-- **Pre-condition:** Khu phố có 5 thành viên. Đài phun nước trung tâm cần X Năng lượng để kích hoạt.
-- **Action:** Tất cả 5 thành viên điểm danh cảm xúc mỗi ngày, tự động đóng góp Năng lượng cho công trình.
-- **Expected Result:** Khi công trình sạc đầy, nó kích hoạt và thả xuống "Rương Co-op". Chỉ những thành viên có `currentCycleContribution > 0` mới được mở Rương (Chống ký sinh).
+### UC1.3: Tạo Chi phí — Chia đều (EQUAL Split)
 
-### UC2.6: Thị trưởng Đuổi Thành viên Toxic (Mayor Eviction)
-- **Pre-condition:** Khu phố có User X liên tục phá hoại không khí (toxic). Thị trưởng là User A.
-- **Action:** Thị trưởng A vào trang quản lý Khu phố, chọn User X và thực hiện "Evict".
-- **Expected Result:** User X bị đuổi khỏi Khu phố ngay lập tức. Toàn bộ đóng góp của X cho Công trình Chung bị mất trắng (Sunk Cost, không hoàn trả). Backend không cần chạy compensating transaction phức tạp.
+- **Pre-condition:** Nhóm 4 người (A, B, C, D). User A trả tiền ăn trưa 800,000₫.
+- **Action:** User A tạo expense: Payer = A, Amount = 800,000₫, Split = EQUAL, Category = FOOD.
+- **Expected Result:**
+  - Mỗi người nợ A: 800,000 / 4 = 200,000₫. Trừ phần A tự trả → B, C, D mỗi người nợ A 200,000₫.
+  - Events ghi vào Event Store:
+    ```
+    ExpenseCreatedEvent {
+      expenseId, groupId, payerId: A,
+      amount: 800000, currency: VND,
+      splitMethod: EQUAL,
+      splits: [
+        {userId: A, amount: 200000, owes: 0},      // A tự trả cho mình
+        {userId: B, amount: 200000, owes: 200000},
+        {userId: C, amount: 200000, owes: 200000},
+        {userId: D, amount: 200000, owes: 200000}
+      ]
+    }
+    ```
+  - Outbox Event published → Kafka → Notification Service → Push cho B, C, D.
+  - Read Model (Balance) cập nhật: B→A: -200k, C→A: -200k, D→A: -200k.
 
-### UC2.7: Auto-Transfer Quyền Thị Trưởng
-- **Pre-condition:** Thị trưởng User A không đăng nhập liên tục 14 ngày.
-- **Action:** Hệ thống tự động kích hoạt Auto-Transfer.
-- **Expected Result:** User A bị giáng xuống làm Công dân. Thuật toán chọn Tân Thị trưởng theo thứ tự: (1) Phó Thị trưởng nếu có, (2) Người có `currentCycleContribution` cao nhất, (3) Người online gần nhất. Tân Thị trưởng nhận thông báo.
+### UC1.4: Tạo Chi phí — Chia tùy chỉnh (EXACT Split)
 
-### UC2.8: AI NPC Ghé thăm (Healing NPC Visit)
-- **Pre-condition:** User A vừa phục hồi từ Ngủ đông (rã đông thành công).
-- **Action:** Hệ thống xác suất kích hoạt sự kiện AI NPC.
-- **Expected Result:** Một AI NPC (Cáo lang thang, Cú mèo...) xuất hiện trong vườn của A, tặng một phần thưởng nhỏ (Karma hoặc Bụi Sao). NPC chỉ xuất hiện với user **đang active** để chặn hành vi "Fake Churn" (cố tình nghỉ game để nhử AI phát quà).
+- **Pre-condition:** Nhóm 3 người (A, B, C). User A trả tiền 500,000₫ nhưng A ăn nhiều hơn.
+- **Action:** User A tạo expense: Amount = 500,000₫, Split = EXACT, A: 250k, B: 150k, C: 100k.
+- **Expected Result:**
+  - Validation: Sum(250 + 150 + 100) = 500k ✅ (phải bằng total amount).
+  - B nợ A: 150,000₫. C nợ A: 100,000₫. A đã tự trả 250k.
+  - Event ghi nhận splits chính xác.
+
+### UC1.5: Tạo Chi phí — Chia theo tỷ lệ (PERCENTAGE Split)
+
+- **Pre-condition:** Nhóm 3 người. User B trả tiền 1,000,000₫. A hưởng 50%, B 30%, C 20%.
+- **Action:** User B tạo expense: Amount = 1,000,000₫, Split = PERCENTAGE.
+- **Expected Result:**
+  - Validation: Sum(50 + 30 + 20) = 100% ✅.
+  - A nợ B: 500,000₫. C nợ B: 200,000₫. B tự trả 300,000₫.
+
+### UC1.6: Tạo Chi phí — Chia theo phần (SHARES Split)
+
+- **Pre-condition:** Nhóm 3 người. User C trả 600,000₫. A: 2 phần, B: 1 phần, C: 1 phần.
+- **Action:** User C tạo expense: Amount = 600,000₫, Split = SHARES.
+- **Expected Result:**
+  - Tổng phần: 2+1+1 = 4. Mỗi phần = 150,000₫.
+  - A nợ C: 300,000₫ (2 phần). B nợ C: 150,000₫ (1 phần). C tự trả 150,000₫.
+
+### UC1.7: Tạo Chi phí — Loại trừ Thành viên
+
+- **Pre-condition:** Nhóm 4 người. User A trả bia 400,000₫ nhưng C không uống.
+- **Action:** User A tạo expense, loại trừ C khỏi split.
+- **Expected Result:**
+  - Chỉ chia cho A, B, D: 400,000 / 3 = 133,333₫ mỗi người.
+  - B nợ A: 133,333₫. D nợ A: 133,333₫. C không bị ảnh hưởng.
+
+### UC1.8: Tạo Chi phí — Nhiều Người trả (Multi-payer)
+
+- **Pre-condition:** Nhóm 4 người. Bữa ăn 1,000,000₫. A trả 600k, B trả 400k.
+- **Action:** Tạo expense: Payers = [A: 600k, B: 400k], Split = EQUAL.
+- **Expected Result:**
+  - Mỗi người nên trả: 1,000,000 / 4 = 250,000₫.
+  - A đã trả 600k, nên A được nợ lại: 600k - 250k = 350k.
+  - B đã trả 400k, nên B được nợ lại: 400k - 250k = 150k.
+  - C nợ: 250k (phân bổ cho A và B theo tỷ lệ).
+  - D nợ: 250k (tương tự).
+
+### UC1.9: Sửa Chi phí (Edit Expense — OCC)
+
+- **Pre-condition:** Expense "Ăn trưa" 500k, version = 1.
+- **Action:** User A sửa amount từ 500k → 600k.
+- **Expected Result:**
+  - Hệ thống kiểm tra version. Nếu version = 1 → Update thành công, version = 2.
+  - Event: `ExpenseUpdatedEvent { changes: {amount: {from: 500000, to: 600000}}, version: 2 }`.
+  - Balance Read Model cập nhật (delta: +100k chia cho participants).
+  - Row cũ KHÔNG bị modify — Event mới append vào Event Store.
+
+### UC1.10: Sửa Chi phí — Xung đột OCC (Concurrent Edit)
+
+- **Pre-condition:** Expense "Ăn trưa" version = 1. User A và User B đều mở form Edit.
+- **Action:**
+  1. User A sửa amount 500k → 600k (gửi version: 1).
+  2. User B sửa note "thêm đồ uống" (gửi version: 1 — cùng lúc).
+- **Expected Result:**
+  - User A gửi trước → Thành công. Version = 2.
+  - User B gửi sau → **HTTP 409 Conflict** (version mismatch: expected 1, got 2).
+  - User B nhận state mới nhất (version 2) → Hiển thị diff → Cho phép retry.
+
+### UC1.11: Xóa Chi phí (Soft Delete)
+
+- **Pre-condition:** Expense "Ăn trưa" tồn tại.
+- **Action:** User A (creator hoặc Admin) xóa expense.
+- **Expected Result:**
+  - Row KHÔNG bị xóa. Event: `ExpenseDeletedEvent { expenseId, deletedBy: A }`.
+  - Balance Read Model cập nhật (trừ lại tất cả splits).
+  - Expense hiện badge "Đã xóa" trong Activity Log.
 
 ---
 
-## 3. TRỤ CỘT 3 — Ý CHÍ & SỰ KIÊN CƯỜNG (Non-Cringe Resilience)
+## 2. TRỤ CỘT 2 — THANH TOÁN & TỐI ƯU NỢ
 
-### UC3.1: Mất chuỗi & Cứu Streak bằng Karma
-- **Pre-condition:** User A quên điểm danh 1 ngày. Cây bước vào trạng thái có nguy cơ đóng băng.
-- **Action:** User A nhận ra và dùng Karma để rã đông trong vòng 3 ngày cho phép.
-- **Expected Result:** Streak được bảo toàn. Chi phí Karma tăng dần theo độ dài Streak nhưng có Cap trần. Cây bước vào trạng thái "Dưỡng thương" (Hibernation Cooldown).
+### UC2.1: Settle Nợ (Full Settlement)
 
-### UC3.2: Chạm Daily Cap Karma
-- **Pre-condition:** User A đã điểm danh và nhận đủ Karma tối đa trong ngày.
-- **Action:** User A thực hiện thêm một hành động khác cũng tạo ra Karma.
-- **Expected Result:** Hành động vẫn được ghi nhận. Cây nhận EXP bình thường. Tuy nhiên, `karmaEarned` trả về 0. Nếu có Karma dư (từ Offline Sync), nó không bị xóa mà vào **Pending Stash**. UI hiển thị pop-up dễ thương: *"Túi tiền đã đầy, số Karma dư sẽ được dùng để tưới mát thảm cỏ chung của khu phố"*.
+- **Pre-condition:** B nợ A 200,000₫ trong nhóm "Du lịch Đà Lạt".
+- **Action:** User B bấm "Settle Up" → Chọn A → Nhập 200,000₫ → Gửi kèm `X-Idempotency-Key`.
+- **Expected Result:**
+  - Saga Pattern:
+    1. Validate: B thực sự nợ A ≥ 200k ✅.
+    2. Create `SettlementCreatedEvent`.
+    3. Update Balance: B→A giảm 200k → Balance = 0.
+    4. Outbox → Kafka → Notification cho A: "B vừa trả bạn 200k!"
+  - WebSocket: A nhận real-time update.
+  - Idempotency: Nếu B gửi lại cùng key → trả kết quả cached.
 
-### UC3.3: Lách Chuỗi bị Chặn (Anti-Hibernation Loop)
-- **Pre-condition:** User A cố tình điểm danh 1 ngày, nghỉ 3 ngày, rã đông, rồi lại nghỉ 3 ngày...
-- **Cơ chế phòng thủ của hệ thống:**
-  - Mốc Bụi Sao (7, 21, 66 ngày) tính bằng `activeCheckinDays` (số ngày điểm danh THỰC TẾ), **không phải ngày lịch**. Ngày ngủ đông không được cộng vào.
-  - Sau khi rã đông, Cây bước vào trạng thái "Dưỡng thương". Nếu tiếp tục nghỉ thêm 3 ngày, Cây chết lập tức và Streak về 0 mà không được phép dùng Karma cứu.
-- **Expected Result:** Hành vi lách chuỗi không mang lại lợi ích nào. Người chơi phải điểm danh thực sự để tiến tới các mốc Bụi Sao.
+### UC2.2: Settle Nợ — Saga Rollback
 
-### UC3.4: Offline-First & Đồng bộ khi có mạng
-- **Pre-condition:** User A đang trên tàu điện ngầm, mất kết nối mạng.
-- **Action:** User A vẫn điểm danh cảm xúc bình thường trên app.
-- **Expected Result:** Optimistic UI cập nhật tức thì (Cây lấp lánh, EXP tăng). Dữ liệu được lưu vào IndexedDB qua Service Worker. Khi có mạng, Background Sync tự động đẩy lên Server. OCC với `@version` phát hiện xung đột (nếu có bạn bè vừa tưới hộ) và hoàn Karma vào Pending Stash thay vì báo lỗi.
+- **Pre-condition:** Cùng UC2.1, nhưng Step 3 (Update Balance) bị lỗi DB timeout.
+- **Expected Result:**
+  - Saga Compensating Transaction:
+    1. Create `SettlementFailedEvent` (ghi nhận failure).
+    2. Balance KHÔNG bị thay đổi.
+    3. Notification cho B: "Thanh toán thất bại, vui lòng thử lại."
+  - Idempotency Key vẫn hợp lệ — B có thể retry với key mới.
+
+### UC2.3: Settle Nợ — Double-Click Protection (Idempotency)
+
+- **Pre-condition:** B bấm "Pay" nhưng mạng lag.
+- **Action:** B bấm "Pay" thêm 1 lần nữa (cùng `X-Idempotency-Key`).
+- **Expected Result:**
+  - Request thứ 2 → Server check Idempotency Table → Key đã tồn tại.
+  - Trả về response cached từ request đầu tiên.
+  - **Tiền KHÔNG bị trừ 2 lần.**
+
+### UC2.4: Settle Nợ — Partial Settlement
+
+- **Pre-condition:** B nợ A 500,000₫. B chỉ có 200,000₫.
+- **Action:** B settle 200,000₫ (partial).
+- **Expected Result:**
+  - Balance cập nhật: B→A giảm từ 500k → 300k.
+  - Event: `SettlementCreatedEvent { type: PARTIAL, amount: 200000 }`.
+  - B vẫn nợ A 300k.
+
+### UC2.5: Settle Nợ — Record Only (Ghi nhận Tiền mặt)
+
+- **Pre-condition:** C nợ A 100,000₫. C trả A bằng tiền mặt ngoài app.
+- **Action:** A hoặc C tạo settlement `RECORD_ONLY`.
+- **Expected Result:**
+  - Balance cập nhật: C→A = 0.
+  - Event ghi nhận, nhưng không có giao dịch tài chính thực sự qua app.
+
+### UC2.6: Debt Simplification — Gợi ý Tối ưu
+
+- **Pre-condition:** Nhóm 5 người, 15 expenses, ma trận nợ phức tạp.
+- **Action:** User A bấm "Gợi ý Settle" (Suggest Optimal Settlement).
+- **Expected Result:**
+  - Worker Service tính Net Balance:
+    ```
+    A: +350k (được nợ ròng)
+    B: -200k (nợ ròng)
+    C: +100k (được nợ ròng)
+    D: -150k (nợ ròng)
+    E: -100k (nợ ròng)
+    ```
+  - Greedy Matching Output:
+    ```
+    1. B → A: 200k
+    2. D → A: 150k
+    3. E → C: 100k
+    ```
+  - Chỉ 3 giao dịch thay vì tối đa C(5,2) = 10 cặp!
+  - Hiển thị dưới dạng suggestion cards — User xác nhận từng khoản.
 
 ---
 
-## 4. XỬ LÝ NỀN (Background & Cronjob)
+## 3. TRỤ CỘT 3 — ĐA TIỀN TỆ
 
-### UC4.1: Cronjob Đánh giá Trạng thái Cây (Nightly Job)
-- **Action:** Mỗi ngày lúc 00:00, Cronjob nhẹ trigger event `EVALUATE_PLANT_STATUS` vào Kafka.
-- **Expected Result:** Worker Nodes consume event và xử lý bất đồng bộ, cập nhật trạng thái từng Cây (kiểm tra ai đã điểm danh, ai chưa, ai cần `HIBERNATING`). Tránh lock table hay CPU spike.
+### UC3.1: Expense Đa tiền tệ
 
-### UC4.2: Đồng bộ Ghi chú cho AI (Storage Isolation)
-- **Action:** Khi User A gửi Ghi chú (Note) trong lúc Check-in.
-- **Expected Result:** Text không lưu vào Core DB (PostgreSQL). API Gateway nhận text, đẩy vào Message Queue (Kafka/SQS). Worker sau đó insert vào NoSQL Database (hoặc Partitioned Table). Core DB không bao giờ bị nghẽn I/O vì text dài.
+- **Pre-condition:** Nhóm "Du lịch Nhật" có Base Currency = VND. User A trả tiền ăn 5,000¥ (JPY).
+- **Action:** User A tạo expense: Amount = 5,000, Currency = JPY. Split = EQUAL (4 người).
+- **Expected Result:**
+  1. `exchange-rate-service` lấy tỷ giá: 1 JPY = 175₫ (cache hoặc API call).
+  2. Pinned exchange rate: `exchangeRate = 175`.
+  3. Converted amount: 5,000 × 175 = 875,000₫.
+  4. Mỗi người nợ A: 875,000 / 4 = 218,750₫.
+  5. UI hiển thị: `¥5,000 (≈ 875,000₫)`.
+  6. Balance tính bằng VND (Base Currency).
+
+### UC3.2: Exchange Rate API Down — Circuit Breaker
+
+- **Pre-condition:** Exchange Rate API (Fixer.io) bị down. Đã fail 5 lần liên tiếp.
+- **Action:** User A tạo expense JPY.
+- **Expected Result:**
+  1. Circuit Breaker State: `CLOSED → OPEN` (sau 5 failures).
+  2. Service trả về tỷ giá cached gần nhất (VD: 1 JPY = 173₫ từ 2 giờ trước).
+  3. UI hiển thị cảnh báo: "⚠️ Tỷ giá có thể không chính xác (cached)".
+  4. Sau 30 giây → HALF-OPEN → Thử 1 request.
+  5. **Hệ thống KHÔNG bị down** — expense vẫn tạo được.
+
+### UC3.3: Settlement Đa tiền tệ
+
+- **Pre-condition:** B nợ A 218,750₫ (gốc từ expense JPY). B muốn settle bằng USD.
+- **Action:** B settle: Amount = 9 USD (≈ 218,700₫ theo tỷ giá hiện tại).
+- **Expected Result:**
+  - Hệ thống convert 9 USD → VND theo tỷ giá tại thời điểm settle.
+  - Balance cập nhật bằng VND.
+  - Chênh lệch nhỏ (50₫) do biến động tỷ giá → Cho phép settle nếu chênh lệch < 1%.
+
+---
+
+## 4. TRỤ CỘT 4 — PHÂN TÍCH & THÔNG BÁO
+
+### UC4.1: Dashboard Analytics
+
+- **Pre-condition:** Nhóm "Ở chung" hoạt động 3 tháng, 50+ expenses.
+- **Action:** User A mở Dashboard.
+- **Expected Result (Read Model, < 200ms):**
+  - **Total Group Spending:** 15,000,000₫.
+  - **My Balance:** A được nợ 2,500,000₫.
+  - **Who Owes Whom:** Ma trận nợ dạng: B→A: 800k, C→A: 700k, D→A: 1,000k.
+  - **By Category:** Food 60%, Transport 20%, Utilities 15%, Other 5%.
+  - **Monthly Trend:** Line chart 3 tháng.
+  - **Top Spender:** A (8,000,000₫ tổng chi trả trước).
+
+### UC4.2: Export Báo cáo
+
+- **Pre-condition:** Nhóm "Du lịch Đà Lạt" đã kết thúc và settled.
+- **Action:** User A bấm "Export PDF".
+- **Expected Result:**
+  - Worker Service generate PDF:
+    - Danh sách tất cả expenses (date, description, payer, amount, splits).
+    - Danh sách tất cả settlements.
+    - Tóm tắt: Ai đã chi bao nhiêu, ai đã nhận bao nhiêu.
+  - File PDF gửi qua email hoặc download trực tiếp.
+
+### UC4.3: Real-time Notification (WebSocket)
+
+- **Pre-condition:** User B đang online (WebSocket connected). User A tạo expense mới.
+- **Action:** A tạo expense "Cà phê" 200k, EQUAL split.
+- **Expected Result:**
+  - Kafka event → Notification Service → WebSocket push đến B.
+  - B nhận toast notification: "A vừa thêm 'Cà phê' — 200k. Bạn nợ 50k."
+  - **Latency < 500ms** từ lúc A bấm Create đến lúc B nhận notification.
+
+### UC4.4: Push Notification (Offline)
+
+- **Pre-condition:** User C offline. User A tạo expense mới.
+- **Expected Result:**
+  - WebSocket không gửi được → Fallback Push Notification.
+  - C nhận push notification trên thiết bị.
+
+### UC4.5: Budget Alert
+
+- **Pre-condition:** Nhóm "Ở chung" có budget 10,000,000₫/tháng. Đã chi 9,200,000₫ (92%).
+- **Action:** User D tạo expense mới 500,000₫.
+- **Expected Result:**
+  - Total = 9,700,000₫ (97% budget).
+  - Alert trigger: Push notification cho tất cả members: "⚠️ Nhóm đã chi 97% ngân sách tháng!"
+
+### UC4.6: Nhắc Nợ (Reminder)
+
+- **Pre-condition:** User B nợ A 500,000₫ đã 7 ngày.
+- **Action:** A bấm "Nhắc nợ" (Remind) cho B.
+- **Expected Result:**
+  - Push notification cho B: "A nhắc bạn trả 500,000₫ trong nhóm 'Ở chung'."
+  - Rate limit: Tối đa 1 reminder / 24h cho cùng 1 cặp nợ.
+
+---
+
+## 5. XỬ LÝ NỀN (Background & Scheduled Jobs)
+
+### UC5.1: Rebuild Balance (Event Replay)
+
+- **Pre-condition:** Nghi ngờ Balance không chính xác (drift).
+- **Action:** Admin trigger rebuild balance cho 1 nhóm.
+- **Expected Result:**
+  - Worker Service replay toàn bộ events trong Event Store cho nhóm đó.
+  - Tính lại tất cả pairwise balances từ đầu.
+  - So sánh với Balance hiện tại → Nếu drift → Cập nhật + Alert.
+  - **Đây là power của Event Sourcing** — có thể rebuild state bất cứ lúc nào.
+
+### UC5.2: Ledger Integrity Check (Nightly Cron)
+
+- **Action:** Mỗi đêm 02:00, Worker chạy Integrity Check.
+- **Expected Result:**
+  - Cho mỗi nhóm: `Sum(ExpenseCreatedEvent amounts) - Sum(ExpenseDeletedEvent amounts) - Sum(SettlementEvent amounts) == Current Unsettled Balance`.
+  - Nếu sai lệch → Alert + auto-rebuild balance.
+  - Đảm bảo sổ cái luôn chính xác 100%.
+
+### UC5.3: Auto-Archive Trip Group
+
+- **Pre-condition:** Nhóm "Du lịch Đà Lạt" (type = TRIP), endDate đã qua, tất cả balance = 0.
+- **Action:** Worker Service kiểm tra hàng ngày.
+- **Expected Result:**
+  - Nhóm chuyển status → `ARCHIVED`.
+  - Members nhận notification: "Nhóm 'Du lịch Đà Lạt' đã được lưu trữ."
+  - Dữ liệu vẫn read-only, không bị xóa.
+
+### UC5.4: DLQ Handling
+
+- **Pre-condition:** Worker nhận Kafka message nhưng xử lý lỗi (schema mismatch).
+- **Expected Result:**
+  - Message chuyển vào DLQ topic (`*-dlq`).
+  - Alert cho developer.
+  - Developer fix issue → Replay DLQ → Message xử lý thành công.
+  - **Không có data loss.**

@@ -1,72 +1,186 @@
-# 🎨 Web UI/UX Guidelines (GrowthGarden V2)
+# 🎨 TIÊU CHUẨN UI/UX (WEB UI/UX GUIDELINES)
 
-Tài liệu này định nghĩa các tiêu chuẩn thiết kế Trải nghiệm Người dùng (UX) và Giao diện (UI) dành riêng cho nền tảng Web của GrowthGarden V2, đảm bảo trải nghiệm "Cozy & Healing" mượt mà nhất.
+> 📖 **[English Version](./en/05_web_ui_ux_guidelines.md)**
+
+Tài liệu định nghĩa tiêu chuẩn thiết kế giao diện và trải nghiệm cho **TeamFin** — một Dashboard Finance App chạy trên trình duyệt với phong cách Premium Dark Mode.
 
 ---
 
 ## 1. Công nghệ Frontend (Web Tech Stack)
-Thay vì sử dụng các công nghệ Mobile như Flutter hay React Native, hệ thống sẽ được xây dựng trên hệ sinh thái Web hiện đại:
-- **Framework:** **Next.js (React)**. Hỗ trợ SSR để load nhanh hồ sơ khu vườn, tối ưu SEO nếu người dùng muốn chia sẻ khu vườn công khai.
-- **State Management:** **Zustand** kết hợp với **React Query**. Zustand lưu trữ trạng thái hiển thị (ví dụ: trạng thái Cây Vệ Thần, Streak hiện tại), trong khi React Query đóng vai trò cốt lõi để thực hiện **Optimistic Updates** (cập nhật giao diện lập tức trước khi gọi API).
-- **Styling & Animation:** **TailwindCSS** kết hợp với **Framer Motion**. Framer Motion sẽ xử lý các "Vi tương tác" (Micro-interactions) như lấp lánh tưới cây, mưa rơi, hiệu ứng rã đông Hibernation.
-- **Thông báo (Push Notifications):** Thay thế APNs/FCM bằng **Web Push API** và **Service Workers** để gửi thông báo tưới cây ngay cả khi người dùng đã đóng tab trình duyệt.
+
+- **Framework:** **Vite + React 18** (SPA — Single Page Application). Port: `5173`.
+- **Routing:** **React Router v7**.
+- **State Management:**
+  - **Zustand** — Global UI state (theme, sidebar, modal).
+  - **TanStack Query (React Query)** — Server state, data fetching/caching, optimistic updates.
+- **Styling:**
+  - **TailwindCSS v3** — Utility classes.
+  - **CSS Variables** — Design tokens (colors, spacing, radii).
+- **Charts:** **Recharts** — Spending analytics, monthly trends, category breakdown.
+- **Animation:** **Framer Motion** — Micro-animations, page transitions, skeleton loaders.
+- **Forms:** **React Hook Form + Zod** — Form validation with TypeScript inference.
+- **HTTP Client:** **Axios** — Interceptors cho auto-refresh token, idempotency key injection.
+- **Date:** **dayjs** — Date formatting, relative time.
+- **Notifications:** **react-hot-toast** — In-app toast notifications.
+- **Icons:** **Lucide React** — Consistent icon set.
 
 ---
 
-## 2. Kiến trúc Trực quan (Visual Architecture)
+## 2. Kiến trúc UI (Dashboard Application)
 
-### 2.1. Bố cục Desktop (Responsive Layout)
-Giao diện không dùng cơ chế cuộn dọc (Infinite Scroll) vô tận như mạng xã hội truyền thống để tránh gây mệt mỏi.
-- **Center Canvas (Khu vườn):** Chiếm 70% diện tích màn hình trung tâm. Đây là không gian Isometric Grid (Lưới 2D) để người dùng trang trí, kéo thả Cây Vệ Thần và vật phẩm.
-- **Right Panel (Emotion Check-in):** Chiếm 30% bên phải. Hiển thị Widget điểm danh cảm xúc hôm nay (chọn A–F và tùy chọn nhập Note). Khi click Check-in, một luồng sáng bắn từ panel sang khu vườn, Cây Vệ Thần lấp lánh nhận EXP.
+### 2.1. Layout Structure
 
-### 2.2. Kỹ thuật Render Khu Vườn (Isometric Garden)
-Để tối ưu tốc độ phát triển MVP (Minimum Viable Product):
-- **Không dùng WebGL/Canvas (PixiJS/Three.js):** Việc dùng Canvas sẽ tốn kém chi phí tính toán và khó làm responsive trên các trình duyệt cũ.
-- **Giải pháp - CSS Grid 2D:** Sử dụng hệ thống tọa độ X, Y do backend trả về (`PlantGuardian` và `InventoryItem` metadata), Frontend render một `div` lưới CSS Grid. Vật phẩm là các ảnh PNG/SVG trong suốt đặt vào lưới bằng `grid-column` và `grid-row`, kết hợp `z-index` để tạo chiều sâu (Layering). Thao tác trang trí vườn được thực hiện qua **HTML5 Drag and Drop API**.
+```
+┌────────────────────────────────────────────────────────────┐
+│ TOPBAR (Fixed)                                             │
+│ ┌──────┐  TeamFin    [Group Selector ▼]  🔔  👤 Avatar ▼ │
+│ └──────┘                                                   │
+├────────────┬───────────────────────────────────────────────┤
+│ SIDEBAR    │ MAIN CONTENT                                  │
+│ (Fixed)    │                                               │
+│            │  ┌────────────────────────────────────────┐   │
+│ 📊 Dashboard│  │  Page Header                          │   │
+│ 💰 Expenses │  │  ──────────────────────────────────── │   │
+│ 🤝 Settle  │  │  Content Area                          │   │
+│ 👥 Members │  │                                        │   │
+│ 📈 Analytics│  │  (Cards, Tables, Charts, Forms)       │   │
+│ ⚙️ Settings │  │                                        │   │
+│            │  └────────────────────────────────────────┘   │
+│            │                                               │
+└────────────┴───────────────────────────────────────────────┘
+```
 
----
+### 2.2. Core Pages
 
-## 3. Xử lý Trạng thái UI (UI State Handling)
+| Page | Route | Mô tả |
+|------|-------|-------|
+| **Dashboard** | `/groups/:id` | Tổng quan: Balance summary, recent expenses, quick actions |
+| **Expenses** | `/groups/:id/expenses` | Danh sách expenses, search, filter by category/date |
+| **Add Expense** | `/groups/:id/expenses/new` | Form tạo expense (multi-payer, split method) |
+| **Expense Detail** | `/groups/:id/expenses/:eid` | Chi tiết expense, activity log, edit |
+| **Settle Up** | `/groups/:id/settle` | Flow thanh toán nợ, debt simplification suggestions |
+| **Members** | `/groups/:id/members` | Danh sách thành viên, roles, invite link |
+| **Analytics** | `/groups/:id/analytics` | Charts: by category, monthly trend, top spender |
+| **Groups** | `/groups` | Danh sách tất cả nhóm của user |
+| **Create Group** | `/groups/new` | Form tạo nhóm mới |
+| **Settings** | `/settings` | User profile, preferences, notifications |
+| **Login/Register** | `/auth/login`, `/auth/register` | Authentication |
 
-### 3.1. Trạng thái Cây Vệ Thần (PlantGuardian States)
-Mỗi trạng thái của cây đều có ngôn ngữ hình ảnh riêng biệt và nhất quán:
-- **`SEED`:** Hình hạt giống nhỏ xíu, nhấp nháy nhẹ nhàng. Text chú thích: *"Hành trình của bạn đang bắt đầu..."*
-- **`GROWING`:** Cây xanh tươi, glow nhẹ, có hiệu ứng hạt bụi lơ lửng. Đây là trạng thái "khỏe mạnh" bình thường.
-- **`HIBERNATING`:** Cây bị bao phủ bởi lớp băng tinh thể (CSS `filter: hue-rotate + brightness`). Cỏ dại mọc xung quanh. Nút "Rã Đông" (tốn Karma) hiển thị nổi bật.
-- **`DEAD`:** Cây màu xám, nứt vỡ. Streak bị reset. Nút "Bắt đầu lại" xuất hiện.
-- **`ANCIENT`:** Cây cổ thụ tỏa sáng với hiệu ứng rực rỡ (Framer Motion particle burst). Animation chúc mừng mốc chuỗi (7, 21, 66 ngày thực tế).
+### 2.3. Responsive Breakpoints
 
-### 3.2. Hiệu ứng Thời tiết (Emotion Weather)
-Thời tiết trong vườn phản chiếu cảm xúc (EmotionGrade) được log của ngày hôm đó:
-- **Trời nắng (A/B - Tích cực):** Nền vàng nhạt, có hiệu ứng hạt bụi (Dust particles) bay lơ lửng chậm rãi.
-- **Trời mưa (D/E - Buồn):** Nền xanh đen, sử dụng CSS Animation thả các hạt mưa. Cây cối tự động nhận hiệu ứng "Được tưới" — đây là cơ chế Healing ẩn dụ cho những ngày khó khăn.
-- **Sương mờ (C - Trung tính):** Nền trắng sữa nhạt, hiệu ứng sương nhẹ.
-- **Bão (F - Tệ nhất):** Nền xám tối, sấm sét yếu. Hệ thống tự động gợi ý NPC ghé thăm để động viên.
-
-### 3.3. Khu Phố & Công Trình Chung (Neighborhood UI)
-- **Thanh Năng lượng Monument:** Hiển thị thanh progress bar ở góc Khu phố, fill dần lên khi các thành viên điểm danh. Khi đầy, animation Rương Co-op rơi xuống với hiệu ứng ánh sáng đặc biệt.
-- **Avatar Hàng xóm:** Hiển thị mini avatar của các thành viên xung quanh Khu phố. Avatar mờ dần nếu người đó không điểm danh nhiều ngày (áp lực trách nhiệm nhẹ nhàng).
-- **Badge Thị trưởng:** Icon vương miện nhỏ trên avatar Thị trưởng. Nếu Thị trưởng sắp mất chức (offline >10 ngày), badge nhấp nháy cảnh báo nhẹ.
-
-### 3.4. Hiệu ứng Gacha & Pity System
-- **Mở Rương:** Animation lấp lánh xoay tròn chạy **ngay lập tức** nhờ Seed-based RNG Client-side. Không có độ trễ (Latency).
-- **Không ra Key (Pity):** Sau hiệu ứng mở rương, một "Mảnh vỡ Không gian" nhỏ bay ra và rơi vào thanh tiến trình Pity (hiển thị X/100). Cảm giác "ít nhất tôi có thứ gì đó" quan trọng về mặt tâm lý.
-- **Đúc Key:** Khi đủ 100 mảnh, thanh Pity sáng lên, nút "Đúc Key" xuất hiện với hiệu ứng rực rỡ.
-
-### 3.5. Không gian Cao cấp (Key-Unlocked Areas)
-- **Chuyển đổi Không gian (Garden Switcher):** User có nhiều vùng đất sẽ có nút dạng "Bản đồ nhỏ" (Minimap) để chuyển đổi mượt mà giữa các không gian (Khu vườn chính, Nhà Kính Tuyết, Vườn Trên Mây).
-- **Theme Độc Quyền:** Mỗi vùng đất có bảng màu (CSS Tokens) và họa tiết nền (Background Pattern) riêng biệt. Ví dụ: Nhà Kính Tuyết có hiệu ứng tuyết rơi tĩnh, Vườn Trên Mây có nền mây trôi bồng bềnh.
-
-### 3.6. Optimistic UI & Offline Queue (Trải nghiệm Không Gián đoạn)
-- Khi User bấm "Check-in" cảm xúc lúc mất mạng (ví dụ đi tàu điện ngầm), giao diện tuyệt đối không được hiện lỗi "Mất kết nối".
-- **Optimistic Update:** React Query lập tức cập nhật state cục bộ. Cây sẽ lấp lánh và thanh EXP tăng lên ngay lập tức trên UI.
-- **Offline Queue:** Ở dưới nền, thao tác này được lưu vào **IndexedDB** thông qua Service Worker. Khi trình duyệt phát hiện thiết bị có mạng trở lại (`navigator.onLine == true`), hệ thống tự động đẩy mảng dữ liệu từ Local Queue lên API `/sync/offline-queue` của Backend để đồng bộ âm thầm.
-- **Xử lý OCC Conflict:** Nếu Server phát hiện xung đột phiên bản (ví dụ bạn bè vừa tưới hộ trong lúc offline), Karma được hoàn về Pending Stash và UI hiển thị pop-up dễ thương thay vì báo lỗi.
+| Breakpoint | Width | Layout |
+|-----------|-------|--------|
+| Mobile | < 768px | Sidebar collapse → Bottom Tab Bar. Single column. |
+| Tablet | 768–1024px | Sidebar mini (icons only). 2-column grid. |
+| Desktop | > 1024px | Full sidebar. 3-column grid. |
 
 ---
 
-## 4. Quyền Riêng Tư (Privacy-First UX)
-- Ứng dụng **tuyệt đối không** yêu cầu quyền Location (Web Geolocation API) để tránh gây lo lắng cho người dùng.
-- Việc đồng bộ Timezone chỉ chạy ngầm bằng cách so sánh `Date.now()` của trình duyệt (Browser) với Timestamp của Server mỗi khi người dùng truy cập trang web. Nếu phát hiện lệch giờ do đi du lịch, một Pop-up nhỏ nhắn (không xâm lấn) sẽ hiện lên ở góc màn hình hỏi xem User có muốn đổi múi giờ không.
-- Tính năng tìm kiếm bạn bè bằng tên tự do bị **vô hiệu hóa hoàn toàn**. Kết bạn chỉ qua QR/Link mời để tránh quấy rối.
+## 3. Trạng thái UI (UI State Handling)
+
+### 3.1. Balance Display
+
+| Balance | Color | Icon | Mô tả |
+|---------|-------|------|-------|
+| Positive (được nợ) | `--color-positive` green | ↗️ | "Bạn được nợ 500k" |
+| Negative (nợ) | `--color-negative` red | ↙️ | "Bạn nợ 300k" |
+| Zero (settled) | `--color-muted` gray | ✓ | "Đã settle xong" |
+
+### 3.2. Expense States
+
+| State | Badge Color | Mô tả |
+|-------|------------|-------|
+| Active | — (no badge) | Chi phí đang hoạt động |
+| Updated | `--color-warning` amber | Có sửa đổi (version > 1) |
+| Deleted | `--color-negative` red | Đã xóa (soft delete) |
+
+### 3.3. Loading States
+
+- **Skeleton Loader:** Dùng cho Dashboard cards, Expense list, Balance summary.
+- **Spinner:** Dùng cho button actions (Submit, Settle).
+- **Optimistic UI:** Tạo expense → UI update ngay, revert nếu server reject.
+
+### 3.4. Empty States
+
+| Page | Empty Message | CTA |
+|------|--------------|-----|
+| Groups | "Chưa có nhóm nào" | "Tạo nhóm đầu tiên" |
+| Expenses | "Chưa có chi phí nào" | "Thêm chi phí đầu tiên" |
+| Members | "Chưa có ai ngoài bạn" | "Mời bạn bè" |
+
+---
+
+## 4. File Structure
+
+```
+apps/web/src/
+├── components/
+│   ├── layout/
+│   │   ├── Topbar.tsx
+│   │   ├── Sidebar.tsx
+│   │   ├── MainLayout.tsx
+│   │   └── MobileTabBar.tsx
+│   ├── common/
+│   │   ├── Button.tsx
+│   │   ├── Card.tsx
+│   │   ├── Modal.tsx
+│   │   ├── Badge.tsx
+│   │   ├── Avatar.tsx
+│   │   ├── CurrencyDisplay.tsx
+│   │   ├── BalanceIndicator.tsx
+│   │   └── SkeletonLoader.tsx
+│   ├── expense/
+│   │   ├── ExpenseForm.tsx
+│   │   ├── ExpenseCard.tsx
+│   │   ├── ExpenseList.tsx
+│   │   ├── SplitMethodPicker.tsx
+│   │   └── CategoryBadge.tsx
+│   ├── settlement/
+│   │   ├── SettleUpFlow.tsx
+│   │   ├── DebtSimplification.tsx
+│   │   └── SettlementCard.tsx
+│   ├── group/
+│   │   ├── GroupCard.tsx
+│   │   ├── GroupForm.tsx
+│   │   ├── MemberList.tsx
+│   │   └── InviteLink.tsx
+│   └── charts/
+│       ├── SpendingByCategory.tsx
+│       ├── MonthlyTrend.tsx
+│       └── BalanceOverview.tsx
+├── pages/
+│   ├── DashboardPage.tsx
+│   ├── ExpensesPage.tsx
+│   ├── AddExpensePage.tsx
+│   ├── SettlePage.tsx
+│   ├── MembersPage.tsx
+│   ├── AnalyticsPage.tsx
+│   ├── GroupsPage.tsx
+│   ├── CreateGroupPage.tsx
+│   ├── LoginPage.tsx
+│   └── RegisterPage.tsx
+├── hooks/
+│   ├── useExpenses.ts          # TanStack Query hooks
+│   ├── useBalances.ts
+│   ├── useGroups.ts
+│   ├── useSettlements.ts
+│   └── useWebSocket.ts         # Real-time subscription
+├── stores/
+│   └── ui.store.ts              # Zustand: theme, sidebar, activeGroup
+├── services/
+│   ├── api.ts                   # Axios instance + interceptors
+│   └── websocket.ts             # WebSocket client
+├── types/
+│   └── index.ts                 # TypeScript definitions
+└── styles/
+    └── index.css                # Global styles + design tokens
+```
+
+---
+
+## 5. Quyền Riêng Tư (Privacy-First UX)
+
+- Không yêu cầu quyền Location.
+- Mời vào nhóm chỉ qua Link/QR — không tìm kiếm người lạ.
+- Financial data không hiển thị cho role `VIEWER` ngoài tổng hợp.
+- Export PDF chỉ cho Owner/Admin.

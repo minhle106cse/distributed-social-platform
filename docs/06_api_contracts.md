@@ -1,270 +1,410 @@
-# 🔌 API CONTRACTS (Web Client <-> Core API)
+# 📡 ĐẶC TẢ API (API CONTRACTS)
 
-Tài liệu này đặc tả các endpoint giao tiếp chính giữa **Web Client (Next.js)** và **Backend (NestJS/Core API)**. Sử dụng chuẩn RESTful API và trao đổi dữ liệu dạng JSON.
+> 📖 **[English Version](./en/06_api_contracts.md)**
+
+Đặc tả các endpoint giữa **Web Client (Vite + React SPA)** và **Backend (auth-service Fastify / core-api NestJS)**. RESTful API, JSON format.
 
 ---
 
 ## 1. GIAO THỨC CHUNG
-- **Base URL:** `/api/v1`
-- **Authentication:** Gửi Bearer Token trong header `Authorization`.
-- **Response Format chuẩn:**
+
+- **Auth Service Base URL:** `/auth` (Fastify, port 3001)
+- **Core API Base URL:** `/api/v1` (NestJS, port 3000)
+- **Authentication:** Bearer Token trong header `Authorization`.
+- **Idempotency:** Mọi POST/PUT thay đổi tài chính PHẢI gửi `X-Idempotency-Key` header.
+- **OCC:** Mọi PUT (update) PHẢI gửi `version` trong body.
+- **Response Format:**
   ```json
   {
     "success": true,
     "data": { ... },
-    "error": null
+    "error": null,
+    "meta": { "version": 1, "timestamp": "2026-06-09T14:30:00Z" }
+  }
+  ```
+- **Error Format:**
+  ```json
+  {
+    "success": false,
+    "data": null,
+    "error": {
+      "code": "CONFLICT",
+      "message": "Version mismatch. Current version: 4",
+      "details": { "currentVersion": 4, "currentState": { ... } }
+    }
   }
   ```
 
 ---
 
-## 2. PRODUCTIVITY — EMOTION CHECK-IN & PLANT GUARDIAN
+## 2. AUTH SERVICE ENDPOINTS
 
-### 2.1. Lấy trạng thái Cây hôm nay
-- **Endpoint:** `GET /productivity/plant`
-- **Mô tả:** Lấy trạng thái Cây Vệ Thần và thông tin Check-in hôm nay.
-- **Header:** `Timezone-Offset` (phục vụ đối soát giờ địa phương).
-- **Response (200 OK):**
+### 2.1. Đăng ký (Register)
+- **`POST /auth/register`**
+- **Payload:** `{ "email": "user@example.com", "username": "Minh", "password": "Str0ngP@ss" }`
+- **Response (201):**
   ```json
-  "data": {
-    "plantId": "uuid-plant",
-    "state": "GROWING",
-    "currentStreak": 14,
-    "highestStreak": 21,
-    "activeCheckinDays": 14,
-    "hasCheckedInToday": false,
-    "nextMilestone": { "days": 21, "reward": "STARDUST" }
-  }
+  "data": { "userId": "uuid", "username": "Minh", "accessToken": "jwt", "expiresIn": 900 }
+  ```
+- **Note:** `refreshToken` set qua HTTP-Only Cookie.
+
+### 2.2. Đăng nhập (Login)
+- **`POST /auth/login`**
+- **Payload:** `{ "email": "user@example.com", "password": "Str0ngP@ss" }`
+- **Response (200):** Tương tự Register.
+- **Rate Limit:** 5 req / 5 phút / IP.
+
+### 2.3. Refresh Token
+- **`POST /auth/refresh`**
+- **Response (200):** `"data": { "accessToken": "new-jwt", "expiresIn": 900 }`
+- **Note:** Refresh Token Rotation — token cũ bị vô hiệu hóa.
+
+### 2.4. Logout
+- **`POST /auth/logout`**
+- **Response (200):** `{ "success": true, "data": null }`
+
+### 2.5. Profile (Me)
+- **`GET /auth/me`**
+- **Header:** `Authorization: Bearer <accessToken>`
+- **Response (200):** `"data": { "userId": "uuid", "email": "...", "username": "Minh", "status": "ACTIVE" }`
+
+---
+
+## 3. GROUP ENDPOINTS
+
+### 3.1. Danh sách nhóm
+- **`GET /api/v1/groups`**
+- **Response (200):**
+  ```json
+  "data": [
+    {
+      "id": "group-uuid",
+      "name": "Du lịch Đà Lạt",
+      "type": "TRIP",
+      "status": "ACTIVE",
+      "baseCurrency": "VND",
+      "memberCount": 5,
+      "myBalance": -350000,
+      "lastActivityAt": "2026-06-09T14:00:00Z"
+    }
+  ]
   ```
 
-### 2.2. Điểm danh Cảm xúc hằng ngày (Core Check-in)
-- **Endpoint:** `POST /productivity/checkin`
-- **Mô tả:** Hành động cốt lõi duy nhất mỗi ngày. Cập nhật streak, PlantGuardian, Wallet. Text Note được tách riêng sang Kafka/NoSQL.
+### 3.2. Tạo nhóm
+- **`POST /api/v1/groups`**
 - **Payload:**
   ```json
   {
-    "emotionGrade": "B",
-    "note": "Hôm nay tôi cảm thấy khá hơn" // Optional
+    "name": "Du lịch Đà Lạt",
+    "type": "TRIP",
+    "baseCurrency": "VND",
+    "startDate": "2026-07-01",
+    "endDate": "2026-07-05"
   }
   ```
-- **Response (200 OK):**
+- **Response (201):** Full group object + invite link.
+
+### 3.3. Chi tiết nhóm
+- **`GET /api/v1/groups/:id`**
+- **Response (200):**
   ```json
   "data": {
-    "expGained": 15,
-    "karmaEarned": 20,
-    "newStreak": 15,
-    "activeCheckinDays": 15,
-    "plantState": "GROWING",
-    "milestoneReached": null
-  }
-  ```
-- **Lưu ý:** `karmaEarned` trả về 0 nếu đã chạm Daily Cap. Nếu `activeCheckinDays` đạt mốc 7/21/66, `milestoneReached` sẽ có giá trị và Bụi Sao được cộng.
-
-### 2.3. Rã đông Cây (Unfreeze / Hibernation Recovery)
-- **Endpoint:** `POST /productivity/plant/unfreeze`
-- **Mô tả:** Dùng Karma để rã đông Cây đang ở trạng thái `HIBERNATING`. Sau khi rã đông, Cây vào Hibernation Cooldown. Chi phí tăng theo Streak nhưng có Cap trần.
-- **Response (200 OK):**
-  ```json
-  "data": {
-    "karmaSpent": 80,
-    "plantState": "GROWING",
-    "cooldownActive": true,
-    "message": "Cây đang Dưỡng thương. Đừng bỏ điểm danh 3 ngày tới nhé!"
-  }
-  ```
-
----
-
-## 3. KINH TẾ (Economy — Wallet, Gacha, Crafting)
-
-### 3.1. Lấy thông tin Ví
-- **Endpoint:** `GET /economy/wallet`
-- **Response (200 OK):**
-  ```json
-  "data": {
-    "karmaBalance": 1250,
-    "stardustBalance": 40,
-    "pendingStash": 0
-  }
-  ```
-
-### 3.2. Refresh Thương Nhân Thần Bí (Spend Karma)
-- **Endpoint:** `POST /economy/merchant/refresh`
-- **Mô tả:** Dùng Karma để làm mới danh sách hàng của Thương nhân.
-- **Response (200 OK):**
-  ```json
-  "data": {
-    "karmaSpent": 50,
-    "newInventory": [
-      { "itemType": "GACHA_BOX", "rarity": "RARE", "price": { "currency": "STARDUST", "amount": 30 } },
-      { "itemType": "DECORATION", "rarity": "COMMON", "price": { "currency": "STARDUST", "amount": 10 } }
-    ]
-  }
-  ```
-
-### 3.3. Mua vật phẩm từ Thương Nhân (Spend Stardust)
-- **Endpoint:** `POST /economy/merchant/purchase`
-- **Mô tả:** Dùng Bụi Sao để mua. Chạy Saga Pattern với Optimistic Locking. Nếu kết quả không ra Key, tự động cộng 1 Mảnh Vỡ Không gian (Pity System).
-- **Payload:** `{ "itemId": "merchant-slot-uuid" }`
-- **Response (200 OK):**
-  ```json
-  "data": {
-    "stardustSpent": 30,
-    "reward": { "itemType": "GACHA_BOX", "rarity": "RARE" },
-    "pity": { "keyFragmentsEarned": 1, "totalKeyFragments": 47 }
-  }
-  ```
-
-### 3.4. Mở Rương Gacha
-- **Endpoint:** `POST /economy/gacha/open`
-- **Mô tả:** Mở Rương Gacha từ Inventory. Seed-based RNG: Client gửi `seed` đã nhận trước từ Server để animation chạy ngay lập tức.
-- **Payload:** `{ "inventoryItemId": "gacha-box-uuid", "seed": "cryptographic-seed-hash" }`
-- **Response (200 OK):**
-  ```json
-  "data": {
-    "reward": { "itemType": "KEY", "rarity": "LEGENDARY" },
-    "pity": { "keyFragmentsEarned": 0, "totalKeyFragments": 47 }
-  }
-  ```
-
-### 3.5. Lò Rèn — Đúc vật phẩm (Crafting/Merging)
-- **Endpoint:** `POST /economy/forge`
-- **Mô tả:** Online-Only. Đốt 5 vật phẩm Common + Karma/Stardust để rèn ra 1 Epic. Hoặc đúc 100 Key Fragment thành 1 Key.
-- **Payload:**
-  ```json
-  {
-    "recipeType": "MERGE_COMMON_TO_EPIC",
-    "ingredientIds": ["uuid-1", "uuid-2", "uuid-3", "uuid-4", "uuid-5"]
-  }
-  ```
-- **Response (200 OK):**
-  ```json
-  "data": {
-    "consumed": 5,
-    "result": { "itemType": "DECORATION", "rarity": "EPIC", "name": "Đèn Lồng Huyền Ảo" }
-  }
-  ```
-
-### 3.6. Mở khóa Vùng Đất Mới (Legendary Gate)
-- **Endpoint:** `POST /economy/unlock-area`
-- **Mô tả:** Dùng số Key cần thiết để mở khóa một vùng đất mới.
-- **Payload:** `{ "areaId": "snow-greenhouse" }`
-- **Response (200 OK):**
-  ```json
-  "data": {
-    "keysSpent": 3,
-    "areaUnlocked": { "id": "snow-greenhouse", "name": "Nhà Kính Tuyết", "theme": "SNOW" }
-  }
-  ```
-
----
-
-## 4. SOCIAL — NEIGHBORHOOD & FRIENDS
-
-### 4.1. Lấy thông tin Khu phố
-- **Endpoint:** `GET /social/neighborhood`
-- **Response (200 OK):**
-  ```json
-  "data": {
-    "id": "neighborhood-uuid",
-    "name": "Vườn Hoa Mộng",
-    "vibeScore": 850,
-    "monumentEnergy": 72,
+    "id": "group-uuid",
+    "name": "Du lịch Đà Lạt",
+    "type": "TRIP",
+    "status": "ACTIVE",
+    "baseCurrency": "VND",
+    "startDate": "2026-07-01",
+    "endDate": "2026-07-05",
     "members": [
-      { "userId": "uuid-a", "username": "Minh", "role": "MAYOR", "contribution": 20, "lastOnline": "2026-06-02" },
-      { "userId": "uuid-b", "username": "Lan", "role": "CITIZEN", "contribution": 15, "lastOnline": "2026-06-02" }
+      { "userId": "uuid-a", "username": "Minh", "role": "OWNER", "avatarUrl": "..." },
+      { "userId": "uuid-b", "username": "Lan", "role": "MEMBER", "avatarUrl": "..." }
+    ],
+    "totalSpending": 5000000,
+    "version": 1
+  }
+  ```
+
+### 3.4. Tạo Invite Link
+- **`POST /api/v1/groups/:id/invites`**
+- **Response (201):**
+  ```json
+  "data": {
+    "inviteCode": "TF-XYZ123",
+    "inviteUrl": "https://teamfin.app/join/TF-XYZ123",
+    "expiresAt": "2026-06-10T14:00:00Z"
+  }
+  ```
+
+### 3.5. Join nhóm qua Invite
+- **`POST /api/v1/groups/join`**
+- **Payload:** `{ "inviteCode": "TF-XYZ123" }`
+- **Response (200):** Full group object.
+
+---
+
+## 4. EXPENSE ENDPOINTS
+
+### 4.1. Danh sách expenses
+- **`GET /api/v1/groups/:id/expenses`**
+- **Query Params:** `?page=1&limit=20&category=FOOD&from=2026-06-01&to=2026-06-30&search=ăn`
+- **Response (200):**
+  ```json
+  "data": [
+    {
+      "id": "exp-uuid",
+      "description": "Ăn trưa",
+      "totalAmount": 800000,
+      "currency": "VND",
+      "convertedAmount": 800000,
+      "splitMethod": "EQUAL",
+      "category": "FOOD",
+      "expenseDate": "2026-06-09",
+      "payers": [{ "userId": "uuid-a", "username": "Minh", "amount": 800000 }],
+      "splits": [
+        { "userId": "uuid-a", "username": "Minh", "amount": 200000 },
+        { "userId": "uuid-b", "username": "Lan", "amount": 200000 },
+        { "userId": "uuid-c", "username": "Hùng", "amount": 200000 },
+        { "userId": "uuid-d", "username": "Mai", "amount": 200000 }
+      ],
+      "myShare": 200000,
+      "isDeleted": false,
+      "version": 1,
+      "createdByUserId": "uuid-a",
+      "createdAt": "2026-06-09T14:30:00Z"
+    }
+  ],
+  "meta": { "total": 45, "page": 1, "limit": 20 }
+  ```
+
+### 4.2. Tạo expense
+- **`POST /api/v1/groups/:id/expenses`**
+- **Header:** `X-Idempotency-Key: exp-create-uuid-789`
+- **Payload:**
+  ```json
+  {
+    "description": "Ăn trưa",
+    "totalAmount": 800000,
+    "currency": "VND",
+    "splitMethod": "EQUAL",
+    "category": "FOOD",
+    "expenseDate": "2026-06-09",
+    "payers": [{ "userId": "uuid-a", "amount": 800000 }],
+    "excludeUserIds": [],
+    "splits": []
+  }
+  ```
+- **Response (201):** Full expense object.
+- **Lưu ý:**
+  - Nếu `splitMethod = EQUAL`: `splits` tự tính, không cần gửi.
+  - Nếu `splitMethod = EXACT`: `splits` bắt buộc, sum phải = totalAmount.
+  - Nếu `splitMethod = PERCENTAGE`: `splits` bắt buộc, sum phải = 100%.
+  - Nếu `splitMethod = SHARES`: `splits` bắt buộc, hệ thống tự tính amount.
+
+### 4.3. Sửa expense (OCC)
+- **`PUT /api/v1/groups/:groupId/expenses/:id`**
+- **Header:** `X-Idempotency-Key: exp-edit-uuid-101`
+- **Payload:**
+  ```json
+  {
+    "description": "Ăn trưa (đã sửa)",
+    "totalAmount": 600000,
+    "version": 1
+  }
+  ```
+- **Response (200):** Updated expense object with `version: 2`.
+- **Error (409):** OCC conflict — `{ "error": { "code": "CONFLICT", "details": { "currentVersion": 2 } } }`
+
+### 4.4. Xóa expense (Soft Delete)
+- **`DELETE /api/v1/groups/:groupId/expenses/:id`**
+- **Response (200):** `"data": { "deleted": true, "balanceUpdated": true }`
+
+---
+
+## 5. SETTLEMENT ENDPOINTS
+
+### 5.1. Settle nợ
+- **`POST /api/v1/groups/:id/settlements`**
+- **Header:** `X-Idempotency-Key: settle-uuid-456`
+- **Payload:**
+  ```json
+  {
+    "toUserId": "uuid-a",
+    "amount": 200000,
+    "currency": "VND",
+    "type": "FULL",
+    "note": "Chuyển qua MoMo"
+  }
+  ```
+- **Response (200):**
+  ```json
+  "data": {
+    "id": "settle-uuid",
+    "fromUserId": "uuid-b",
+    "toUserId": "uuid-a",
+    "amount": 200000,
+    "type": "FULL",
+    "balanceAfter": 0,
+    "message": "Bạn đã trả 200,000₫ cho Minh"
+  }
+  ```
+- **Error (400):** `INSUFFICIENT_BALANCE` — Nợ không đủ.
+- **Error (409):** Idempotency key đã xử lý — trả response cached.
+
+### 5.2. Gợi ý tối ưu nợ
+- **`GET /api/v1/groups/:id/simplify-debts`**
+- **Response (200):**
+  ```json
+  "data": {
+    "currentTransactions": 8,
+    "optimizedTransactions": 3,
+    "suggestions": [
+      { "from": { "userId": "uuid-b", "username": "Lan" }, "to": { "userId": "uuid-a", "username": "Minh" }, "amount": 200000 },
+      { "from": { "userId": "uuid-d", "username": "Mai" }, "to": { "userId": "uuid-a", "username": "Minh" }, "amount": 150000 },
+      { "from": { "userId": "uuid-c", "username": "Hùng" }, "to": { "userId": "uuid-e", "username": "Tú" }, "amount": 100000 }
     ]
   }
   ```
 
-### 4.2. Tưới hộ cây bạn (Empathetic Watering)
-- **Endpoint:** `POST /social/neighbors/{neighbor_id}/water`
-- **Response (200 OK):**
+### 5.3. Danh sách settlements
+- **`GET /api/v1/groups/:id/settlements`**
+- **Response (200):** Array of settlement records.
+
+---
+
+## 6. BALANCE & ANALYTICS ENDPOINTS
+
+### 6.1. Balance summary (Ma trận nợ)
+- **`GET /api/v1/groups/:id/balances`**
+- **Response (200):**
   ```json
   "data": {
-    "karmaRewarded": 5,
-    "message": "Bạn đã giúp cây của Lan thoát khỏi đóng băng!"
+    "myBalance": -350000,
+    "balances": [
+      { "fromUserId": "uuid-b", "fromUsername": "Lan", "toUserId": "uuid-a", "toUsername": "Minh", "amount": 200000 },
+      { "fromUserId": "uuid-b", "fromUsername": "Lan", "toUserId": "uuid-c", "toUsername": "Hùng", "amount": 150000 }
+    ]
   }
   ```
 
-### 4.3. Bảo lãnh Streak bạn bè (Karma Bailout)
-- **Endpoint:** `POST /social/friends/{friend_id}/bailout`
-- **Mô tả:** Trích Karma của mình để rã đông Streak cho bạn. Chạy qua Saga Pattern (trừ Karma người bảo lãnh, cứu Streak người được bảo lãnh).
-- **Payload:** `{ "karmaAmount": 100 }`
-- **Response (200 OK):**
+### 6.2. Spending by Category
+- **`GET /api/v1/groups/:id/analytics/by-category`**
+- **Query:** `?from=2026-06-01&to=2026-06-30`
+- **Response (200):**
   ```json
-  "data": {
-    "karmaSpent": 100,
-    "friendStreakRestored": true,
-    "message": "Bạn đã cứu được chuỗi điểm danh của Lan!"
-  }
+  "data": [
+    { "category": "FOOD", "amount": 3000000, "percentage": 60 },
+    { "category": "TRANSPORT", "amount": 1000000, "percentage": 20 },
+    { "category": "ACCOMMODATION", "amount": 750000, "percentage": 15 },
+    { "category": "OTHER", "amount": 250000, "percentage": 5 }
+  ]
   ```
 
-### 4.4. Tặng quà Cảm xúc (Emotional Gift)
-- **Endpoint:** `POST /social/neighbors/{neighbor_id}/gift`
-- **Payload:** `{ "inventoryItemId": "wind-chime-uuid" }`
-- **Response (200 OK):**
+### 6.3. Monthly Trend
+- **`GET /api/v1/groups/:id/analytics/monthly`**
+- **Response (200):**
   ```json
-  "data": {
-    "giftSent": true,
-    "message": "Chuông gió đã được gửi đến vườn của Lan."
-  }
+  "data": [
+    { "month": "2026-04", "amount": 4500000 },
+    { "month": "2026-05", "amount": 5200000 },
+    { "month": "2026-06", "amount": 3800000 }
+  ]
   ```
 
-### 4.5. Tạo Link Kết bạn (Invite-only)
-- **Endpoint:** `POST /social/friends/invite`
-- **Response (200 OK):**
+### 6.4. Activity Log (Audit Trail)
+- **`GET /api/v1/groups/:id/activity`**
+- **Query:** `?page=1&limit=50`
+- **Response (200):**
   ```json
-  "data": {
-    "inviteCode": "GROW-XYZ123",
-    "qrCodeUrl": "/api/v1/social/friends/invite/qr/GROW-XYZ123",
-    "expiresIn": 86400
-  }
-  ```
-
-### 4.6. Gửi Thư mời Định cư Khu phố (Neighborhood Invite)
-- **Endpoint:** `POST /social/neighborhood/invite`
-- **Payload:** `{ "friendId": "uuid-b" }`
-- **Response (200 OK):** Xác nhận thư mời đã được gửi.
-
-### 4.7. Đuổi Thành viên (Mayor Eviction)
-- **Endpoint:** `DELETE /social/neighborhood/members/{member_id}`
-- **Mô tả:** Chỉ Thị trưởng (MAYOR) được phép gọi. Thành viên bị đuổi mất trắng `currentCycleContribution` (Sunk Cost, không hoàn trả).
-- **Response (200 OK):**
-  ```json
-  "data": {
-    "evicted": true,
-    "contributionForfeited": 35
-  }
+  "data": [
+    {
+      "eventType": "ExpenseCreated",
+      "description": "Minh thêm 'Ăn trưa' — 800,000₫",
+      "userId": "uuid-a",
+      "username": "Minh",
+      "timestamp": "2026-06-09T14:30:00Z",
+      "details": { "expenseId": "exp-uuid", "amount": 800000 }
+    },
+    {
+      "eventType": "SettlementCreated",
+      "description": "Lan trả Minh 200,000₫",
+      "userId": "uuid-b",
+      "username": "Lan",
+      "timestamp": "2026-06-09T15:00:00Z",
+      "details": { "settlementId": "settle-uuid", "amount": 200000 }
+    }
+  ]
   ```
 
 ---
 
-## 5. OFFLINE SYNC
+## 7. EXCHANGE RATE ENDPOINT
 
-### 5.1. Đồng bộ Hàng đợi Cục bộ (Offline Queue Sync)
-- **Endpoint:** `POST /sync/offline-queue`
-- **Mô tả:** Nhận mảng các actions đã thực hiện khi offline và xử lý theo lô. OCC kiểm tra version — nếu xung đột, Karma được hoàn vào Pending Stash.
-- **Payload:**
-  ```json
-  {
-    "actions": [
-      {
-        "type": "EMOTION_CHECKIN",
-        "plantVersion": 5,
-        "payload": { "emotionGrade": "C", "note": "Check-in trên tàu điện ngầm" },
-        "timestamp": "2026-06-02T08:30:00Z",
-        "idempotencyKey": "uuid-action-1"
-      }
-    ]
-  }
-  ```
-- **Response (200 OK):**
+### 7.1. Lấy tỷ giá
+- **`GET /api/v1/exchange-rates?from=USD&to=VND`**
+- **Response (200):**
   ```json
   "data": {
-    "processedCount": 1,
-    "failedCount": 0,
-    "conflicts": [],
-    "pendingStashAdded": 0
+    "from": "USD",
+    "to": "VND",
+    "rate": 25000.000000,
+    "source": "fixer.io",
+    "cached": false,
+    "fetchedAt": "2026-06-09T14:00:00Z"
   }
   ```
+- **Note:** `cached: true` khi Circuit Breaker OPEN và dùng fallback cache.
+
+---
+
+## 8. NOTIFICATION ENDPOINTS
+
+### 8.1. Danh sách notifications
+- **`GET /api/v1/notifications`**
+- **Query:** `?unreadOnly=true&page=1&limit=20`
+- **Response (200):**
+  ```json
+  "data": [
+    {
+      "id": "notif-uuid",
+      "type": "EXPENSE_CREATED",
+      "title": "Chi phí mới",
+      "body": "Minh thêm 'Ăn trưa' — Bạn nợ 200,000₫",
+      "groupId": "group-uuid",
+      "read": false,
+      "createdAt": "2026-06-09T14:30:00Z"
+    }
+  ]
+  ```
+
+### 8.2. Đánh dấu đã đọc
+- **`PUT /api/v1/notifications/:id/read`**
+
+### 8.3. Nhắc nợ (Remind)
+- **`POST /api/v1/groups/:id/remind`**
+- **Payload:** `{ "toUserId": "uuid-b" }`
+- **Response (200):** `"data": { "sent": true }`
+- **Rate Limit:** 1 reminder / 24h cho cùng 1 cặp.
+
+---
+
+## 9. WEBSOCKET EVENTS
+
+### Connection
+```javascript
+const socket = io('wss://teamfin.app/ws', {
+  auth: { token: accessToken }
+});
+```
+
+### Events (Server → Client)
+
+| Event | Payload | Trigger |
+|-------|---------|---------|
+| `expense:created` | `{ expenseId, groupId, description, amount, yourShare }` | Expense mới trong nhóm |
+| `expense:updated` | `{ expenseId, groupId, changes }` | Expense bị sửa |
+| `expense:deleted` | `{ expenseId, groupId }` | Expense bị xóa |
+| `settlement:created` | `{ settlementId, groupId, from, to, amount }` | Ai đó settle nợ |
+| `balance:updated` | `{ groupId, myBalance }` | Balance thay đổi |
+| `member:joined` | `{ groupId, userId, username }` | Thành viên mới |
+| `reminder:received` | `{ groupId, fromUsername, amount }` | Bị nhắc nợ |

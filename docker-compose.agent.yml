@@ -1,5 +1,3 @@
-version: '3.8'
-
 # Agent Harness Layer 0
 # Môi trường chạy script độc lập để đảm bảo an toàn cho dự án chính.
 
@@ -17,7 +15,6 @@ services:
           memory: 512M
     volumes:
       # Map thư mục execution (Read-Only) để Agent có thể gọi script nhưng không sửa mã nguồn trực tiếp qua Sandbox.
-      # Việc sửa code Python phải làm ở môi trường ngoài.
       - ./execution:/usr/src/app/execution:ro
       # Map thư mục .tmp (Read/Write) để Agent xuất log, nhớ dài hạn (Memory), hoặc file nháp
       - ./.tmp:/usr/src/app/.tmp:rw
@@ -26,5 +23,12 @@ services:
       # Cấp quyền đọc (Read-Only) mã nguồn để Agent thực hiện phân tích
       - ./apps:/usr/src/app/apps:ro
       - ./packages:/usr/src/app/packages:ro
+      # AI Knowledge System — scripts read-only, memory read-write
+      - ./.ai:/usr/src/app/.ai:rw
+      # Directives & Docs cho Knowledge Builder scan
+      - ./directives:/usr/src/app/directives:ro
+      - ./docs:/usr/src/app/docs:ro
+      # README cho Knowledge Builder
+      - ./readme.md:/usr/src/app/readme.md:ro
 
     network_mode: "bridge" # Có thể đổi thành none nếu cần cắt mạng hoàn toàn khi test logic nội bộ

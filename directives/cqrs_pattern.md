@@ -92,7 +92,7 @@ export class PrismaUserRepository implements UserRepository {
 }
 ```
 
-### 6. Composition Root (`container/usecases.ts`)
+### 6. Composition Root (`container/application.ts`)
 > This is the ONLY file in the entire codebase that knows both sides (abstract + concrete).
 ```typescript
 const transactionManager = new PrismaTransactionManager(infra.prisma); // Infra knows Prisma

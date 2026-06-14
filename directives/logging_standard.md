@@ -36,6 +36,7 @@ Always use structured JSON logging in production.
 Do not pollute the console with unstructured strings. 
 
 - Use the shared `createLogger(serviceName)` utility from `@distributed-social-platform/shared-kernel`.
+  - *Note for dev mode:* `createLogger` uses `pino-pretty` for console output and directly pushes to Elasticsearch via `pino-elasticsearch`.
 - Never `console.log`.
 
 ## Enforcement for AI Workflows
