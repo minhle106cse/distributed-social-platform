@@ -9,17 +9,17 @@
 
 | # | Document | Description |
 |---|----------|-------------|
-| 💼 | [Business Requirements](./01_business_requirements.md) | 4 business pillars, splitting rules, debt optimization |
-| 📋 | [Use Cases](./02_use_cases.md) | Detailed User ↔ System interaction flows |
-| 🏗️ | [Architecture & Diagrams](./03_system_architecture_diagrams.md) | ERD, Sequence Diagrams, Data Flow |
-| 💾 | [Database Schema](./04_database_schema.md) | Prisma Schema, Event Store, Read Model |
-| 🎨 | [UI/UX Guidelines](./05_web_ui_ux_guidelines.md) | Dashboard layout, components, dark mode |
-| 📡 | [API Contracts](./06_api_contracts.md) | RESTful endpoints, Idempotency, WebSocket |
-| 🧩 | [Design System](./07_design_system_assets.md) | Color tokens, typography, spacing |
-| 🧪 | [Testing Strategy](./08_testing_and_qa_strategy.md) | Ledger integrity, Saga rollback, load testing |
-| ☁️ | [DevOps Infrastructure](./09_devops_infrastructure.md) | Monorepo, Docker Compose, CI/CD |
-| 🛡️ | [Security & RBAC](./10_security_rbac.md) | Financial encryption, Group RBAC, Rate Limiting |
-| 🚀 | [Execution Roadmap](./README_PHASES.md) | 8-phase roadmap: Monolith → Microservices |
+| 💼 | [Business Requirements](../01_business_requirements.md) | 4 business pillars, splitting rules, debt optimization |
+| 📋 | [Use Cases](../02_use_cases.md) | Detailed User ↔ System interaction flows |
+| 🏗️ | [Architecture & Diagrams](../03_system_architecture_diagrams.md) | ERD, Sequence Diagrams, Data Flow |
+| 💾 | [Database Schema](../04_database_schema.md) | Prisma Schema, Event Store, Read Model |
+| 🎨 | [UI/UX Guidelines](../05_web_ui_ux_guidelines.md) | Dashboard layout, components, dark mode |
+| 📡 | [API Contracts](../06_api_contracts.md) | RESTful endpoints, Idempotency, WebSocket |
+| 🧩 | [Design System](../07_design_system_assets.md) | Color tokens, typography, spacing |
+| 🧪 | [Testing Strategy](../08_testing_and_qa_strategy.md) | Ledger integrity, Saga rollback, load testing |
+| ☁️ | [DevOps Infrastructure](../09_devops_infrastructure.md) | Monorepo, Docker Compose, CI/CD |
+| 🛡️ | [Security & RBAC](../10_security_rbac.md) | Financial encryption, Group RBAC, Rate Limiting |
+| 🚀 | [Execution Roadmap](../../readme.phases.md) | 9-phase roadmap (0-8): Monolith → Microservices |
 
 ---
 
@@ -80,9 +80,9 @@ Start with a **tightly-structured Modular Monolith**, extract to **Microservices
  =========================================================================
   KAFKA EVENT STREAMING BACKBONE
  =========================================================================
-        |                  |                  |                  |
-  [Worker Service]  [Search Service]  [Notification Svc]  [Exchange Rate Svc]
-  (Debt Simplify)   (ES Indexing)     (WebSocket+Push)    (Circuit Breaker)
+        |                  |                  |                  |                  |
+  [Worker Service]  [Search Service]  [Notification Svc]  [Exchange Rate Svc]  [Chat Service]
+  (Debt Simplify)   (Phase X - Future)(WebSocket+Push)    (Phase X - Future)   (Phase X - Future)
 ```
 
 ---
@@ -119,13 +119,16 @@ Start with a **tightly-structured Modular Monolith**, extract to **Microservices
 
 ## 📈 PROGRESS TRACKING
 
-- [x] **Phase 0:** Foundation & Infrastructure
-- [ ] **Phase 1:** Modular Monolith (Group, Expense, Balance)
+Current progress: **Phase 0 — Foundation & Scaffolding**
+
+- [x] **Phase 0:** Foundation & Infrastructure (Monorepo, Docker, AI Workflow, module scaffolds created)
+- [ ] **Phase 1:** Modular Monolith (Group, Expense, Balance) - NEXT
 - [ ] **Phase 2:** Event Backbone (Kafka, Outbox, Event Sourcing)
 - [ ] **Phase 3:** CQRS & Read Model Optimization
 - [ ] **Phase 4:** Multi-currency & Circuit Breaker
-- [ ] **Phase 5:** Settlement Saga & Real-time
-- [ ] **Phase 6:** The Great Migration (Extract settlement-service)
-- [ ] **Phase 7:** Observability & Production Hardening
+- [ ] **Phase 5:** Settlement & Saga
+- [ ] **Phase 6:** Real-time & Workers
+- [ ] **Phase 7:** The Great Migration (Extract settlement-service)
+- [ ] **Phase 8:** Observability & Production Hardening
 
 📋 Detailed roadmap: [README_PHASES.md](./README_PHASES.md)

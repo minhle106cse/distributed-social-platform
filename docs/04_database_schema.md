@@ -21,36 +21,125 @@ Tài liệu định nghĩa cấu trúc cơ sở dữ liệu cho **TeamFin**. Lư
 
 ```prisma
 model User {
-  id             String       @id @default(uuid())
-  email          String       @unique
-  username       String
-  avatarUrl      String?
-  status         UserStatus   @default(ACTIVE)
+  id            String   @id @default(uuid())
+  email         String   @unique
+  isActive      Boolean  @default(true)
+  emailVerified Boolean  @default(false)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   authIdentities AuthIdentity[]
+  refreshTokens  RefreshToken[]
+  roles          UserRole[]
+  profile        UserProfile?
+}
 
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+model UserProfile {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  firstName   String?
+  lastName    String?
+  displayName String?
+  avatarUrl   String?
+  phoneNumber String?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model AuthIdentity {
-  id             String       @id @default(uuid())
-  userId         String
-  provider       AuthProvider @default(LOCAL)
-  passwordHash   String?
-  refreshToken   String?
+  id           String   @id @default(uuid())
+  userId       String
 
-  user           User         @relation(fields: [userId], references: [id])
+  provider     AuthProvider @default(LOCAL)
+  passwordHash String?
+  providerId   String?  // For Google/Apple ID
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user         User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, provider])
+  @@unique([provider, providerId])
 }
 
-enum UserStatus {
-  ACTIVE
-  BANNED
+model RefreshToken {
+  id          String   @id @default(uuid())
+  userId      String
+
+  tokenHash   String   @unique
+  expiredAt   DateTime
+
+  usedAt      DateTime?
+  revokedAt   DateTime?
+
+  ipAddress   String?
+  userAgent   String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id])
+}
+
+// System RBAC (Role-Based Access Control)
+model Role {
+  id          String   @id @default(uuid())
+  code        String   @unique // VD: "SUPER_ADMIN"
+  name        String   
+  description String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  permissions RolePermission[]
+  users       UserRole[]
+}
+
+model Permission {
+  id          String   @id @default(uuid())
+  code        String   @unique // VD: "RBAC:*"
+  module      String   // Phân loại nhóm quyền
+  description String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  roles       RolePermission[]
+}
+
+model RolePermission {
+  roleId       String
+  permissionId String
+
+  createdAt    DateTime   @default(now())
+
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+}
+
+model UserRole {
+  userId       String
+  roleId       String
+
+  createdAt    DateTime @default(now())
+
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role         Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
 }
 
 enum AuthProvider {
   LOCAL
   GOOGLE
+  APPLE
 }
 ```
 
@@ -414,3 +503,19 @@ Quy tắc: `amount_display = amount_stored / 100` (cho USD, EUR). VND: `amount_s
 ### 3.5. BalanceSummary: Tại sao denormalize?
 
 Query "Ai nợ ai bao nhiêu" từ Event Store mỗi lần cần đọc N events → chậm. BalanceSummary là **Materialized View** — đã tính sẵn, chỉ cần `SELECT * WHERE groupId = X` → instant response.
+
+### 3.6. Nguyên tắc Soft Delete, Hard Delete và Cờ Tạm Khóa (isActive)
+
+Để bảo đảm tính toàn vẹn dữ liệu (đặc biệt trong báo cáo tài chính và Audit Log), toàn bộ hệ thống áp dụng quy tắc xóa như sau:
+
+1. **Dùng `isActive` (Tạm ngưng / Vô hiệu hóa):**
+   - Áp dụng cho: `User`, `Role`, `Permission`.
+   - Cờ `isActive` chỉ dùng để tạm thời khóa đối tượng (ví dụ: Admin ban tài khoản, khóa role). Đối tượng vẫn đang tồn tại và admin có thể bật/tắt (Toggle) tùy ý.
+2. **Dùng `deletedAt` (Soft Delete - Xóa Mềm):**
+   - Áp dụng cho: Các bảng nghiệp vụ quan trọng (`Expense`, `FinanceGroup`, `Settlement`, `GroupMember`) hoặc khi thực thể gốc bị xóa hẳn khỏi ứng dụng (`User`, `Role`, `Permission`).
+   - Dữ liệu bị người dùng xóa sẽ không còn hiện trên UI, nhưng vẫn lưu trong Database để không làm hỏng dữ liệu quá khứ (VD: Tránh lỗi Foreign Key hoặc làm lệch bảng tính nợ).
+3. **Hard Delete (Xóa Thật):**
+   - Áp dụng cho: Dữ liệu Mapping / Join table trung gian (`UserRole`, `RolePermission`, `ExpensePayer`, `ExpenseSplit`) và dữ liệu Transient/Tạm thời (`GroupInvite`, `RefreshToken`, `IdempotencyRecord`, `ExchangeRateCache`).
+   - Các bảng này không cần `deletedAt` hay `isActive`, xóa là xóa thẳng tay (có thể dùng cascade).
+
+*Lưu ý: Ở tầng query DB (Prisma Client), chúng ta đã setup Prisma Extensions tự động thêm điều kiện `deletedAt: null` vào mọi truy vấn cho các bảng có Soft Delete để developer không phải lặp lại code filter này.*

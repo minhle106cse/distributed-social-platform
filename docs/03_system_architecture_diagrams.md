@@ -405,8 +405,8 @@ sequenceDiagram
                         ▼
 ┌──────────────────────────────────────────────────────────────┐
 │                 API GATEWAY / INGRESS                        │
-│  ├── /auth/*        → auth-service (Fastify :3001)           │
-│  ├── /api/v1/*      → core-api (NestJS :3000)                │
+│  ├── /api/v1/auth/* → auth-service (Fastify :4001)           │
+│  ├── /api/v1/*      → core-api (NestJS :4002)                │
 │  ├── /ws/*          → notification-service (:3004)           │
 │  └── /exchange/*    → exchange-rate-service (:3005)           │
 └───────────────────────┬──────────────────────────────────────┘

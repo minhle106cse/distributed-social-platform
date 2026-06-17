@@ -107,7 +107,7 @@ Each command declares which middleware behaviors it opts into via `options`:
 
 ```typescript
 export class RefreshCommand implements ICommand {
-  readonly name = 'RefreshCommand';
+  readonly name = RefreshCommand.name;
   /**
    * MUST be transactional: marks old token as used AND creates new one.
    * If create fails without transaction, user loses access permanently.

@@ -35,10 +35,11 @@ Tạo môi trường phát triển local hoàn chỉnh và chuẩn hóa kiến t
 1. **Monorepo Setup (Turborepo)**
    - `apps/core-api` — NestJS Modular Monolith
    - `apps/auth-service` — Fastify Microservice
-   - `apps/web` — Vite + React SPA
-   - `apps/worker-service` — Background Jobs
-   - `apps/notification-service` — WebSocket + Push
-   - `apps/exchange-rate-service` — Currency API Proxy
+   - `apps/web` — Vite + React SPA (Phase X - Future)
+   - `apps/worker-service` — Background Jobs (Scaffolded)
+   - `apps/notification-service` — WebSocket + Push (Scaffolded)
+   - `apps/exchange-rate-service` — Currency API Proxy (Phase X - Future)
+   - `apps/chat-service` — (Phase X - Future)
 
 2. **Local Infra (Docker Compose)**
    - PostgreSQL (5432) — Core Database
@@ -47,9 +48,8 @@ Tạo môi trường phát triển local hoàn chỉnh và chuẩn hóa kiến t
    - Elasticsearch (9200) — Full-text Search
 
 3. **Shared Packages**
-   - `packages/event-contracts` — Kafka Event Schema definitions (TypeScript types)
-   - `packages/shared-kernel` — Abstractions, interfaces, domain types
-   - `packages/logger` — Common structured logging (Pino)
+   - `packages/shared-kernel` — Abstractions, interfaces, domain types, and common logger (Pino)
+   - `packages/event-contracts` — Kafka Event Schema definitions (Phase X - Future)
 
 4. **AI Agent Workflow**
    - `directives/` — SOPs cho kiến trúc, CQRS rules, Event Sourcing rules

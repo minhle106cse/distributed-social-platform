@@ -9,11 +9,11 @@ services:
     container_name: dsp-postgres
     restart: always
     environment:
-      POSTGRES_USER: ${DB_USER:-root}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-rootpassword}
-      POSTGRES_DB: ${CORE_DB_NAME:-core_db}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${CORE_DB_NAME}
     ports:
-      - "${DB_PORT:-5432}:5432"
+      - "${DB_PORT}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker-init/init-dbs.sql:/docker-entrypoint-initdb.d/init-dbs.sql
@@ -31,7 +31,7 @@ services:
     container_name: dsp-redis
     restart: always
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${REDIS_PORT}:6379"
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes
@@ -49,13 +49,13 @@ services:
     container_name: dsp-kafka
     restart: always
     ports:
-      - "${KAFKA_BROKER_PORT:-9092}:9092"
-      - "${KAFKA_CONTROLLER_PORT:-9093}:9093"
+      - "${KAFKA_BROKER_PORT}:9092"
+      - "${KAFKA_CONTROLLER_PORT}:9093"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
-      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:${KAFKA_BROKER_PORT:-9092}'
-      KAFKA_LISTENERS: 'PLAINTEXT://kafka:29092,CONTROLLER://kafka:29093,PLAINTEXT_HOST://0.0.0.0:${KAFKA_BROKER_PORT:-9092}'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:${KAFKA_BROKER_PORT}'
+      KAFKA_LISTENERS: 'PLAINTEXT://kafka:29092,CONTROLLER://kafka:29093,PLAINTEXT_HOST://0.0.0.0:${KAFKA_BROKER_PORT}'
       KAFKA_PROCESS_ROLES: 'broker,controller'
       KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:29093'
       KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
@@ -68,7 +68,7 @@ services:
     volumes:
       - kafka_data:/var/lib/kafka/data
     healthcheck:
-      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:${KAFKA_BROKER_PORT:-9092} > /dev/null 2>&1"]
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:${KAFKA_BROKER_PORT} > /dev/null 2>&1"]
       interval: 10s
       timeout: 10s
       retries: 10
@@ -83,15 +83,15 @@ services:
     restart: always
     environment:
       - discovery.type=single-node
-      - xpack.security.enabled=false
+      - xpack.security.enabled=true
       - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD:-changeme}
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
     ports:
-      - "${ELASTIC_PORT:-9200}:9200"
+      - "${ELASTIC_PORT}:9200"
     volumes:
       - es_data:/usr/share/elasticsearch/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      test: ["CMD-SHELL", "curl -sf -u elastic:$${ELASTIC_PASSWORD} http://localhost:9200/_cluster/health || exit 1"]
       interval: 10s
       timeout: 10s
       retries: 10
@@ -104,10 +104,13 @@ services:
     image: provectuslabs/kafka-ui:latest
     container_name: dsp-kafka-ui
     ports:
-      - "8080:8080"
+      - "${KAFKA_UI_PORT}:8080"
     environment:
       - KAFKA_CLUSTERS_0_NAME=local
       - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:29092
+      - AUTH_TYPE=LOGIN_FORM
+      - SPRING_SECURITY_USER_NAME=${KAFKA_UI_USER}
+      - SPRING_SECURITY_USER_PASSWORD=${KAFKA_UI_PASSWORD}
     depends_on:
       kafka:
         condition: service_healthy
@@ -118,8 +121,6 @@ services:
   redisinsight:
     image: redis/redisinsight:latest
     container_name: dsp-redisinsight
-    ports:
-      - "8001:5540"
     depends_on:
       redis:
         condition: service_healthy
@@ -131,9 +132,11 @@ services:
     image: docker.elastic.co/kibana/kibana:8.10.2
     container_name: dsp-kibana
     ports:
-      - "5601:5601"
+      - "${KIBANA_PORT}:5601"
     environment:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD}
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -146,9 +149,12 @@ services:
     container_name: dsp-api-gateway
     restart: always
     ports:
-      - "8000:80"
+      - "${API_GATEWAY_PORT}:80"
+      - "${REDISINSIGHT_PORT}:8001"
+      - "${PROMETHEUS_PORT}:9090"
     volumes:
       - ./docker-init/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker-init/.htpasswd:/etc/nginx/.htpasswd:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -158,8 +164,6 @@ services:
   prometheus:
     image: prom/prometheus:latest
     container_name: dsp-prometheus
-    ports:
-      - "9090:9090"
     volumes:
       - ./docker-init/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus_data:/prometheus
@@ -172,9 +176,10 @@ services:
     image: grafana/grafana:latest
     container_name: dsp-grafana
     ports:
-      - "3000:3000"
+      - "${GRAFANA_PORT}:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD}
     volumes:
       - grafana_data:/var/lib/grafana
       - ./docker-init/grafana/provisioning:/etc/grafana/provisioning
@@ -189,7 +194,7 @@ services:
     image: prom/node-exporter:latest
     container_name: dsp-node-exporter
     ports:
-      - "9100:9100"
+      - "${NODE_EXPORTER_PORT}:9100"
     restart: always
 
 
@@ -200,9 +205,9 @@ services:
     image: prometheuscommunity/postgres-exporter:latest
     container_name: dsp-postgres-exporter
     environment:
-      DATA_SOURCE_NAME: "postgresql://${DB_USER:-root}:${DB_PASSWORD:-rootpassword}@postgres:5432/${CORE_DB_NAME:-core_db}?sslmode=disable"
+      DATA_SOURCE_NAME: "postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${CORE_DB_NAME}?sslmode=disable"
     ports:
-      - "9187:9187"
+      - "${POSTGRES_EXPORTER_PORT}:9187"
     depends_on:
       - postgres
     restart: always
@@ -216,7 +221,7 @@ services:
     environment:
       REDIS_ADDR: "redis:6379"
     ports:
-      - "9121:9121"
+      - "${REDIS_EXPORTER_PORT}:9121"
     depends_on:
       - redis
     restart: always
@@ -229,7 +234,7 @@ services:
     container_name: dsp-kafka-exporter
     command: ["--kafka.server=kafka:29092"]
     ports:
-      - "9308:9308"
+      - "${KAFKA_EXPORTER_PORT}:9308"
     depends_on:
       - kafka
     restart: always
@@ -242,7 +247,7 @@ services:
     container_name: dsp-elasticsearch-exporter
     command: ["--es.uri=http://elasticsearch:9200"]
     ports:
-      - "9114:9114"
+      - "${ELASTICSEARCH_EXPORTER_PORT}:9114"
     depends_on:
       - elasticsearch
     restart: always
@@ -255,7 +260,7 @@ services:
     container_name: dsp-nginx-exporter
     command: ["-nginx.scrape-uri=http://api-gateway:80/stub_status"]
     ports:
-      - "9113:9113"
+      - "${NGINX_EXPORTER_PORT}:9113"
     depends_on:
       - api-gateway
     restart: always

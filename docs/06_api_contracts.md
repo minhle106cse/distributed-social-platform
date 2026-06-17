@@ -8,65 +8,107 @@
 
 ## 1. GIAO THỨC CHUNG
 
-- **Auth Service Base URL:** `/auth` (Fastify, port 3001)
-- **Core API Base URL:** `/api/v1` (NestJS, port 3000)
-- **Authentication:** Bearer Token trong header `Authorization`.
+- **Auth Service Base URL:** `/api/v1` (Fastify, port 4001)
+- **Core API Base URL:** `/api/v1` (NestJS, port 4002)
+- **Authentication:** Access Token trong HTTP-Only Cookie `accessToken`.
 - **Idempotency:** Mọi POST/PUT thay đổi tài chính PHẢI gửi `X-Idempotency-Key` header.
 - **OCC:** Mọi PUT (update) PHẢI gửi `version` trong body.
 - **Response Format:**
   ```json
   {
     "success": true,
+    "message": "Operation completed successfully",
     "data": { ... },
-    "error": null,
-    "meta": { "version": 1, "timestamp": "2026-06-09T14:30:00Z" }
+    "statusCode": 200
   }
   ```
 - **Error Format:**
   ```json
   {
     "success": false,
-    "data": null,
+    "message": "Version mismatch. Current version: 4",
     "error": {
       "code": "CONFLICT",
-      "message": "Version mismatch. Current version: 4",
-      "details": { "currentVersion": 4, "currentState": { ... } }
-    }
+      "details": { "currentVersion": 4 }
+    },
+    "meta": { "version": 1, "timestamp": "2026-06-09T14:30:00Z" }
   }
   ```
 
 ---
 
-## 2. AUTH SERVICE ENDPOINTS
+## 2. AUTH ENDPOINTS (`auth-service`)
 
 ### 2.1. Đăng ký (Register)
-- **`POST /auth/register`**
-- **Payload:** `{ "email": "user@example.com", "username": "Minh", "password": "Str0ngP@ss" }`
+- **`POST /api/v1/auth/register`**
+- **Payload:** `{ "email": "user@example.com", "password": "Str0ngP@ss" }`
 - **Response (201):**
   ```json
-  "data": { "userId": "uuid", "username": "Minh", "accessToken": "jwt", "expiresIn": 900 }
+  "data": { "accessToken": { "token": "jwt", "expiresIn": 900 } }
   ```
 - **Note:** `refreshToken` set qua HTTP-Only Cookie.
 
 ### 2.2. Đăng nhập (Login)
-- **`POST /auth/login`**
+- **`POST /api/v1/auth/login`**
 - **Payload:** `{ "email": "user@example.com", "password": "Str0ngP@ss" }`
 - **Response (200):** Tương tự Register.
 - **Rate Limit:** 5 req / 5 phút / IP.
 
 ### 2.3. Refresh Token
-- **`POST /auth/refresh`**
-- **Response (200):** `"data": { "accessToken": "new-jwt", "expiresIn": 900 }`
-- **Note:** Refresh Token Rotation — token cũ bị vô hiệu hóa.
+- **`POST /api/v1/auth/refresh`**
+- **Response (200):** `"data": { "accessToken": { "token": "new-jwt", "expiresIn": 900 } }`
+- **Note:** Yêu cầu `refreshToken` trong HTTP-Only Cookie.
 
 ### 2.4. Logout
-- **`POST /auth/logout`**
+- **`POST /api/v1/auth/logout`**
+- **Cookie:** `accessToken=<accessToken>`
 - **Response (200):** `{ "success": true, "data": null }`
 
-### 2.5. Profile (Me)
-- **`GET /auth/me`**
-- **Header:** `Authorization: Bearer <accessToken>`
-- **Response (200):** `"data": { "userId": "uuid", "email": "...", "username": "Minh", "status": "ACTIVE" }`
+---
+
+## 3. USER ENDPOINTS (`auth-service`)
+
+### 3.1. Get Profile (Me)
+- **`GET /api/v1/users/me`**
+- **Cookie:** `accessToken=<accessToken>`
+- **Response (200):** 
+  ```json
+  "data": { 
+    "id": "uuid", 
+    "email": "user@example.com", 
+    "profile": { "firstName": "Minh", "avatarUrl": "..." },
+    "roles": ["ADMIN"],
+    "permissions": ["RBAC:*"]
+  }
+  ```
+
+### 3.2. Update Profile
+- **`PUT /api/v1/users/me/profile`**
+- **Cookie:** `accessToken=<accessToken>`
+- **Payload:** `{ "firstName": "Minh", "lastName": "Le", "phoneNumber": "0123456789" }`
+- **Response (200):** Cập nhật thành công.
+
+---
+
+## 4. RBAC ENDPOINTS (`auth-service`)
+
+> **Yêu cầu:** Mọi endpoint RBAC đều yêu cầu user có quyền `RBAC:*` trong `permissions` của Fat JWT.
+
+### 4.1. Tạo Role
+- **`POST /api/v1/roles`**
+- **Payload:** `{ "code": "MANAGER", "name": "Manager", "description": "System Manager" }`
+
+### 4.2. Gán Quyền cho Role
+- **`POST /api/v1/roles/:roleId/permissions`**
+- **Payload:** `{ "permissionIds": ["perm-uuid-1", "perm-uuid-2"] }`
+
+### 4.3. Cấp Role cho User
+- **`POST /api/v1/roles/assign`**
+- **Payload:** `{ "userId": "uuid", "roleId": "role-uuid" }`
+
+### 4.4. Tạo Permission
+- **`POST /api/v1/permissions`**
+- **Payload:** `{ "code": "EXPENSE:DELETE", "module": "EXPENSE", "description": "Delete any expense" }`
 
 ---
 

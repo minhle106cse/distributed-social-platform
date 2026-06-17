@@ -20,7 +20,7 @@
 | 🧪 | [Chiến lược Testing](./docs/08_testing_and_qa_strategy.md) | Ledger integrity, Saga rollback, OCC race condition |
 | ☁️ | [Hạ tầng DevOps](./docs/09_devops_infrastructure.md) | Monorepo, Docker Compose, CI/CD |
 | 🛡️ | [Bảo mật & Phân quyền](./docs/10_security_rbac.md) | Financial encryption, Group RBAC, Rate Limiting |
-| 🚀 | [Lộ trình Thực thi](./readme.phases.md) | Roadmap 8 phases: Monolith → Microservices |
+| 🚀 | [Lộ trình Thực thi](./readme.phases.md) | Roadmap 9 phases (0-8): Monolith → Microservices |
 
 ---
 
@@ -94,11 +94,11 @@ Bắt đầu bằng **Modular Monolith** chặt chẽ, và chỉ tách thành **
  =========================================================================
   🌊 KAFKA EVENT STREAMING BACKBONE
  =========================================================================
-        |                  |                  |                  |
-        v                  v                  v                  v
-  [Worker Service]  [Search Service]  [Notification Svc]  [Exchange Rate Svc]
-  (Debt Simplify,   (ES Indexing,     (WebSocket +        (3rd-party API,
-   Scheduled Jobs)   Full-text)        Push Notif)         Circuit Breaker)
+        |                  |                  |                  |                  |
+        v                  v                  v                  v                  v
+  [Worker Service]  [Search Service]  [Notification Svc]  [Exchange Rate Svc]  [Chat Service]
+  (Debt Simplify,   (Phase X -        (WebSocket +        (Phase X - 3rd-      (Phase X - 
+   Scheduled Jobs)   Future)           Push Notif)         party API)           Future)
 ```
 
 ---
@@ -234,7 +234,7 @@ Dự án áp dụng hệ thống **Multi-Agent Orchestration (Level 4/5)**:
 - **Layer 0 (Harness Sandbox):** Container Docker chạy cách ly. Script chỉ chạy trong sandbox.
 - **Layer 1 (Directives):** SOPs định nghĩa luật kiến trúc (Hexagonal, CQRS, Event Sourcing rules).
 - **Layer 2 (Orchestration):** Agent điều phối, lập kế hoạch động.
-- **Layer 3 (Execution):** Python scripts trong `execution/`, Memory Buffer trong `agent_memory.json`.
+- **Layer 3 (Execution):** Python scripts trong `execution/`, Memory Buffer trong `.ai/memory/*.jsonl`.
 
 ### Security Pattern
 - **Sandbox Read-Only:** Môi trường sandbox chạy validators với quyền Read-Only.
@@ -265,16 +265,17 @@ Dự án áp dụng hệ thống **Multi-Agent Orchestration (Level 4/5)**:
 
 ## 📈 TIẾN ĐỘ DỰ ÁN
 
-Tiến độ hiện tại: **Phase 0 — Foundation Done**
+Tiến độ hiện tại: **Phase 0 — Foundation & Scaffolding**
 
-- [x] **Phase 0:** Foundation & Infra (Monorepo, Docker, AI Workflow)
-- [ ] **Phase 1:** Modular Monolith — Group, Expense, Balance modules
+- [x] **Phase 0:** Foundation & Infra (Monorepo, Docker, AI Workflow, module scaffolds created)
+- [ ] **Phase 1:** Modular Monolith — Group, Expense, Balance modules (NEXT)
 - [ ] **Phase 2:** Event Backbone — Kafka, Outbox Pattern, Event Sourcing
 - [ ] **Phase 3:** CQRS & Read Model Optimization
 - [ ] **Phase 4:** Multi-currency & Exchange Rate Service (Circuit Breaker)
-- [ ] **Phase 5:** Real-time Notifications & Settlement Saga
-- [ ] **Phase 6:** The Great Migration — Tách `settlement-service`
-- [ ] **Phase 7:** Observability & Production Hardening
+- [ ] **Phase 5:** Settlement & Saga
+- [ ] **Phase 6:** Real-time & Workers
+- [ ] **Phase 7:** The Great Migration — Tách `settlement-service`
+- [ ] **Phase 8:** Production Hardening
 
 📋 Chi tiết từng Phase: [readme.phases.md](./readme.phases.md)
 

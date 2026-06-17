@@ -120,8 +120,8 @@ npx turbo run dev
 
 # Services will be available at:
 # - Web:                  http://localhost:5173
-# - Core API:             http://localhost:3000
-# - Auth Service:         http://localhost:3001
+# - Core API:             http://localhost:4002
+# - Auth Service:         http://localhost:4001
 # - Notification Service: http://localhost:3004 (WebSocket)
 # - Exchange Rate Service: http://localhost:3005
 # - Kafka UI:             http://localhost:8080
@@ -176,6 +176,6 @@ flowchart LR
 | Tool | Dùng cho | Port |
 |------|----------|------|
 | **Prometheus** | Metrics collection | 9090 |
-| **Grafana** | Dashboards & Alerts | 3100 |
+| **Grafana** | Dashboards & Alerts | 3000 |
 | **Jaeger** | Distributed Tracing | 16686 |
 | **Kafka UI** | Topic/Consumer inspection | 8080 |

@@ -22,7 +22,7 @@ Bảo mật là ưu tiên hàng đầu khi hệ thống xử lý **dữ liệu t
 ```
 Allowed Origins: https://teamfin.app (production), http://localhost:5173 (dev)
 Allowed Methods: GET, POST, PUT, DELETE, OPTIONS
-Allowed Headers: Authorization, Content-Type, X-Idempotency-Key
+Allowed Headers: Content-Type, X-Idempotency-Key
 Credentials: true (cho Cookie)
 ```
 
@@ -65,7 +65,9 @@ Content-Security-Policy: default-src 'self'
   1. Verify user là member của nhóm.
   2. Verify user có role đủ quyền cho action đó.
   3. Nếu thiếu quyền → **HTTP 403 Forbidden**.
-- **Guard Pattern** (NestJS): Custom `@Roles(GroupRole.ADMIN)` decorator + Guard interceptor.
+- **Enforcement Patterns (Đa kiến trúc / Polyglot):**
+  - **System RBAC (`auth-service` / Fastify):** Sử dụng `preHandler: [fastify.authenticate, fastify.requirePermissions(['RBAC:*'])]` để verify Fat JWT (Không cần gọi DB).
+  - **Group RBAC (`core-api` / NestJS):** Sử dụng Custom `@Roles(GroupRole.ADMIN)` decorator + Guard (NestJS Interceptor) để kiểm tra role của user trong một context nhóm cụ thể.
 
 ---
 
