@@ -2,7 +2,7 @@
 
 > 📖 **[English Version](./en/10_security_rbac.md)**
 
-Bảo mật là ưu tiên hàng đầu khi hệ thống xử lý **dữ liệu tài chính**. Tài liệu này đặc tả toàn bộ chiến lược bảo mật cho **TeamFin**.
+Cortex là **B2B SaaS đa tổ chức** — bảo mật ưu tiên hàng đầu là **cô lập dữ liệu giữa các tenant** và **ranh giới dữ liệu cho AI (AI Data Boundary)**. Tài liệu đặc tả toàn bộ chiến lược bảo mật cho **Cortex**.
 
 ---
 
@@ -12,182 +12,97 @@ Bảo mật là ưu tiên hàng đầu khi hệ thống xử lý **dữ liệu t
 
 | Token | Lifetime | Lưu trữ | Mục đích |
 |-------|----------|---------|----------|
-| **Access Token** | 15 phút | Memory (JS variable) | Authenticate API requests |
+| **Access Token** | 15 phút | HTTP-Only Cookie | Authenticate API requests |
 | **Refresh Token** | 7 ngày | HTTP-Only Secure Cookie | Renew Access Token |
 
-- **Refresh Token Rotation:** Mỗi lần sử dụng Refresh Token, server cấp token mới và vô hiệu hóa token cũ. Nếu token cũ bị sử dụng lại → **Revoke toàn bộ token family** (phát hiện theft).
-- **KHÔNG LƯU token trong LocalStorage** — chống XSS.
+- **Access Token payload:** `sub` (userId), `orgId`, `role` (trong org), `jti`.
+- **Refresh Token Rotation:** mỗi lần dùng → cấp token mới + vô hiệu token cũ. Token cũ bị tái sử dụng → **revoke toàn bộ token family** (phát hiện theft).
+- **KHÔNG** lưu token trong LocalStorage (chống XSS).
 
-### 1.2. CORS Policy
-```
-Allowed Origins: https://teamfin.app (production), http://localhost:5173 (dev)
-Allowed Methods: GET, POST, PUT, DELETE, OPTIONS
-Allowed Headers: Content-Type, X-Idempotency-Key
-Credentials: true (cho Cookie)
-```
-
-### 1.3. API Security Headers
-```
-Strict-Transport-Security: max-age=31536000; includeSubDomains
-X-Content-Type-Options: nosniff
-X-Frame-Options: DENY
-X-XSS-Protection: 1; mode=block
-Content-Security-Policy: default-src 'self'
-```
+### 1.2. Multi-Org Login
+- Một user có thể thuộc nhiều org. Access Token gắn `orgId` hiện tại; chuyển org → cấp lại token với `orgId` mới (re-scope).
 
 ---
 
-## 2. Phân quyền (Authorization — Group RBAC)
+## 2. Phân quyền (Authorization) — RBAC ĐA TỔ CHỨC
 
-### 2.1. Role Matrix
+### 2.1. Hai tầng quyền
 
-| Action | OWNER | ADMIN | MEMBER | VIEWER |
-|--------|-------|-------|--------|--------|
-| Xem dashboard/expenses | ✅ | ✅ | ✅ | ✅ |
-| Tạo expense | ✅ | ✅ | ✅ | ❌ |
-| Sửa expense **của mình** | ✅ | ✅ | ✅ | ❌ |
-| Sửa expense **của người khác** | ✅ | ✅ | ❌ | ❌ |
-| Xóa expense **của mình** | ✅ | ✅ | ✅ | ❌ |
-| Xóa expense **của người khác** | ✅ | ✅ | ❌ | ❌ |
-| Settle nợ | ✅ | ✅ | ✅ | ❌ |
-| Mời thành viên | ✅ | ✅ | ❌ | ❌ |
-| Kick thành viên | ✅ | ❌ | ❌ | ❌ |
-| Đổi role thành viên | ✅ | ❌ | ❌ | ❌ |
-| Sửa thông tin nhóm | ✅ | ✅ | ❌ | ❌ |
-| Xóa/Archive nhóm | ✅ | ❌ | ❌ | ❌ |
-| Export PDF | ✅ | ✅ | ❌ | ❌ |
-| Xem Activity Log | ✅ | ✅ | ✅ | ✅ |
+| Tầng | Phạm vi | Ví dụ |
+|------|---------|-------|
+| **System RBAC** (auth-service) | Toàn hệ thống | superadmin, vận hành |
+| **Org RBAC** (per-tenant) | Trong 1 organization | OWNER/ADMIN/MEMBER/GUEST |
 
-### 2.2. Enforcement Rules
+### 2.2. Org Roles & Quyền
 
-- **Backend BUỘC kiểm tra role.** KHÔNG tin tưởng Frontend validation.
-- Mọi endpoint Group/Expense/Settlement phải:
-  1. Verify user là member của nhóm.
-  2. Verify user có role đủ quyền cho action đó.
-  3. Nếu thiếu quyền → **HTTP 403 Forbidden**.
-- **Enforcement Patterns (Đa kiến trúc / Polyglot):**
-  - **System RBAC (`auth-service` / Fastify):** Sử dụng `preHandler: [fastify.authenticate, fastify.requirePermissions(['RBAC:*'])]` để verify Fat JWT (Không cần gọi DB).
-  - **Group RBAC (`core-api` / NestJS):** Sử dụng Custom `@Roles(GroupRole.ADMIN)` decorator + Guard (NestJS Interceptor) để kiểm tra role của user trong một context nhóm cụ thể.
+| Quyền | OWNER | ADMIN | MEMBER | GUEST |
+|------|:----:|:----:|:----:|:----:|
+| Đọc nội dung space được phép | ✅ | ✅ | ✅ | ✅ (chỉ space được mời) |
+| Tạo/sửa knowledge | ✅ | ✅ | ✅ | ❌ |
+| Hỏi AI (tốn credit) | ✅ | ✅ | ✅ | ❌ |
+| Verify nội dung | ✅ | ✅ | ⚠️ (đủ reputation) | ❌ |
+| Quản lý thành viên & space | ✅ | ✅ | ❌ | ❌ |
+| Quản lý credit/billing | ✅ | ❌ | ❌ | ❌ |
+
+> Một số quyền (Verify, edit wiki không cần duyệt) còn mở khóa theo **reputation** (gamification) — xem `docs/01` Trụ Cột 4.
+
+### 2.3. Privilege theo Reputation (tham khảo)
+| Ngưỡng | Mở khóa |
+|--------|---------|
+| 50 | Vote |
+| 200 | Edit wiki người khác không cần duyệt |
+| 500 | Verify nội dung |
+| 1000 | Moderation (gỡ flag, đóng câu hỏi trùng) |
 
 ---
 
-## 3. Rate Limiting (Chống Spam)
+## 3. 🔒 Tenant Isolation (BẤT BIẾN QUAN TRỌNG NHẤT)
 
-Sử dụng **Redis-backed Token Bucket** algorithm.
+> **RULE: Mọi truy vấn core-api BẮT BUỘC scope theo `orgId`. Không có ngoại lệ.**
 
-| Endpoint | Limit | Window | Mục đích |
-|----------|-------|--------|----------|
-| `POST /auth/login` | 5 req | 5 phút / IP | Chống brute force |
-| `POST /auth/register` | 3 req | 10 phút / IP | Chống spam accounts |
-| `POST /expenses` | 30 req | 1 phút / User | Chống spam expense |
-| `POST /settlements` | 10 req | 1 phút / User | Chống spam settlement |
-| `POST /remind` | 1 req | 24h / (User, Target) pair | Chống spam nhắc nợ |
-| `POST /groups/:id/invites` | 10 req | 1 giờ / User | Chống spam invite |
-| `GET /api/v1/*` (general) | 100 req | 1 phút / User | Chống DoS |
+- **Query guard:** middleware/interceptor inject `orgId` từ token vào mọi repository query (`WHERE org_id = ?`).
+- **Cross-org access** → HTTP 403 `FORBIDDEN_TENANT`.
+- **Defense in depth:** cân nhắc Postgres Row-Level Security (RLS) như lớp bảo vệ thứ hai (Phase 8).
+- **Test bắt buộc:** mỗi endpoint phải có test "user org A không thấy data org B" (xem `docs/08`).
 
-### Response khi bị Rate Limit
-```json
-HTTP 429 Too Many Requests
-{
-  "error": {
-    "code": "RATE_LIMITED",
-    "message": "Too many requests. Please try again in 45 seconds.",
-    "retryAfter": 45
-  }
-}
-```
+### 3.1. AI Data Boundary (đặc thù RAG)
+- Embedding mang `orgId`; **retrieval luôn lọc theo org** → ngữ cảnh RAG của org A **không bao giờ** chứa dữ liệu org B.
+- Prompt gửi tới Claude chỉ chứa nội dung thuộc đúng org của người hỏi.
+- Không log nội dung nhạy cảm ra hệ thống dùng chung; redact PII trong log.
 
 ---
 
-## 4. Bảo vệ Dữ liệu Tài chính (Financial Data Protection)
+## 4. Rate Limiting & Quota (chống lạm dụng + noisy-neighbor)
 
-### 4.1. Encryption
+| Đối tượng | Giới hạn | Cơ chế |
+|-----------|----------|--------|
+| Login/Register | 5 req / 5 phút / IP | auth-service |
+| AI query (đắt) | `aiRateLimitPerMin` / user / org | **Token Bucket (Redis)** |
+| Ghi nội dung | N req / phút / user | Redis |
+| Credit | chặn khi balance < cost | Ledger check |
 
-| Data | At Rest | In Transit |
-|------|---------|------------|
-| Passwords | bcrypt (12 rounds) | HTTPS/TLS 1.3 |
-| Financial amounts | PostgreSQL native | HTTPS/TLS 1.3 |
-| Refresh Tokens | Encrypted in DB | HTTP-Only Secure Cookie |
-| Exchange Rate API Key | Environment variable | HTTPS |
-
-### 4.2. Data Integrity
-
-- **Event Store là IMMUTABLE.** Không ai (kể cả Admin) có quyền DELETE hoặc UPDATE event records.
-- Database user cho application chỉ có quyền `INSERT` trên `event_store` table — không có `UPDATE` hoặc `DELETE`.
-- **Ledger Integrity Check:** Nightly cron verify `Sum(events) == Current Balance`. Drift → Alert.
-
-### 4.3. Audit Trail
-
-- Mọi action tài chính ghi vào EventStore với `userId` + `timestamp`.
-- Activity Log API cho phép xem lịch sử thay đổi.
-- Export audit trail cho compliance (nếu cần).
+- Quota **per tenant** đảm bảo org này không làm cạn tài nguyên org khác.
 
 ---
 
-## 5. Idempotency Security
+## 5. Bảo mật Dữ liệu & Hạ tầng
 
-### 5.1. Key Validation
-- `X-Idempotency-Key` phải là UUID v4 format.
-- Reject key không đúng format → **HTTP 400**.
-- Key có TTL 24 giờ — sau đó tự động xóa.
-
-### 5.2. Scope Isolation
-- Idempotency Key scoped theo **UserId + Key**. User A không thể dùng key của User B.
-- Prevent cross-user replay attacks.
+- **Encryption in transit:** TLS toàn bộ; cookie `Secure` + `SameSite=Lax/Strict`.
+- **Secrets:** `JWT_*`, `ANTHROPIC_API_KEY` qua env/secret manager; rotation định kỳ.
+- **CORS:** whitelist từ env, **TUYỆT ĐỐI KHÔNG** `['*']` (xem memory gotcha #cũ).
+- **Headers:** `@fastify/helmet` (auth-service) + tương đương core-api; `compress`, `rate-limit`.
+- **Input validation:** Zod là single source of truth (xem `directives/zod_validation.md`).
+- **Audit:** mọi thay đổi credit/knowledge có `userId` + timestamp (Event Store + revisions).
 
 ---
 
-## 6. WebSocket Security
+## 6. Threat Model (tóm tắt)
 
-### 6.1. Authentication
-```javascript
-// Client
-const socket = io('wss://teamfin.app/ws', {
-  auth: { token: accessToken }
-});
-
-// Server: Verify JWT on connection
-io.use((socket, next) => {
-  const token = socket.handshake.auth.token;
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    socket.userId = decoded.userId;
-    next();
-  } catch {
-    next(new Error('Authentication error'));
-  }
-});
-```
-
-### 6.2. Room Isolation
-- User chỉ join rooms của nhóm mà họ là member.
-- Server-side verify trước khi join room: `socket.join(\`group:${groupId}\`)`.
-- User rời nhóm → Tự động leave room.
-
-### 6.3. Rate Limiting
-- WebSocket messages cũng bị rate limit: 60 messages / phút / connection.
-- Prevent flooding attacks.
-
----
-
-## 7. Input Validation & Sanitization
-
-### 7.1. Schema Validation
-- **Zod** (backend) — Validate mọi request payload tại controller layer.
-- Reject trước khi đụng đến business logic.
-
-### 7.2. Financial Input Rules
-| Field | Validation |
-|-------|-----------|
-| `amount` | Integer > 0, max 999,999,999,999 (tránh overflow) |
-| `currency` | Enum whitelist: VND, USD, EUR, JPY, THB |
-| `splitMethod` | Enum whitelist: EQUAL, EXACT, PERCENTAGE, SHARES |
-| `percentage` | 0 < x ≤ 100, sum = 100% |
-| `shares` | Integer > 0 |
-| `noteText` | Max 1000 characters, sanitized (strip HTML tags) |
-| `description` | Max 200 characters, sanitized |
-| `groupName` | 1-100 characters, sanitized |
-
-### 7.3. SQL Injection Prevention
-- **Prisma ORM** — Parameterized queries by default. Không raw SQL.
-- Nếu cần raw query (performance) → dùng `$queryRawUnsafe` TUYỆT ĐỐI KHÔNG được truyền user input trực tiếp.
+| Mối đe dọa | Phòng thủ |
+|-----------|-----------|
+| Cross-tenant data leak | Query guard `orgId` + RLS + test |
+| Prompt injection / data exfil qua RAG | AI Data Boundary + retrieval filter + output citation |
+| Credit fraud / double-spend | Idempotency + Event Sourcing + ledger integrity cron |
+| Token theft | Refresh rotation + family revoke + HTTP-only cookie |
+| AI cost abuse | Rate limit token-bucket + per-org quota |
+| XSS | No token in LocalStorage, sanitize markdown render |

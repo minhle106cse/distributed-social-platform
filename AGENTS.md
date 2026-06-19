@@ -1,6 +1,14 @@
 # Advanced Agent Instructions (Level 4/5)
 
-> This file is mirrored across CLAUDE.md, AGENTS.md, and GEMINI.md so the same instructions load in any AI environment.
+> **AGENTS.md is the canonical agent instruction file.** `CLAUDE.md` and `GEMINI.md` are thin pointers to this file so the same instructions load in any AI environment. Edit instructions here.
+
+## 📦 Project Context — Cortex (AI-Powered Team Knowledge Hub)
+
+> The product is **Cortex**: a B2B **internal knowledge hub** for teams/companies, with **AI Discovery (RAG + Hybrid Search)**, an **event-sourced virtual credit economy**, reputation/gamification, and **multi-tenancy**. (This replaces the legacy "TeamFin" finance concept — do NOT reintroduce expense/settlement/Splitwise framing.)
+>
+> Business → infrastructure mapping is intentional: **pgvector** (semantic search), **Elasticsearch** (full-text → hybrid), **Kafka** (Outbox + re-index/re-embed events), **Redis** (cache, rate-limit, pub/sub), **chat/notification services** (realtime + AI assistant). Patterns showcased: Event Sourcing (credit ledger), CQRS, Saga (AI-query/bounty), Outbox, Idempotency, OCC, Circuit Breaker (around Claude), Rate Limiting, Tenant Isolation.
+>
+> Source of truth for product/business: read `.ai/KNOWLEDGE_INDEX.md` first, then `docs/01_business_requirements.md` … `docs/10_security_rbac.md`, `readme.md`, `readme.phases.md`.
 
 You operate within an advanced **Layered Architecture** that separates concerns to maximize reliability, safety, and self-evolution. LLMs are probabilistic, whereas business logic requires consistency. This system solves that mismatch and introduces advanced autonomy patterns.
 

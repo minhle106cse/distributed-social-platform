@@ -2,7 +2,7 @@
 
 > 📖 **[English Version](./en/03_system_architecture_diagrams.md)**
 
-Tài liệu biểu diễn Entity Relationship, Data Flow và Sequence Diagrams cho kiến trúc Modular Monolith + Event-Driven.
+Tài liệu biểu diễn Entity Relationship, Data Flow và Sequence Diagrams cho **Cortex** — kiến trúc Modular Monolith + Event-Driven + AI Discovery (RAG/Hybrid Search).
 
 ---
 
@@ -26,102 +26,92 @@ erDiagram
         string refreshToken
     }
 
-    %% Group Context
-    FinanceGroup {
+    %% Tenant Context (core-api DB)
+    Organization {
         uuid id PK
         string name
-        string description
-        enum type "PERSISTENT, TRIP, QUICK_SPLIT"
-        enum status "ACTIVE, SETTLED, ARCHIVED"
-        string baseCurrency "VND, USD, EUR..."
-        date startDate
-        date endDate
-        int version "OCC"
+        string slug "UNIQUE"
+        int seatLimit
+        int aiRateLimitPerMin
     }
-    GroupMember {
+    Membership {
         uuid id PK
+        string orgId FK
         string userId "Loose ref - no FK"
-        string groupId FK
-        enum role "OWNER, ADMIN, MEMBER, VIEWER"
+        enum role "OWNER, ADMIN, MEMBER, GUEST"
         datetime joinedAt
     }
-    GroupInvite {
+    Space {
         uuid id PK
-        string groupId FK
-        string inviteCode "UNIQUE"
-        string invitedByUserId
-        datetime expiresAt
+        string orgId FK
+        string name
+        enum visibility "ORG, PRIVATE"
     }
 
-    %% Expense Context (Write Model)
-    Expense {
+    %% Knowledge Context (Write Model)
+    KnowledgeItem {
         uuid id PK
-        string groupId "Loose ref"
-        string description
-        int totalAmount "Stored in smallest unit"
-        string currency
-        decimal exchangeRate "Pinned at creation"
-        int convertedAmount "In base currency"
-        enum splitMethod "EQUAL, EXACT, PERCENTAGE, SHARES"
-        enum category "FOOD, TRANSPORT..."
-        string noteText
-        string receiptUrl
-        date expenseDate
-        boolean isDeleted "Soft delete"
+        string orgId "Tenant scope"
+        string spaceId FK
+        enum type "DOCUMENT, QUESTION, ANSWER, RUNBOOK, ADR"
+        string title
+        text body
+        string parentId "For ANSWER -> QUESTION"
+        enum status "DRAFT, PUBLISHED, ARCHIVED, STALE"
+        boolean isVerified
         int version "OCC"
+        string contentHash "Re-embed dedup"
         datetime createdAt
         string createdByUserId "Loose ref"
     }
-    ExpensePayer {
+    Revision {
         uuid id PK
-        string expenseId FK
-        string userId "Loose ref"
-        int amount "Amount this payer paid"
-    }
-    ExpenseSplit {
-        uuid id PK
-        string expenseId FK
-        string userId "Loose ref"
-        int amount "Amount this user owes"
-        decimal percentage "If PERCENTAGE split"
-        int shares "If SHARES split"
-    }
-
-    %% Settlement Context
-    Settlement {
-        uuid id PK
-        string groupId "Loose ref"
-        string fromUserId "Loose ref - person paying"
-        string toUserId "Loose ref - person receiving"
-        int amount
-        string currency
-        decimal exchangeRate
-        int convertedAmount
-        enum type "FULL, PARTIAL, RECORD_ONLY"
+        string itemId FK
+        int version
+        text bodySnapshot
+        string editedByUserId
         datetime createdAt
-        string createdByUserId
+    }
+    Tag {
+        uuid id PK
+        string orgId
+        string name
     }
 
-    %% Event Store (Event Sourcing)
+    %% Discovery Context
+    Embedding {
+        uuid id PK
+        string itemId FK
+        string orgId "Tenant scope for AI boundary"
+        vector embedding "pgvector(1024)"
+        string contentHash
+        datetime createdAt
+    }
+
+    %% Engagement Context
+    Vote {
+        uuid id PK
+        string itemId FK
+        string userId "Loose ref"
+        int value "+1 / -1"
+    }
+
+    %% Credit Context (Event Sourcing)
     EventStore {
         uuid id PK
-        string aggregateType "Expense, Settlement, Group"
-        string aggregateId
-        string eventType "ExpenseCreated, SettlementCreated..."
+        string aggregateType "CreditAccount, Reputation"
+        string aggregateId "orgId or userId"
+        string eventType "CreditSpent, CreditAwarded..."
         int version "Per aggregate"
         json payload
         string userId "Who triggered"
         datetime createdAt
     }
-
-    %% Balance Read Model (CQRS)
-    BalanceSummary {
+    CreditBalanceSummary {
         uuid id PK
-        string groupId "Loose ref"
-        string fromUserId "Person who owes"
-        string toUserId "Person who is owed"
-        int balance "Positive = fromUser owes toUser"
-        string currency "Base currency of group"
+        string orgId "Loose ref"
+        int balance
+        int reserved "Locked by in-flight saga"
         datetime updatedAt
     }
 
@@ -145,173 +135,106 @@ erDiagram
 
     %% Relationships
     User ||--o{ AuthIdentity : "authenticates via"
-    User ||--o{ GroupMember : "belongs to groups"
-    FinanceGroup ||--o{ GroupMember : "has members"
-    FinanceGroup ||--o{ GroupInvite : "has invites"
-    Expense ||--o{ ExpensePayer : "paid by"
-    Expense ||--o{ ExpenseSplit : "split among"
+    User ||--o{ Membership : "belongs to orgs"
+    Organization ||--o{ Membership : "has members"
+    Organization ||--o{ Space : "contains spaces"
+    Space ||--o{ KnowledgeItem : "holds items"
+    KnowledgeItem ||--o{ Revision : "has history"
+    KnowledgeItem ||--o| Embedding : "is embedded as"
+    KnowledgeItem ||--o{ Vote : "receives"
 ```
+
+> **Lưu ý tenant isolation:** mọi bảng nội dung mang `orgId`. Bảng `Embedding` cũng mang `orgId` để **AI Data Boundary** — retrieval luôn lọc theo org, dữ liệu org A không lọt vào ngữ cảnh RAG của org B.
 
 ---
 
 ## 2. SEQUENCE DIAGRAMS
 
-### Luồng 1: Tạo Expense (Outbox + Event Sourcing + Notification)
+### Luồng 1: Publish Document (Outbox → Re-index + Re-embed)
 
 ```mermaid
 sequenceDiagram
     actor User as Web Client
-    participant API as core-api (Expense Module)
-    participant ES as Postgres (EventStore)
-    participant DB as Postgres (Expense + Splits)
-    participant RM as Postgres (BalanceSummary)
+    participant API as core-api (Knowledge Module)
+    participant DB as Postgres (KnowledgeItem)
     participant Outbox as Postgres (OutboxEvent)
     participant Kafka as Kafka
-    participant Notif as Notification Service
-    participant WS as WebSocket (Online Members)
+    participant Search as search-service (Elasticsearch)
+    participant Worker as worker-service (Embedding)
+    participant PG as pgvector
 
-    User->>API: POST /api/v1/groups/{id}/expenses<br/>X-Idempotency-Key: uuid-123
+    User->>API: POST /api/v1/knowledge (title, body, spaceId)
 
-    Note over API: Check Idempotency Key
-    API->>DB: SELECT FROM idempotency_records WHERE key = 'uuid-123'
-    alt Key exists
-        DB-->>API: Cached response
-        API-->>User: HTTP 200 (cached)
-    else Key not found
-        Note over API: BEGIN TRANSACTION
-        API->>ES: INSERT EventStore {type: ExpenseCreated, payload: {...}}
-        API->>DB: INSERT Expense + ExpensePayers + ExpenseSplits
-        API->>RM: UPDATE BalanceSummary (recalculate pairwise balances)
-        API->>Outbox: INSERT OutboxEvent {type: ExpenseCreated}
-        API->>DB: INSERT IdempotencyRecord {key: uuid-123, response: {...}}
-        Note over API: COMMIT TRANSACTION
+    Note over API: BEGIN TRANSACTION
+    API->>DB: INSERT KnowledgeItem {status: PUBLISHED, version: 1}
+    API->>Outbox: INSERT OutboxEvent {type: DocumentPublished}
+    Note over API: COMMIT TRANSACTION
+    API-->>User: HTTP 201 Created
 
-        API-->>User: HTTP 201 Created
-
-        Note over Outbox: CDC / Polling Publisher
-        Outbox-->>Kafka: Publish ExpenseCreated event
-        Kafka-->>Notif: Consume event
-        Notif->>WS: Push to online members
-        Notif->>Notif: Queue push notification for offline members
+    Note over Outbox: CDC / Polling Publisher
+    Outbox-->>Kafka: Publish DocumentPublished
+    par Re-index
+        Kafka-->>Search: Consume → index body into Elasticsearch
+    and Re-embed
+        Kafka-->>Worker: Consume → call Claude embedding API
+        Worker->>PG: UPSERT Embedding {vector, contentHash}
     end
 ```
 
 ---
 
-### Luồng 2: Settlement — Saga Pattern + Idempotency
+### Luồng 2: Hỏi AI (RAG) — Saga + Circuit Breaker + Idempotency
 
 ```mermaid
 sequenceDiagram
-    actor UserB as User B (Debtor)
-    participant API as core-api (Settlement Module)
-    participant Idem as IdempotencyRecord Table
-    participant ES as EventStore
-    participant DB as Settlement Table
-    participant RM as BalanceSummary
-    participant Outbox as OutboxEvent
-    participant Kafka as Kafka
-    participant Notif as Notification Service
-
-    UserB->>API: POST /api/v1/settlements<br/>X-Idempotency-Key: settle-456<br/>{toUserId: A, amount: 200000}
-
-    API->>Idem: CHECK key 'settle-456'
-    Note over API: Key not found — proceed
-
-    Note over API: Saga Step 1: Validate
-    API->>RM: SELECT balance WHERE from=B, to=A, group=X
-    RM-->>API: balance = 200000 ✅ (B owes A 200k)
-
-    Note over API: Saga Step 2: Create Settlement Event
-    Note over API: BEGIN TRANSACTION
-    API->>ES: INSERT EventStore {type: SettlementCreated}
-    API->>DB: INSERT Settlement {from: B, to: A, amount: 200000}
-
-    Note over API: Saga Step 3: Update Read Model
-    API->>RM: UPDATE BalanceSummary SET balance = balance - 200000
-
-    alt Step 3 Success
-        API->>Outbox: INSERT OutboxEvent {type: SettlementCreated}
-        API->>Idem: INSERT IdempotencyRecord {key: settle-456}
-        Note over API: COMMIT TRANSACTION
-        API-->>UserB: HTTP 200 OK {settled: true}
-
-        Outbox-->>Kafka: Publish SettlementCreated
-        Kafka-->>Notif: Notify User A "B vừa trả bạn 200k!"
-    else Step 3 Fails (DB Error)
-        Note over API: ROLLBACK TRANSACTION
-        Note over API: Compensating: Nothing persisted (transaction rollback)
-        API-->>UserB: HTTP 500 "Settlement failed, please retry"
-    end
-```
-
----
-
-### Luồng 3: OCC — Xung đột Sửa Expense Đồng thời
-
-```mermaid
-sequenceDiagram
-    actor UserA as User A
-    actor UserB as User B
-    participant API as core-api
-    participant DB as Postgres (Expense)
-    participant ES as EventStore
-
-    Note over UserA,UserB: Cả 2 đang mở form Edit cho Expense "Ăn trưa" (version = 3)
-
-    UserA->>API: PUT /expenses/{id}<br/>{amount: 600000, version: 3}
-    Note over API: BEGIN TRANSACTION
-    API->>DB: UPDATE expense SET amount=600000, version=4<br/>WHERE id=X AND version=3
-    DB-->>API: 1 row affected ✅
-    API->>ES: INSERT EventStore {type: ExpenseUpdated, version: 4}
-    Note over API: COMMIT
-    API-->>UserA: HTTP 200 OK {version: 4}
-
-    UserB->>API: PUT /expenses/{id}<br/>{note: "thêm đồ uống", version: 3}
-    Note over API: BEGIN TRANSACTION
-    API->>DB: UPDATE expense SET note='...', version=4<br/>WHERE id=X AND version=3
-    DB-->>API: 0 rows affected ❌ (version already 4)
-    Note over API: ROLLBACK
-    API-->>UserB: HTTP 409 Conflict<br/>{currentVersion: 4, currentState: {amount: 600000}}
-
-    Note over UserB: User B sees diff, retries with version: 4
-```
-
----
-
-### Luồng 4: Circuit Breaker — Exchange Rate API
-
-```mermaid
-sequenceDiagram
-    participant API as core-api (Currency Module)
+    actor User as Member
+    participant API as core-api (Discovery + Credit)
+    participant Idem as IdempotencyRecord
+    participant RL as Redis (Rate Limit)
+    participant Credit as Credit Ledger (Event Store)
+    participant ES as Elasticsearch
+    participant PG as pgvector
     participant CB as Circuit Breaker
-    participant Cache as Redis (Exchange Rate Cache)
-    participant ExtAPI as External API (Fixer.io)
+    participant Claude as Claude API (RAG)
 
-    Note over CB: State: CLOSED (normal)
+    User->>API: POST /api/v1/ai/ask {query}<br/>X-Idempotency-Key: ask-789
 
-    API->>CB: getRate(JPY, VND)
-    CB->>Cache: GET rate:JPY:VND
-    alt Cache HIT (< 1 hour old)
-        Cache-->>CB: 175.0
-        CB-->>API: 175.0 (cached)
-    else Cache MISS
-        CB->>ExtAPI: GET /latest?base=JPY&symbols=VND
-        alt API Success
-            ExtAPI-->>CB: {rate: 176.2}
-            CB->>Cache: SET rate:JPY:VND = 176.2 TTL 3600s
-            CB-->>API: 176.2
-        else API Failure (5th consecutive)
-            Note over CB: State: CLOSED → OPEN
-            CB->>Cache: GET rate:JPY:VND (stale cache)
-            Cache-->>CB: 175.0 (2 hours old)
-            CB-->>API: 175.0 (fallback) + warning flag
+    API->>Idem: CHECK key 'ask-789'
+    alt Key exists
+        Idem-->>API: cached answer
+        API-->>User: HTTP 200 (cached, no charge)
+    else New request
+        API->>RL: Token-bucket check (user/org quota)
+        alt Over limit
+            RL-->>API: DENY
+            API-->>User: HTTP 429 Too Many Requests
+        else Allowed
+            Note over API: Saga Step 1 — Reserve credit
+            API->>Credit: CreditReservedEvent (reserve N)
 
-            Note over CB: After 30 seconds → HALF-OPEN
-            CB->>ExtAPI: Test 1 request
-            alt Test Success
-                Note over CB: HALF-OPEN → CLOSED
-            else Test Failure
-                Note over CB: HALF-OPEN → OPEN (reset timer)
+            Note over API: Saga Step 2 — Hybrid Retrieval (scoped by orgId)
+            par
+                API->>ES: BM25 search (orgId)
+            and
+                API->>PG: vector similarity (orgId)
+            end
+            Note over API: Reciprocal Rank Fusion → top-N chunks
+
+            Note over API: Saga Step 3 — Generate (RAG)
+            API->>CB: ask(prompt + context)
+            alt Claude OK
+                CB->>Claude: messages.create(...)
+                Claude-->>CB: answer + citations
+                CB-->>API: answer
+                Note over API: Step 4 — Commit
+                API->>Credit: CreditSpentEvent (commit N)
+                API->>Idem: SAVE response
+                API-->>User: HTTP 200 {answer, citations[]}
+            else Claude down (Circuit OPEN)
+                CB-->>API: FAIL (fallback)
+                Note over API: Compensate — refund reserved credit
+                API->>Credit: CreditRefundedEvent (+N)
+                API-->>User: HTTP 200 {keywordResults[], aiUnavailable: true}
             end
         end
     end
@@ -319,70 +242,119 @@ sequenceDiagram
 
 ---
 
-### Luồng 5: Debt Simplification Algorithm
+### Luồng 3: OCC — Đồng biên tập Wiki
 
 ```mermaid
 sequenceDiagram
-    actor User as User A
-    participant API as core-api
-    participant Worker as Worker Service
-    participant DB as Postgres (BalanceSummary)
+    actor UserA as User A
+    actor UserB as User B
+    participant API as core-api (Knowledge)
+    participant DB as Postgres (KnowledgeItem)
 
-    User->>API: POST /api/v1/groups/{id}/simplify-debts
-    API->>Worker: Queue SimplifyDebtsCommand via Kafka
+    Note over UserA,UserB: Cả 2 đang sửa RUNBOOK "Deploy Guide" (version = 3)
 
-    Worker->>DB: SELECT all pairwise balances for group
+    UserA->>API: PUT /knowledge/{id} {body, version: 3}
+    API->>DB: UPDATE SET body=..., version=4 WHERE id=X AND version=3
+    DB-->>API: 1 row affected ✅
+    API-->>UserA: HTTP 200 {version: 4}
 
-    Note over Worker: Step 1: Calculate Net Balance
-    Note over Worker: A: +350k, B: -200k, C: +100k, D: -150k, E: -100k
+    UserB->>API: PUT /knowledge/{id} {body, version: 3}
+    API->>DB: UPDATE SET body=..., version=4 WHERE id=X AND version=3
+    DB-->>API: 0 rows affected ❌ (version already 4)
+    API-->>UserB: HTTP 409 Conflict {currentVersion: 4, diff}
 
-    Note over Worker: Step 2: Separate Debtors and Creditors
-    Note over Worker: Debtors: [B: -200k, D: -150k, E: -100k]
-    Note over Worker: Creditors: [A: +350k, C: +100k]
-
-    Note over Worker: Step 3: Greedy Matching (sort by absolute value)
-    Note over Worker: Match B(-200k) → A(+350k): B pays A 200k. A remaining: +150k
-    Note over Worker: Match D(-150k) → A(+150k): D pays A 150k. A remaining: 0
-    Note over Worker: Match E(-100k) → C(+100k): E pays C 100k. Both done.
-
-    Worker-->>API: Suggested Settlements
-    API-->>User: HTTP 200<br/>[{from:B, to:A, amount:200k},<br/>{from:D, to:A, amount:150k},<br/>{from:E, to:C, amount:100k}]
-
-    Note over User: 3 transactions instead of up to 10!
-    Note over User: User confirms each one individually
+    Note over UserB: Xem diff, merge, lưu lại với version: 4
 ```
 
 ---
 
-### Luồng 6: Event Sourcing — Rebuild Balance (Replay)
+### Luồng 4: Circuit Breaker — Embedding / AI Provider
 
 ```mermaid
 sequenceDiagram
-    participant Admin as Admin Trigger
-    participant Worker as Worker Service
+    participant W as worker-service
+    participant CB as Circuit Breaker
+    participant Cache as Redis (Embedding Cache)
+    participant Claude as Claude Embedding API
+
+    Note over CB: State: CLOSED (normal)
+    W->>CB: embed(contentHash, text)
+    CB->>Cache: GET emb:contentHash
+    alt Cache HIT
+        Cache-->>CB: vector
+        CB-->>W: vector (cached)
+    else Cache MISS
+        CB->>Claude: create embedding
+        alt API Success
+            Claude-->>CB: vector
+            CB->>Cache: SET emb:contentHash
+            CB-->>W: vector
+        else API Failure (5th consecutive)
+            Note over CB: CLOSED → OPEN
+            CB-->>W: DEFER (re-queue) — document tạm chỉ có keyword search
+            Note over CB: After 30s → HALF-OPEN → test 1 request
+        end
+    end
+```
+
+---
+
+### Luồng 5: Bounty Saga (gamify đóng góp)
+
+```mermaid
+sequenceDiagram
+    actor Asker as Asker
+    actor Answerer as Answerer
+    participant API as core-api (Credit + Reputation)
+    participant Credit as Credit Ledger
+    participant Rep as Reputation Ledger
+    participant Kafka as Kafka
+    participant Notif as notification-service
+
+    Asker->>API: POST /questions/{id}/bounty {stake: 50}
+    API->>Credit: CreditStakedEvent (-50, locked)
+
+    Answerer->>API: POST /questions/{id}/answers {body}
+    Asker->>API: POST /answers/{aid}/accept
+
+    Note over API: Saga: release stake → award → reputation → notify
+    API->>Credit: CreditAwardedEvent (Answerer +50)
+    API->>Rep: ReputationGrantedEvent (Answerer +15)
+    API->>Kafka: AnswerAccepted event
+    Kafka-->>Notif: Notify Answerer "Câu trả lời được chấp nhận! +50 credit"
+
+    Note over API: Nếu bất kỳ bước nào fail → compensate: refund stake về Asker
+```
+
+---
+
+### Luồng 6: Event Sourcing — Rebuild Credit Balance (Replay)
+
+```mermaid
+sequenceDiagram
+    participant Cron as Ledger Integrity Cron
+    participant Worker as worker-service
     participant ES as EventStore
-    participant RM as BalanceSummary (Read Model)
+    participant RM as CreditBalanceSummary
 
-    Admin->>Worker: POST /admin/groups/{id}/rebuild-balance
+    Cron->>Worker: Nightly verify (per org)
+    Worker->>ES: SELECT * WHERE aggregateType='CreditAccount' AND aggregateId=orgId ORDER BY version ASC
 
-    Worker->>RM: DELETE all BalanceSummary WHERE groupId = X
-    Note over Worker: Read Model wiped clean
-
-    Worker->>ES: SELECT * FROM event_store<br/>WHERE aggregateType IN ('Expense','Settlement')<br/>AND groupId = X<br/>ORDER BY createdAt ASC
-
-    loop For each event in chronological order
-        alt ExpenseCreatedEvent
-            Worker->>RM: Add pairwise balances from splits
-        else ExpenseUpdatedEvent
-            Worker->>RM: Apply delta (old splits → new splits)
-        else ExpenseDeletedEvent
-            Worker->>RM: Reverse all splits
-        else SettlementCreatedEvent
-            Worker->>RM: Reduce balance between payer↔receiver
+    loop For each credit event chronologically
+        alt CreditPurchased / Awarded / Refunded
+            Worker->>Worker: balance += amount
+        else CreditSpent / Staked
+            Worker->>Worker: balance -= amount
         end
     end
 
-    Worker-->>Admin: Rebuild complete. Verified: new == old ✅
+    Worker->>RM: SELECT current balance
+    alt Sum(events) == balance
+        Note over Worker: ✅ OK
+    else Drift detected
+        Worker->>RM: Rebuild balance from events
+        Note over Worker: 🚨 Alert engineer
+    end
 ```
 
 ---
@@ -394,58 +366,59 @@ sequenceDiagram
 │                    CLIENT LAYER                              │
 │  ┌─────────────────────────────────────────────────────┐     │
 │  │  React SPA (Vite)                                   │     │
-│  │  ├── Dashboard (Charts, Balances)                   │     │
-│  │  ├── Expense Forms (Create/Edit)                    │     │
-│  │  ├── Settlement Flow                                │     │
-│  │  ├── Group Management                               │     │
-│  │  └── WebSocket Client (Real-time updates)           │     │
+│  │  ├── Search-first Home (Hybrid + RAG answer)        │     │
+│  │  ├── Knowledge Editor (Wiki, OCC, revisions)        │     │
+│  │  ├── AI Assistant Chat (RAG, citations)             │     │
+│  │  ├── Credit Wallet & Org Admin                      │     │
+│  │  └── WebSocket Client (Real-time notifications)     │     │
 │  └─────────────────────────────────────────────────────┘     │
 └───────────────────────┬──────────────────────────────────────┘
                         │ HTTPS + WebSocket
                         ▼
 ┌──────────────────────────────────────────────────────────────┐
-│                 API GATEWAY / INGRESS                        │
-│  ├── /api/v1/auth/* → auth-service (Fastify :4001)           │
-│  ├── /api/v1/*      → core-api (NestJS :4002)                │
-│  ├── /ws/*          → notification-service (:3004)           │
-│  └── /exchange/*    → exchange-rate-service (:3005)           │
+│                 API GATEWAY / INGRESS (Nginx)               │
+│  ├── /api/v1/auth|users|roles|permissions → auth-service     │
+│  ├── /api/v1/knowledge|search|spaces|credits|ai → core-api   │
+│  └── /ws/*  → notification-service / chat-service            │
 └───────────────────────┬──────────────────────────────────────┘
                         │
         ┌───────────────┼───────────────────┐
         ▼               ▼                   ▼
 ┌──────────────┐ ┌──────────────────┐ ┌─────────────────┐
-│ auth-service │ │    core-api      │ │ exchange-rate    │
-│  (Fastify)   │ │   (NestJS)       │ │   -service       │
+│ auth-service │ │    core-api      │ │  chat-service    │
+│  (Fastify)   │ │   (NestJS)       │ │  (Realtime+AI)   │
 │              │ │                  │ │                  │
-│ • JWT Auth   │ │ ┌──────────────┐ │ │ • Circuit Breaker│
-│ • Refresh    │ │ │ group-module │ │ │ • Rate Caching   │
-│   Rotation   │ │ ├──────────────┤ │ │ • Fallback       │
-│ • Rate Limit │ │ │expense-module│ │ └──────┬──────────┘
-└──────┬───────┘ │ ├──────────────┤ │        │
-       │         │ │settle-module │ │        ▼
-       ▼         │ ├──────────────┤ │  ┌──────────────┐
-┌──────────────┐ │ │balance-module│ │  │ Fixer.io /   │
-│  PostgreSQL  │ │ │ (Read Model) │ │  │ ExchangeRate │
-│  (Auth DB)   │ │ ├──────────────┤ │  │  (3rd-party) │
-└──────────────┘ │ │currency-mod  │ │  └──────────────┘
+│ • JWT Auth   │ │ ┌──────────────┐ │ │ • WS threads     │
+│ • Refresh    │ │ │tenant-module │ │ │ • AI Assistant   │
+│   Rotation   │ │ ├──────────────┤ │ │ • Presence (Redis)│
+│ • Org RBAC   │ │ │knowledge-mod │ │ └─────────────────┘
+│ • Rate Limit │ │ ├──────────────┤ │
+└──────┬───────┘ │ │discovery-mod │ │   ┌──────────────┐
+       │         │ │ (Hybrid+RAG) │─┼──▶│  Claude API   │
+       ▼         │ ├──────────────┤ │   │ (embed + RAG) │
+┌──────────────┐ │ │credit-module │ │   │ via Circuit   │
+│  PostgreSQL  │ │ │(Event Source)│ │   │   Breaker     │
+│  (auth_db)   │ │ ├──────────────┤ │   └──────────────┘
+└──────────────┘ │ │reputation/   │ │
+                 │ │ feed (Read)  │ │
                  │ └──────────────┘ │
                  └────────┬─────────┘
                           │
           ┌───────────────┼────────────────┐
           ▼               ▼                ▼
    ┌──────────────┐ ┌──────────┐  ┌──────────────┐
-   │  PostgreSQL  │ │  Redis   │  │   Outbox      │
-   │  (Core DB)   │ │ (Cache)  │  │   Table       │
-   │              │ │          │  └──────┬────────┘
-   │ • EventStore │ │ • Balance│         │ CDC/Polling
-   │ • Expenses   │ │   Cache  │         ▼
-   │ • Settlements│ │ • Rate   │  ┌──────────────┐
-   │ • Balances   │ │   Cache  │  │    KAFKA      │
-   │ • Idempotency│ │ • Pub/Sub│  │              │
-   └──────────────┘ └──────────┘  │ Topics:      │
-                                  │ • expense-*  │
-                                  │ • settle-*   │
-                                  │ • group-*    │
+   │ PostgreSQL   │ │  Redis   │  │   Outbox      │
+   │ + pgvector   │ │ (Cache)  │  │   Table       │
+   │ (core_db)    │ │          │  └──────┬────────┘
+   │              │ │ • Feed   │         │ CDC/Polling
+   │ • EventStore │ │   Cache  │         ▼
+   │ • Knowledge  │ │ • Rate   │  ┌──────────────┐
+   │ • Embeddings │ │   Limit  │  │    KAFKA      │
+   │ • ReadModels │ │ • Pub/Sub│  │              │
+   │ • Idempotency│ │          │  │ Topics:      │
+   └──────────────┘ └──────────┘  │ • knowledge-*│
+                                  │ • credit-*   │
+                                  │ • engage-*   │
                                   │ • *-dlq      │
                                   └──┬───┬───┬───┘
                                      │   │   │
@@ -454,9 +427,43 @@ sequenceDiagram
               ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
               │ worker-svc   │  │ notif-svc    │  │ search-svc   │
               │              │  │              │  │              │
-              │ • Debt Simplify│ │ • WebSocket  │  │ • ES Index   │
-              │ • Ledger Check│  │ • Push Notif │  │ • Full-text  │
-              │ • Export PDF  │  │ • Redis PubSub│ │   Search     │
-              │ • Auto-Archive│  │              │  │              │
+              │ • Embeddings │  │ • WebSocket  │  │ • ES Index   │
+              │ • Re-index   │  │ • Push Notif │  │ • Full-text  │
+              │ • Digest     │  │ • Redis PubSub│ │   Search     │
+              │ • Stale Detect│ │              │  │              │
               └──────────────┘  └──────────────┘  └──────────────┘
+```
+
+---
+
+## 4. RAG / HYBRID RETRIEVAL DATA FLOW
+
+```
+            ┌─────────────── Query (natural language) ───────────────┐
+            │                                                        │
+            ▼                                                        ▼
+   ┌─────────────────┐                                   ┌─────────────────┐
+   │  Elasticsearch  │  BM25 full-text (scoped orgId)    │    pgvector     │  cosine sim
+   │  top-K keyword  │                                   │  top-K semantic │
+   └────────┬────────┘                                   └────────┬────────┘
+            │                                                     │
+            └──────────────────┬──────────────────────────────────┘
+                               ▼
+                  ┌─────────────────────────┐
+                  │ Reciprocal Rank Fusion  │  (hợp nhất + re-rank)
+                  └────────────┬────────────┘
+                               ▼
+                  ┌─────────────────────────┐
+                  │  Build RAG prompt:      │
+                  │  context (top-N chunks) │
+                  │  + user question        │
+                  └────────────┬────────────┘
+                               ▼ (Circuit Breaker)
+                       ┌───────────────┐
+                       │   Claude API  │
+                       └───────┬───────┘
+                               ▼
+                  ┌─────────────────────────┐
+                  │ Answer + CITATIONS       │  (links về document nguồn)
+                  └─────────────────────────┘
 ```

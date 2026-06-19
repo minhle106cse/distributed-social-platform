@@ -1,6 +1,7 @@
-# 💰 TEAMFIN — DISTRIBUTED TEAM FINANCE PLATFORM
+# 🧠 CORTEX — AI-POWERED TEAM KNOWLEDGE HUB
 
 [![Architecture](https://img.shields.io/badge/Architecture-Hexagonal%20%7C%20CQRS%20%7C%20Event--Sourcing-blue)](#-kiến-trúc-nâng-cao-showcase)
+[![AI](https://img.shields.io/badge/AI-RAG%20%7C%20pgvector%20%7C%20Hybrid%20Search-purple)](#-trí-tuệ-khám-phá-rag--hybrid-retrieval)
 [![Progress](https://img.shields.io/badge/Progress-Phase%200%20(Foundation)-brightgreen)](#-tiến-độ-dự-án)
 [![License](https://img.shields.io/badge/License-MIT-green)](#)
 
@@ -10,49 +11,54 @@
 
 | # | Tài liệu | Mô tả |
 |---|----------|-------|
-| 💼 | [Yêu cầu Nghiệp vụ](./docs/01_business_requirements.md) | 4 trụ cột kinh doanh, quy tắc chia tiền, thuật toán tối ưu nợ |
+| 💼 | [Yêu cầu Nghiệp vụ](./docs/01_business_requirements.md) | 5 trụ cột: Knowledge, AI Discovery, Credit Economy, Reputation, Multi-tenancy |
 | 📋 | [Kịch bản Sử dụng](./docs/02_use_cases.md) | Đặc tả luồng tương tác User ↔ System chi tiết |
-| 🏗️ | [Kiến trúc & Sơ đồ Luồng](./docs/03_system_architecture_diagrams.md) | ERD, Sequence Diagrams, Data Flow chi tiết |
-| 💾 | [Lược đồ CSDL](./docs/04_database_schema.md) | Prisma Schema, Event Sourcing tables, Read Model |
-| 🎨 | [Tiêu chuẩn UI/UX](./docs/05_web_ui_ux_guidelines.md) | Dashboard layout, component specs, dark mode |
-| 📡 | [Đặc tả API](./docs/06_api_contracts.md) | RESTful endpoints, Idempotency, Offline Sync |
+| 🏗️ | [Kiến trúc & Sơ đồ Luồng](./docs/03_system_architecture_diagrams.md) | Topology, RAG pipeline, Sequence Diagrams, Data Flow |
+| 💾 | [Lược đồ CSDL](./docs/04_database_schema.md) | Prisma Schema, Event Store, Read Model, pgvector embeddings |
+| 🎨 | [Tiêu chuẩn UI/UX](./docs/05_web_ui_ux_guidelines.md) | Search-first UX, RAG answer + citations, credit wallet |
+| 📡 | [Đặc tả API](./docs/06_api_contracts.md) | RESTful endpoints, Idempotency, Tenant scoping |
 | 🧩 | [Design System](./docs/07_design_system_assets.md) | Color tokens, typography, spacing, component specs |
-| 🧪 | [Chiến lược Testing](./docs/08_testing_and_qa_strategy.md) | Ledger integrity, Saga rollback, OCC race condition |
-| ☁️ | [Hạ tầng DevOps](./docs/09_devops_infrastructure.md) | Monorepo, Docker Compose, CI/CD |
-| 🛡️ | [Bảo mật & Phân quyền](./docs/10_security_rbac.md) | Financial encryption, Group RBAC, Rate Limiting |
+| 🧪 | [Chiến lược Testing](./docs/08_testing_and_qa_strategy.md) | Ledger integrity, AI-Saga refund, Tenant isolation |
+| ☁️ | [Hạ tầng DevOps](./docs/09_devops_infrastructure.md) | Monorepo, Docker Compose, Observability |
+| 🛡️ | [Bảo mật & Phân quyền](./docs/10_security_rbac.md) | Multi-tenant RBAC, AI data boundary, Rate Limiting |
 | 🚀 | [Lộ trình Thực thi](./readme.phases.md) | Roadmap 9 phases (0-8): Monolith → Microservices |
 
 ---
 
 ## 🧠 TẦM NHÌN DỰ ÁN
 
-**TeamFin** là một nền tảng quản lý tài chính nhóm (Team Finance & Expense Splitting Platform) được xây dựng với kiến trúc phân tán cấp doanh nghiệp (Enterprise-grade Distributed Architecture).
+**Cortex** là một **nền tảng tri thức nội bộ cho team/công ty (Internal Knowledge Hub)** được trang bị AI, xây dựng bằng kiến trúc phân tán cấp doanh nghiệp (Enterprise-grade Distributed Architecture).
 
 ### Bài toán thực tế
 
-Mỗi ngày, hàng triệu nhóm bạn bè, đồng nghiệp, hội du lịch phải đối mặt với cùng một câu hỏi: *"Ai nợ ai bao nhiêu?"*
+Tri thức của một tổ chức **tản mát khắp nơi** — Slack, Notion, Google Drive, Confluence, và quan trọng nhất: **trong đầu vài người chủ chốt**. Hệ quả mỗi ngày:
 
-- 🏠 **Ở chung nhà** — Tiền điện, nước, internet, đồ ăn chung
-- ✈️ **Du lịch nhóm** — Vé máy bay USD, khách sạn EUR, ăn uống VND
-- 🍕 **Ăn uống nhóm** — "Tao trả trước, mày chuyển lại sau"
-- 💼 **Chi phí team** — Công tác phí, quỹ nhóm, chi tiêu dự án
+- 🔍 **"Cái này ai biết?"** — Hỏi đi hỏi lại cùng một câu, người mới mất hàng tuần để onboard.
+- 📄 **Tài liệu chết** — Viết xong không ai tìm thấy; search bằng keyword không ra vì không nhớ đúng từ khóa.
+- 🧠 **Bus factor** — Một người nghỉ việc, cả mảng kiến thức biến mất.
+- 😮‍💨 **Lười document** — Không ai muốn viết lại vì "viết xong cũng chẳng ai đọc".
 
-Các giải pháp hiện tại (Splitwise, Tricount) đều là ứng dụng đơn giản chạy trên một database monolithic. **TeamFin** giải quyết cùng bài toán nhưng bằng kiến trúc chuẩn Enterprise — Event Sourcing, CQRS, Saga Pattern — vì khi xử lý **tiền thật**, mọi pattern phân tán đều trở thành **bắt buộc**, không phải trang trí.
+Các giải pháp hiện tại (Glean, Notion AI, Confluence) chứng minh đây là thị trường thật. **Cortex** giải cùng bài toán nhưng bằng kiến trúc chuẩn Enterprise — **RAG + Hybrid Search, Event Sourcing, CQRS, Saga** — vì khi xử lý **tri thức + AI tốn tiền + dữ liệu nhiều tổ chức**, mọi pattern phân tán đều trở thành **bắt buộc**, không phải trang trí.
 
 ### Tại sao dự án này "Show off" System Design?
 
-| Yêu cầu Fintech | System Design Pattern bắt buộc |
+Triết lý cốt lõi: **mỗi yêu cầu nghiệp vụ ÉP BUỘC một System Design Pattern** — không pattern nào là trang trí.
+
+| Yêu cầu nghiệp vụ | System Design Pattern bắt buộc |
 |---|---|
-| Tiền phải kiểm toán được, không bao giờ xóa | **Event Sourcing** (sổ cái bất biến) |
-| Xem dashboard 100x vs tạo expense 1x | **CQRS** (Read/Write tách biệt) |
-| Trừ tiền A + Cộng tiền B phải atomic | **Saga Pattern** (Distributed Transaction) |
-| Ghi DB + bắn event phải cùng transaction | **Outbox Pattern** |
-| Bấm "Thanh toán" 2 lần do lag | **Idempotency Key** |
-| 2 người sửa cùng 1 expense | **Optimistic Concurrency Control** |
-| API tỷ giá bên thứ 3 bị down | **Circuit Breaker + Fallback** |
-| Dashboard nhóm 50 người query liên tục | **Cache Strategy + Stampede Prevention** |
-| Chống spam thanh toán | **Rate Limiting (Token Bucket)** |
-| Worker gửi notification thất bại | **Dead Letter Queue + Retry** |
+| Credit (mua bằng tiền) phải kiểm toán, không bao giờ sai số | **Event Sourcing** (sổ cái bất biến) |
+| Đọc/search tri thức 1000x vs ghi 1x | **CQRS** (Read/Write tách biệt) |
+| Tiêu credit gọi AI → nếu AI fail phải hoàn lại credit | **Saga Pattern** (Distributed Transaction) |
+| Ghi document + bắn event re-index/re-embed phải atomic | **Outbox Pattern** |
+| Bấm "Hỏi AI" 2 lần do lag | **Idempotency Key** |
+| 2 người sửa cùng 1 runbook (wiki) | **Optimistic Concurrency Control** |
+| Nhà cung cấp AI/embedding (Claude) bị down | **Circuit Breaker + Fallback** |
+| Một câu hỏi hot được 500 người search cùng lúc | **Cache + Stampede Prevention** |
+| Gọi AI rất ĐẮT → chống lạm dụng | **Rate Limiting (Token Bucket)** |
+| Worker re-index thất bại | **Dead Letter Queue + Retry** |
+| Tìm tài liệu theo NGỮ NGHĨA, không phải keyword | **Vector Search (pgvector)** |
+| Search full-text + filter + facet | **Elasticsearch (Hybrid Retrieval)** |
+| Mỗi tổ chức cô lập dữ liệu, quota riêng, chống noisy-neighbor | **Multi-tenancy** |
 
 ---
 
@@ -63,42 +69,45 @@ Bắt đầu bằng **Modular Monolith** chặt chẽ, và chỉ tách thành **
 
 ### Lý do
 - **Tránh over-engineering**: Microservices toàn phần ngay từ đầu mang lại độ trễ mạng, đau đầu về distributed transaction, và chi phí hạ tầng không cần thiết.
-- **Kỹ năng Migration**: Một trong những kỹ năng đắt giá nhất của Senior là biết cách *phá vỡ Monolith một cách an toàn (Zero-Downtime Migration)*. Dự án này chứng minh điều đó ở Phase 6.
+- **Kỹ năng Migration**: Một trong những kỹ năng đắt giá nhất của Senior là biết cách *phá vỡ Monolith một cách an toàn (Zero-Downtime Migration)*. Dự án này chứng minh điều đó ở Phase 7 — tách `discovery-service` (workload AI-bound, cần cô lập scale & chi phí).
 
 ---
 
 ## 🧭 SYSTEM ARCHITECTURE (CURRENT STATE)
 
 ```
-         Client (React SPA — Dashboard + Forms)
-                    |
-                    v
-          API Gateway / Ingress
-                    |
-       +------------+-------------+
-       |                          |
-       v                          v
- [Auth Service]          [Core API (Modular Monolith)]
- (Fastify Microservice)  ├── group-module
-                         ├── expense-module  
-                         ├── settlement-module
-                         ├── balance-module (Read Model)
-                         └── currency-module
-       |                          |
-       v                          v
- [DB: Auth]              [DB: Core (Event Store + Read Model)]
-                                  |
-                                  v
-                           [Outbox Table]
-                                  |
+              Client (React SPA — Search-first UI + Admin)
+                              |
+                              v
+                    API Gateway / Ingress (Nginx)
+                              |
+              +---------------+----------------+
+              |                                |
+              v                                v
+       [Auth Service]              [Core API (Modular Monolith)]
+       (Fastify Microservice)      ├── tenant-module      (org/workspace, quota)
+       JWT · RBAC ·                ├── knowledge-module   (docs/Q&A, OCC, versioning)
+       Multi-tenant scope          ├── taxonomy-module    (spaces, tags)
+              |                     ├── engagement-module  (vote/accept/verify)
+              |                     ├── discovery-module   (Hybrid Search + RAG)
+              |                     ├── credit-module      (Event-sourced ledger)
+              |                     ├── reputation-module  (badges, gamify)
+              |                     └── feed-module        (Read Model)
+              v                                |
+       [DB: auth_db]            [DB: core_db (Event Store + Read Model + pgvector)]
+                                               |
+                                               v
+                                        [Outbox Table]
+                                               |
  =========================================================================
   🌊 KAFKA EVENT STREAMING BACKBONE
  =========================================================================
-        |                  |                  |                  |                  |
-        v                  v                  v                  v                  v
-  [Worker Service]  [Search Service]  [Notification Svc]  [Exchange Rate Svc]  [Chat Service]
-  (Debt Simplify,   (Phase X -        (WebSocket +        (Phase X - 3rd-      (Phase X - 
-   Scheduled Jobs)   Future)           Push Notif)         party API)           Future)
+        |                  |                   |                    |
+        v                  v                   v                    v
+  [Worker Service]   [Search Service]   [Notification Svc]    [Chat Service]
+  (Embeddings,       (Kafka → ES        (WebSocket +          (AI Assistant /
+   re-index, RAG      indexer)           Redis Pub/Sub)        threads, presence)
+   summarize, digest)
 ```
 
 ---
@@ -110,23 +119,26 @@ Bắt đầu bằng **Modular Monolith** chặt chẽ, và chỉ tách thành **
 Chứa toàn bộ Business Logic. Dữ liệu nằm chung một PostgreSQL database nhưng được chia schema/table rõ ràng. KHÔNG JOIN chéo giữa các domain mà không thông qua interface.
 
 **Modules:**
-- **`group-module`** — Quản lý nhóm, thành viên, lời mời, phân quyền (Owner/Admin/Member/Viewer).
-- **`expense-module`** — Tạo/sửa/xóa chi phí, chia tiền (đều/tỷ lệ/tùy chỉnh), Event Sourcing cho mọi giao dịch.
-- **`settlement-module`** — Thanh toán nợ giữa các thành viên, Saga Pattern đảm bảo atomic.
-- **`balance-module`** — Read Model (Materialized View). Tổng hợp ai nợ ai bao nhiêu từ Event Store. Được rebuild bất cứ lúc nào bằng cách replay events.
-- **`currency-module`** — Quản lý đa tiền tệ. Gọi Exchange Rate API với Circuit Breaker. Cache tỷ giá.
+- **`tenant-module`** — Tổ chức (Organization), Workspace, membership, cấu hình & quota theo tenant.
+- **`knowledge-module`** — Document/Question/Answer/Runbook/ADR. Wiki-style với OCC + versioning. Sổ cái nội dung bất biến qua event.
+- **`taxonomy-module`** — Spaces/Collections, tags/topics, subscribe.
+- **`engagement-module`** — Vote, accept answer, verify (đánh dấu "đã kiểm chứng"), bookmark, follow.
+- **`discovery-module`** — **Hybrid Search**: kết hợp Elasticsearch (full-text) + pgvector (semantic) + RAG orchestration để trả lời câu hỏi kèm trích dẫn nguồn.
+- **`credit-module`** — **Event-sourced ledger**: purchase / spend / stake / award / refund credit. Saga đảm bảo atomic.
+- **`reputation-module`** — Điểm uy tín + badge, gamify hành vi đóng góp tri thức.
+- **`feed-module`** — Read Model (Materialized View): "Mới trong Spaces của bạn", trending, digest.
 
 ### 2. Các Service tách riêng từ đầu (Microservices)
 
-- **`auth-service`** (Fastify) — Cô lập bảo mật hoàn toàn. JWT, Passwords, Refresh Token Rotation.
+- **`auth-service`** (Fastify) — Cô lập bảo mật hoàn toàn. JWT, Passwords, Refresh Token Rotation, org-scoped RBAC.
 - **`notification-service`** — WebSocket (real-time) + Push Notification. Scale ngang với Redis Pub/Sub adapter.
-- **`worker-service`** — Background jobs: Debt Simplification algorithm, Scheduled reminders, Export PDF.
-- **`search-service`** — Lắng nghe Kafka để index expenses/groups vào Elasticsearch.
-- **`exchange-rate-service`** — Proxy bọc ngoài API tỷ giá bên thứ 3 (ExchangeRate-API, Fixer.io). Circuit Breaker + Fallback cache.
+- **`worker-service`** — Background jobs: **sinh embeddings**, re-index, AI summarization, digest email, phát hiện tài liệu lỗi thời (stale detection), cron badge.
+- **`search-service`** — Lắng nghe Kafka để index documents vào Elasticsearch.
+- **`chat-service`** — Thảo luận realtime + **AI Assistant (RAG chatbot)** + presence.
 
-### 3. Future Migration Target (Phase 6)
+### 3. Future Migration Target (Phase 7)
 
-Sau khi hệ thống ổn định, thực hiện **The Great Migration**: Tách `settlement-module` ra thành `settlement-service` hoàn toàn độc lập. Lý do: Settlement cần ACID cực kỳ chặt chẽ, scale riêng biệt, và có thể cần compliance riêng (PCI-DSS).
+Sau khi hệ thống ổn định, thực hiện **The Great Migration**: Tách `discovery-module` ra thành `discovery-service` độc lập. Lý do: workload AI/vector **bị giới hạn bởi tài nguyên (AI-bound), đắt đỏ, và bursty** — cần scale riêng và cô lập chi phí. *(Phương án thay thế để showcase ACID: tách `credit-ledger-service`.)*
 
 ---
 
@@ -145,35 +157,33 @@ Thiết lập ranh giới tuyệt đối giữa Logic Nghiệp vụ và Cơ sở
 Tự xây dựng hệ thống **CQRS Bus độc lập hoàn toàn khỏi Framework** (không dùng `@nestjs/cqrs`):
 
 - Chạy mượt mà trên cả **NestJS** (`core-api`) và **Fastify** (`auth-service`).
-- Middleware Chain (tương tự Koa/Express):
-  - `LoggingMiddleware` — Ghi log tự động cho mọi Command/Query.
-  - `TransactionMiddleware` — Quản lý DB Transaction an toàn (AsyncLocalStorage).
-  - `RetryMiddleware` — Auto-retry với Exponential Backoff khi DB gặp Transient Errors.
-  - `IdempotencyMiddleware` — Kiểm tra Idempotency Key trước khi execute Command.
+- Middleware Chain: `LoggingMiddleware` → `RetryMiddleware` → `TransactionMiddleware` → Handler.
+- `IdempotencyMiddleware` kiểm tra Idempotency Key trước khi execute Command.
 
-### 3. Event Sourcing (Sổ cái Bất biến)
+### 3. Event Sourcing (Sổ cái Credit Bất biến)
 
-Thay vì UPDATE balance trực tiếp, mọi thay đổi tài chính được lưu dưới dạng **Event bất biến (Immutable Events)**:
+Thay vì UPDATE số dư credit trực tiếp, mọi thay đổi được lưu dưới dạng **Event bất biến**:
 
 ```
-ExpenseCreatedEvent   → {groupId, payerId, amount, splits: [...], currency}
-ExpenseUpdatedEvent   → {expenseId, changes: {amount: 500→600}, version: 2}
-SettlementCreatedEvent → {fromUserId, toUserId, amount, currency}
+CreditPurchasedEvent → {orgId, packId, amount: +1000, source: "billing"}
+CreditSpentEvent     → {orgId, userId, amount: -5, reason: "ai_query", queryId}
+CreditRefundedEvent  → {orgId, userId, amount: +5, reason: "ai_failed", queryId}
+CreditAwardedEvent   → {orgId, userId, amount: +10, reason: "answer_accepted"}
 ```
 
-**Balance = f(replay all events)**. Có thể rebuild Read Model bất cứ lúc nào bằng cách replay toàn bộ event stream. Đây chính xác là cách ngân hàng và sổ cái tài chính hoạt động.
+**Balance = f(replay all events)**. Có thể rebuild Read Model bất cứ lúc nào. Đây chính xác là cách sổ cái tài chính hoạt động — nhưng ở đây là **credit ảo** (không bao giờ rút ra tiền mặt) ⇒ đầy đủ rigor kế toán nhưng nhẹ rủi ro pháp lý.
 
-### 4. Saga Pattern (Distributed Transaction)
+### 4. Saga Pattern (AI-Query & Bounty)
 
-Khi User A thanh toán nợ cho User B:
+Khi User gọi AI để hỏi (RAG):
 
 ```
-Step 1: Debit A's balance          → Success ✅
-Step 2: Credit B's balance         → Fail ❌
-Step 3: Compensate — Refund A      → Execute ✅ (Rollback)
+Step 1: Reserve credit (trừ tạm)       → Success ✅
+Step 2: Gọi Claude API (RAG)           → Fail ❌ (timeout / provider down)
+Step 3: Compensate — Refund credit     → Execute ✅ (Rollback)
 ```
 
-Nếu bất kỳ bước nào thất bại, Saga Engine tự động chạy **Compensating Transactions** để rollback. Không dùng 2PC (Two-Phase Commit) vì gây block hệ thống.
+Nếu bất kỳ bước nào thất bại, Saga Engine tự động chạy **Compensating Transactions**. Bounty saga cũng tương tự: stake credit → accept answer → award → badge → notify, fail ở bất kỳ đâu thì hoàn nguyên.
 
 ### 5. Outbox Pattern (Atomic Event Publishing)
 
@@ -181,64 +191,68 @@ Ghi dữ liệu vào DB và publish event lên Kafka **cùng một database tran
 
 ```sql
 BEGIN TRANSACTION;
-  INSERT INTO expenses (...) VALUES (...);
-  INSERT INTO outbox_events (type, payload) VALUES ('ExpenseCreated', '{...}');
+  INSERT INTO documents (...) VALUES (...);
+  INSERT INTO outbox_events (type, payload) VALUES ('DocumentPublished', '{...}');
 COMMIT;
 ```
 
-Một CDC Connector (hoặc Polling Publisher) đọc `outbox_events` và đẩy lên Kafka. Đảm bảo **At-least-once delivery** — event không bao giờ bị mất.
+Một CDC Connector (hoặc Polling Publisher) đọc `outbox_events` và đẩy lên Kafka → các consumer **re-index (ES)** và **re-embed (pgvector)**. Đảm bảo **At-least-once delivery**.
 
 ### 6. Idempotency (Tính lũy đẳng)
 
-Mọi API thay đổi trạng thái tài chính đều yêu cầu header `X-Idempotency-Key`:
+Mọi API tốn credit (gọi AI) đều yêu cầu header `X-Idempotency-Key`. Nếu Client gửi lại cùng request (mạng lag, double-click), Server nhận diện key đã xử lý và trả về kết quả cached — **không trừ credit 2 lần**.
 
-```http
-POST /api/v1/settlements
-X-Idempotency-Key: settle-uuid-12345
-```
+### 7. Circuit Breaker (Cầu dao quanh AI Provider)
 
-Nếu Client gửi lại cùng request (do mạng lag, user double-click), Server nhận diện key đã xử lý và trả về kết quả cached — **không trừ tiền 2 lần**.
-
-### 7. Circuit Breaker (Cầu dao Điện)
-
-Exchange Rate Service gọi API bên thứ 3 (Fixer.io, ExchangeRate-API). Khi API bị down:
+`discovery-module` / `worker-service` gọi API bên thứ 3 (Claude embedding/summarization). Khi API bị down:
 
 ```
 State: CLOSED (bình thường)
-  → 5 lỗi liên tiếp → State: OPEN (ngắt cầu dao, trả fallback cache)
+  → 5 lỗi liên tiếp → State: OPEN (ngắt cầu dao, rơi về keyword search / cached embeddings)
   → Sau 30s → State: HALF-OPEN (thử 1 request)
-  → Thành công → CLOSED
-  → Thất bại → OPEN lại
+  → Thành công → CLOSED · Thất bại → OPEN lại
 ```
 
-Không để 1 API bên thứ 3 chết kéo sập cả hệ thống.
+Không để một nhà cung cấp AI chết kéo sập toàn bộ tính năng search.
 
-### 8. Debt Simplification Algorithm (Thuật toán Tối ưu Nợ)
+### 8. 🧠 Trí tuệ Khám phá: RAG + Hybrid Retrieval
 
-Bài toán NP-Hard: Nhóm 5 người, 20 giao dịch chồng chéo → Tối giản thành **số lần chuyển khoản ít nhất**.
+Trái tim của Cortex là **Hybrid Retrieval**: kết hợp 2 thế giới để cho kết quả tốt nhất.
 
 ```
-Trước: A→B: 100, B→C: 50, C→A: 30, A→C: 20 (4 giao dịch)
-Sau:   A→B: 70, A→C: 40                       (2 giao dịch) ← Tối ưu
+Query: "làm sao rotate JWT secret khi deploy?"
+   │
+   ├──► Elasticsearch (BM25 full-text) ──► top-K theo keyword
+   │
+   ├──► pgvector (cosine similarity)   ──► top-K theo ngữ nghĩa (embedding)
+   │
+   ▼
+Reciprocal Rank Fusion (RRF) ──► hợp nhất & re-rank
+   │
+   ▼
+RAG: nạp top-N đoạn + câu hỏi vào Claude ──► câu trả lời kèm TRÍCH DẪN NGUỒN
 ```
 
-Thuật toán: Tính net balance mỗi người → Greedy matching giữa debtors và creditors → Minimize number of transfers.
+- **Embedding** sinh bất đồng bộ bởi `worker-service` (qua Kafka), lưu vào cột `vector` của pgvector.
+- **Citation bắt buộc:** mỗi câu trả lời AI đều dẫn lại document nguồn → chống "AI bịa" (hallucination), người dùng kiểm chứng được.
 
 ---
 
 ## 🤖 AI-DRIVEN DEVELOPMENT WORKFLOW
 
-Dự án áp dụng hệ thống **Multi-Agent Orchestration (Level 4/5)**:
+Dự án áp dụng hệ thống **Multi-Agent Orchestration (Level 4/5)** để chính AI xây dựng dự án:
 
 ### Layered AI Architecture
-- **Layer 0 (Harness Sandbox):** Container Docker chạy cách ly. Script chỉ chạy trong sandbox.
-- **Layer 1 (Directives):** SOPs định nghĩa luật kiến trúc (Hexagonal, CQRS, Event Sourcing rules).
-- **Layer 2 (Orchestration):** Agent điều phối, lập kế hoạch động.
-- **Layer 3 (Execution):** Python scripts trong `execution/`, Memory Buffer trong `.ai/memory/*.jsonl`.
+- **Layer 0 (Harness Sandbox):** Container Docker chạy cách ly (`docker-compose.agent.yml`). Script chỉ chạy trong sandbox, Read-Only.
+- **Layer 1 (Directives):** SOPs định nghĩa luật kiến trúc (Hexagonal, CQRS, Event Sourcing rules) trong `directives/`.
+- **Layer 2 (Orchestration):** Agent điều phối, lập kế hoạch động, dùng sub-agent cho task lớn.
+- **Layer 3 (Execution):** Python scripts trong `execution/`, Memory Buffer trong `.ai/memory/*.jsonl`, Knowledge Index trong `.ai/KNOWLEDGE_INDEX.md`.
 
 ### Security Pattern
-- **Sandbox Read-Only:** Môi trường sandbox chạy validators với quyền Read-Only.
-- **Report → Execute:** Tools sinh code xuất báo cáo trước, Agent review rồi mới apply.
+- **Sandbox Read-Only:** Tools chạy validator với quyền Read-Only, xuất report ra `.tmp/`.
+- **Report → Execute:** Tool sinh report trước, Agent review rồi mới apply (Circuit Breaker pattern cho AI).
+
+> 📎 Lưu ý: RAG/MCP/Vector vừa là **công nghệ sản phẩm** (Cortex), vừa là **công cụ của AI workflow** — dự án này dùng chính những pattern nó xây để tự phát triển.
 
 ---
 
@@ -248,18 +262,18 @@ Dự án áp dụng hệ thống **Multi-Agent Orchestration (Level 4/5)**:
 |----------|-------------|
 | **Monorepo** | Turborepo |
 | **Backend** | NestJS (`core-api`), Fastify (`auth-service`) |
-| **ORM** | Prisma |
-| **Database** | PostgreSQL (Event Store + Read Model) |
+| **ORM** | Prisma v7 |
+| **Database** | PostgreSQL + **pgvector** (Event Store + Read Model + Embeddings) |
 | **Cache & Pub/Sub** | Redis |
-| **Message Broker** | Kafka (Event Backbone) |
-| **Search** | Elasticsearch (Full-text search) |
+| **Message Broker** | Kafka (Event Backbone, KRaft mode) |
+| **Search** | Elasticsearch (Full-text) + pgvector (Semantic) → Hybrid |
+| **AI** | Claude (embedding + RAG summarization) qua Circuit Breaker |
 | **Real-time** | WebSocket + Redis Pub/Sub adapter |
 | **Frontend** | Vite + React 18 (SPA) |
 | **State** | Zustand + TanStack Query |
-| **Charts** | Recharts |
 | **Styling** | TailwindCSS v3 + CSS Variables |
-| **DevOps** | Docker Compose, CI/CD |
-| **Testing** | Vitest, Testcontainers, K6 |
+| **DevOps** | Docker Compose, Prometheus + Grafana, CI/CD |
+| **Testing** | Jest/Vitest, Testcontainers, K6 |
 
 ---
 
@@ -267,15 +281,15 @@ Dự án áp dụng hệ thống **Multi-Agent Orchestration (Level 4/5)**:
 
 Tiến độ hiện tại: **Phase 0 — Foundation & Scaffolding**
 
-- [x] **Phase 0:** Foundation & Infra (Monorepo, Docker, AI Workflow, module scaffolds created)
-- [ ] **Phase 1:** Modular Monolith — Group, Expense, Balance modules (NEXT)
-- [ ] **Phase 2:** Event Backbone — Kafka, Outbox Pattern, Event Sourcing
-- [ ] **Phase 3:** CQRS & Read Model Optimization
-- [ ] **Phase 4:** Multi-currency & Exchange Rate Service (Circuit Breaker)
-- [ ] **Phase 5:** Settlement & Saga
-- [ ] **Phase 6:** Real-time & Workers
-- [ ] **Phase 7:** The Great Migration — Tách `settlement-service`
-- [ ] **Phase 8:** Production Hardening
+- [x] **Phase 0:** Foundation & Infra (Monorepo, Docker, AI Workflow, module scaffolds)
+- [ ] **Phase 1:** Multi-tenant Knowledge Monolith — Tenant, Knowledge, OCC versioning (NEXT)
+- [ ] **Phase 2:** Event Backbone — Kafka, Outbox, Event Store, Credit ledger event-sourced
+- [ ] **Phase 3:** CQRS & Read Model — Feed/Digest projections, Redis cache
+- [ ] **Phase 4:** AI Search & Discovery — pgvector + Elasticsearch Hybrid + RAG (Circuit Breaker)
+- [ ] **Phase 5:** Credit Economy & Saga — Spend/Stake, AI-Query Saga, Idempotency, DLQ
+- [ ] **Phase 6:** Real-time & Workers — Notification, Chat/AI-Assistant
+- [ ] **Phase 7:** The Great Migration — Tách `discovery-service`
+- [ ] **Phase 8:** Production Hardening — Observability, Tenant-isolation, Load Test
 
 📋 Chi tiết từng Phase: [readme.phases.md](./readme.phases.md)
 
@@ -285,13 +299,13 @@ Tiến độ hiện tại: **Phase 0 — Foundation & Scaffolding**
 
 ```bash
 # 1. Clone
-git clone https://github.com/yourname/team-finance-platform.git
-cd team-finance-platform
+git clone https://github.com/yourname/cortex-knowledge-hub.git
+cd cortex-knowledge-hub
 
 # 2. Install dependencies
 npm install
 
-# 3. Start infrastructure (Postgres, Redis, Kafka, Elasticsearch)
+# 3. Start infrastructure (Postgres+pgvector, Redis, Kafka, Elasticsearch, Monitoring)
 docker-compose up -d
 
 # 4. Run migrations

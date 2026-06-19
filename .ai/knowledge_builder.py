@@ -56,6 +56,8 @@ CATEGORY_KEYWORDS = {
         "boundary", "module", "refactor", "pipeline", "domain",
         "saga", "event sourcing", "ddd", "common/", "infrastructure/",
         "framework code", "pure pojo", "composition root",
+        "rag", "pgvector", "vector", "embedding", "hybrid", "tenant",
+        "multi-tenant", "idempotency", "circuit breaker", "outbox", "occ",
     ],
     "gotchas": [
         "breaking change", "v7", "v5", "deprecated", "no longer supported",
@@ -244,7 +246,7 @@ def build_index() -> str:
 
     # ── 1. Project Overview ──
     readme_content = read_text(README_FILE)
-    project_name = "TeamFin — Distributed Team Finance Platform"
+    project_name = "Cortex — AI-Powered Team Knowledge Hub"
     services = detect_services(APPS_DIR)
     packages = detect_packages(PACKAGES_DIR)
 
@@ -258,17 +260,19 @@ def build_index() -> str:
     sections.append(f"""## 1. Project Overview
 
 - **Name**: {project_name}
+- **Product**: B2B internal Knowledge Hub — AI Discovery (RAG + Hybrid Search), virtual credit economy, multi-tenancy. (Legacy "TeamFin" finance concept is RETIRED — do not reintroduce expense/settlement framing.)
 - **Type**: Monorepo (Turborepo) + TypeScript
-- **Architecture**: Hexagonal Architecture + CQRS + Event Sourcing
-- **Phase**: Phase 0 (Foundation) — Phase 1 (Modular Monolith) next
+- **Architecture**: Hexagonal Architecture + CQRS + Event Sourcing + RAG/Hybrid Search + Multi-tenancy
+- **Phase**: Phase 0 (Foundation) — Phase 1 (Multi-tenant Knowledge Monolith) next
 - **Services** (`apps/`):
 {chr(10).join(service_lines)}
 - **Shared Packages** (`packages/`):
 {chr(10).join(package_lines)}
-- **Database**: PostgreSQL via Prisma v7, port `15432` (to avoid host conflict)
-- **Cache**: Redis
-- **Message Broker**: Kafka (Event Backbone)
-- **Search**: Elasticsearch
+- **Database**: PostgreSQL + pgvector via Prisma v7, port `15432` (Event Store + Read Model + Embeddings)
+- **Cache**: Redis (cache, rate-limit, pub/sub)
+- **Message Broker**: Kafka (Event Backbone, KRaft mode)
+- **Search**: Elasticsearch (full-text) + pgvector (semantic) → Hybrid Retrieval (RRF)
+- **AI**: Claude (embedding + RAG summarization) via Circuit Breaker
 - **Frontend**: Vite + React 18 + Zustand + TanStack Query + TailwindCSS v3""")
 
     # ── 2. Architecture Rules ──

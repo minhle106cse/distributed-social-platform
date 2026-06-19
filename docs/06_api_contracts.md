@@ -2,7 +2,7 @@
 
 > 📖 **[English Version](./en/06_api_contracts.md)**
 
-Đặc tả các endpoint giữa **Web Client (Vite + React SPA)** và **Backend (auth-service Fastify / core-api NestJS)**. RESTful API, JSON format.
+Đặc tả các endpoint giữa **Web Client (Vite + React SPA)** và **Backend (auth-service Fastify / core-api NestJS)** cho **Cortex**. RESTful API, JSON.
 
 ---
 
@@ -10,443 +10,153 @@
 
 - **Auth Service Base URL:** `/api/v1` (Fastify, port 4001)
 - **Core API Base URL:** `/api/v1` (NestJS, port 4002)
-- **Authentication:** Access Token trong HTTP-Only Cookie `accessToken`.
-- **Idempotency:** Mọi POST/PUT thay đổi tài chính PHẢI gửi `X-Idempotency-Key` header.
-- **OCC:** Mọi PUT (update) PHẢI gửi `version` trong body.
+- **Authentication:** Access Token trong HTTP-Only Cookie `accessToken` (JWT mang `sub`, `orgId`, `role`).
+- **Tenant scope:** mọi request core-api mặc định scope theo `orgId` trong token. Có thể override bằng header `X-Org-Id` (chỉ với user đa-org, được validate).
+- **Idempotency:** mọi POST tốn credit (gọi AI, stake bounty) PHẢI gửi `X-Idempotency-Key`.
+- **OCC:** mọi PUT update knowledge PHẢI gửi `version` trong body.
+- **Pagination:** cursor-based — `?cursor=<opaque>&limit=20`.
 - **Response Format:**
   ```json
-  {
-    "success": true,
-    "message": "Operation completed successfully",
-    "data": { ... },
-    "statusCode": 200
-  }
+  { "success": true, "message": "OK", "data": { }, "statusCode": 200 }
   ```
 - **Error Format:**
   ```json
-  {
-    "success": false,
-    "message": "Version mismatch. Current version: 4",
-    "error": {
-      "code": "CONFLICT",
-      "details": { "currentVersion": 4 }
-    },
-    "meta": { "version": 1, "timestamp": "2026-06-09T14:30:00Z" }
-  }
+  { "success": false, "message": "Conflict", "errorCode": "OCC_CONFLICT", "statusCode": 409 }
   ```
+
+### Mã lỗi chuẩn
+| HTTP | errorCode | Khi nào |
+|------|-----------|---------|
+| 401 | `UNAUTHENTICATED` | Thiếu/expired token |
+| 403 | `FORBIDDEN_TENANT` | Truy cập dữ liệu org khác |
+| 409 | `OCC_CONFLICT` | Version đã đổi (wiki edit) |
+| 422 | `VALIDATION_ERROR` | Zod schema fail |
+| 429 | `RATE_LIMITED` | Vượt quota (AI/login) |
+| 402 | `INSUFFICIENT_CREDIT` | Org hết credit |
+| 503 | `AI_UNAVAILABLE` | Circuit Breaker OPEN (kèm fallback) |
 
 ---
 
-## 2. AUTH ENDPOINTS (`auth-service`)
+## 2. AUTH SERVICE (`auth-service`)
 
-### 2.1. Đăng ký (Register)
-- **`POST /api/v1/auth/register`**
-- **Payload:** `{ "email": "user@example.com", "password": "Str0ngP@ss" }`
-- **Response (201):**
-  ```json
-  "data": { "accessToken": { "token": "jwt", "expiresIn": 900 } }
-  ```
-- **Note:** `refreshToken` set qua HTTP-Only Cookie.
-
-### 2.2. Đăng nhập (Login)
-- **`POST /api/v1/auth/login`**
-- **Payload:** `{ "email": "user@example.com", "password": "Str0ngP@ss" }`
-- **Response (200):** Tương tự Register.
-- **Rate Limit:** 5 req / 5 phút / IP.
-
-### 2.3. Refresh Token
-- **`POST /api/v1/auth/refresh`**
-- **Response (200):** `"data": { "accessToken": { "token": "new-jwt", "expiresIn": 900 } }`
-- **Note:** Yêu cầu `refreshToken` trong HTTP-Only Cookie.
-
-### 2.4. Logout
-- **`POST /api/v1/auth/logout`**
-- **Cookie:** `accessToken=<accessToken>`
-- **Response (200):** `{ "success": true, "data": null }`
+| Method | Endpoint | Mô tả |
+|--------|----------|-------|
+| POST | `/api/v1/auth/register` | Đăng ký |
+| POST | `/api/v1/auth/login` | Đăng nhập (rate-limited 5/5m) |
+| POST | `/api/v1/auth/refresh` | Refresh token rotation |
+| POST | `/api/v1/auth/logout` | Thu hồi refresh token |
+| GET  | `/api/v1/users/me` | Thông tin user + danh sách org |
+| GET/POST | `/api/v1/roles`, `/api/v1/permissions` | RBAC management |
 
 ---
 
-## 3. USER ENDPOINTS (`auth-service`)
+## 3. CORE API — TENANT
 
-### 3.1. Get Profile (Me)
-- **`GET /api/v1/users/me`**
-- **Cookie:** `accessToken=<accessToken>`
-- **Response (200):** 
-  ```json
-  "data": { 
-    "id": "uuid", 
-    "email": "user@example.com", 
-    "profile": { "firstName": "Minh", "avatarUrl": "..." },
-    "roles": ["ADMIN"],
-    "permissions": ["RBAC:*"]
-  }
-  ```
-
-### 3.2. Update Profile
-- **`PUT /api/v1/users/me/profile`**
-- **Cookie:** `accessToken=<accessToken>`
-- **Payload:** `{ "firstName": "Minh", "lastName": "Le", "phoneNumber": "0123456789" }`
-- **Response (200):** Cập nhật thành công.
+| Method | Endpoint | Mô tả |
+|--------|----------|-------|
+| POST | `/api/v1/orgs` | Tạo organization |
+| POST | `/api/v1/orgs/{id}/invites` | Tạo invite link |
+| POST | `/api/v1/orgs/invites/{code}/accept` | Chấp nhận lời mời |
+| GET  | `/api/v1/orgs/{id}/members` | Danh sách thành viên |
+| PATCH| `/api/v1/orgs/{id}/members/{userId}` | Đổi role |
+| POST | `/api/v1/spaces` | Tạo space |
 
 ---
 
-## 4. RBAC ENDPOINTS (`auth-service`)
+## 4. CORE API — KNOWLEDGE
 
-> **Yêu cầu:** Mọi endpoint RBAC đều yêu cầu user có quyền `RBAC:*` trong `permissions` của Fat JWT.
+| Method | Endpoint | Mô tả |
+|--------|----------|-------|
+| POST | `/api/v1/knowledge` | Tạo item (DOCUMENT/QUESTION/RUNBOOK/ADR) |
+| GET  | `/api/v1/knowledge/{id}` | Chi tiết item |
+| PUT  | `/api/v1/knowledge/{id}` | Cập nhật (yêu cầu `version` — OCC) |
+| DELETE | `/api/v1/knowledge/{id}` | Soft delete |
+| GET  | `/api/v1/knowledge/{id}/revisions` | Lịch sử phiên bản |
+| POST | `/api/v1/knowledge/{id}/verify` | Đánh dấu Verified (cần quyền) |
+| POST | `/api/v1/knowledge/{id}/answers` | Trả lời câu hỏi |
+| POST | `/api/v1/answers/{id}/accept` | Accept answer |
+| POST | `/api/v1/knowledge/{id}/votes` | Vote (+1/-1) |
 
-### 4.1. Tạo Role
-- **`POST /api/v1/roles`**
-- **Payload:** `{ "code": "MANAGER", "name": "Manager", "description": "System Manager" }`
-
-### 4.2. Gán Quyền cho Role
-- **`POST /api/v1/roles/:roleId/permissions`**
-- **Payload:** `{ "permissionIds": ["perm-uuid-1", "perm-uuid-2"] }`
-
-### 4.3. Cấp Role cho User
-- **`POST /api/v1/roles/assign`**
-- **Payload:** `{ "userId": "uuid", "roleId": "role-uuid" }`
-
-### 4.4. Tạo Permission
-- **`POST /api/v1/permissions`**
-- **Payload:** `{ "code": "EXPENSE:DELETE", "module": "EXPENSE", "description": "Delete any expense" }`
-
----
-
-## 3. GROUP ENDPOINTS
-
-### 3.1. Danh sách nhóm
-- **`GET /api/v1/groups`**
-- **Response (200):**
-  ```json
-  "data": [
-    {
-      "id": "group-uuid",
-      "name": "Du lịch Đà Lạt",
-      "type": "TRIP",
-      "status": "ACTIVE",
-      "baseCurrency": "VND",
-      "memberCount": 5,
-      "myBalance": -350000,
-      "lastActivityAt": "2026-06-09T14:00:00Z"
-    }
-  ]
-  ```
-
-### 3.2. Tạo nhóm
-- **`POST /api/v1/groups`**
-- **Payload:**
-  ```json
-  {
-    "name": "Du lịch Đà Lạt",
-    "type": "TRIP",
-    "baseCurrency": "VND",
-    "startDate": "2026-07-01",
-    "endDate": "2026-07-05"
-  }
-  ```
-- **Response (201):** Full group object + invite link.
-
-### 3.3. Chi tiết nhóm
-- **`GET /api/v1/groups/:id`**
-- **Response (200):**
-  ```json
-  "data": {
-    "id": "group-uuid",
-    "name": "Du lịch Đà Lạt",
-    "type": "TRIP",
-    "status": "ACTIVE",
-    "baseCurrency": "VND",
-    "startDate": "2026-07-01",
-    "endDate": "2026-07-05",
-    "members": [
-      { "userId": "uuid-a", "username": "Minh", "role": "OWNER", "avatarUrl": "..." },
-      { "userId": "uuid-b", "username": "Lan", "role": "MEMBER", "avatarUrl": "..." }
-    ],
-    "totalSpending": 5000000,
-    "version": 1
-  }
-  ```
-
-### 3.4. Tạo Invite Link
-- **`POST /api/v1/groups/:id/invites`**
-- **Response (201):**
-  ```json
-  "data": {
-    "inviteCode": "TF-XYZ123",
-    "inviteUrl": "https://teamfin.app/join/TF-XYZ123",
-    "expiresAt": "2026-06-10T14:00:00Z"
-  }
-  ```
-
-### 3.5. Join nhóm qua Invite
-- **`POST /api/v1/groups/join`**
-- **Payload:** `{ "inviteCode": "TF-XYZ123" }`
-- **Response (200):** Full group object.
-
----
-
-## 4. EXPENSE ENDPOINTS
-
-### 4.1. Danh sách expenses
-- **`GET /api/v1/groups/:id/expenses`**
-- **Query Params:** `?page=1&limit=20&category=FOOD&from=2026-06-01&to=2026-06-30&search=ăn`
-- **Response (200):**
-  ```json
-  "data": [
-    {
-      "id": "exp-uuid",
-      "description": "Ăn trưa",
-      "totalAmount": 800000,
-      "currency": "VND",
-      "convertedAmount": 800000,
-      "splitMethod": "EQUAL",
-      "category": "FOOD",
-      "expenseDate": "2026-06-09",
-      "payers": [{ "userId": "uuid-a", "username": "Minh", "amount": 800000 }],
-      "splits": [
-        { "userId": "uuid-a", "username": "Minh", "amount": 200000 },
-        { "userId": "uuid-b", "username": "Lan", "amount": 200000 },
-        { "userId": "uuid-c", "username": "Hùng", "amount": 200000 },
-        { "userId": "uuid-d", "username": "Mai", "amount": 200000 }
-      ],
-      "myShare": 200000,
-      "isDeleted": false,
-      "version": 1,
-      "createdByUserId": "uuid-a",
-      "createdAt": "2026-06-09T14:30:00Z"
-    }
-  ],
-  "meta": { "total": 45, "page": 1, "limit": 20 }
-  ```
-
-### 4.2. Tạo expense
-- **`POST /api/v1/groups/:id/expenses`**
-- **Header:** `X-Idempotency-Key: exp-create-uuid-789`
-- **Payload:**
-  ```json
-  {
-    "description": "Ăn trưa",
-    "totalAmount": 800000,
-    "currency": "VND",
-    "splitMethod": "EQUAL",
-    "category": "FOOD",
-    "expenseDate": "2026-06-09",
-    "payers": [{ "userId": "uuid-a", "amount": 800000 }],
-    "excludeUserIds": [],
-    "splits": []
-  }
-  ```
-- **Response (201):** Full expense object.
-- **Lưu ý:**
-  - Nếu `splitMethod = EQUAL`: `splits` tự tính, không cần gửi.
-  - Nếu `splitMethod = EXACT`: `splits` bắt buộc, sum phải = totalAmount.
-  - Nếu `splitMethod = PERCENTAGE`: `splits` bắt buộc, sum phải = 100%.
-  - Nếu `splitMethod = SHARES`: `splits` bắt buộc, hệ thống tự tính amount.
-
-### 4.3. Sửa expense (OCC)
-- **`PUT /api/v1/groups/:groupId/expenses/:id`**
-- **Header:** `X-Idempotency-Key: exp-edit-uuid-101`
-- **Payload:**
-  ```json
-  {
-    "description": "Ăn trưa (đã sửa)",
-    "totalAmount": 600000,
-    "version": 1
-  }
-  ```
-- **Response (200):** Updated expense object with `version: 2`.
-- **Error (409):** OCC conflict — `{ "error": { "code": "CONFLICT", "details": { "currentVersion": 2 } } }`
-
-### 4.4. Xóa expense (Soft Delete)
-- **`DELETE /api/v1/groups/:groupId/expenses/:id`**
-- **Response (200):** `"data": { "deleted": true, "balanceUpdated": true }`
-
----
-
-## 5. SETTLEMENT ENDPOINTS
-
-### 5.1. Settle nợ
-- **`POST /api/v1/groups/:id/settlements`**
-- **Header:** `X-Idempotency-Key: settle-uuid-456`
-- **Payload:**
-  ```json
-  {
-    "toUserId": "uuid-a",
-    "amount": 200000,
-    "currency": "VND",
-    "type": "FULL",
-    "note": "Chuyển qua MoMo"
-  }
-  ```
-- **Response (200):**
-  ```json
-  "data": {
-    "id": "settle-uuid",
-    "fromUserId": "uuid-b",
-    "toUserId": "uuid-a",
-    "amount": 200000,
-    "type": "FULL",
-    "balanceAfter": 0,
-    "message": "Bạn đã trả 200,000₫ cho Minh"
-  }
-  ```
-- **Error (400):** `INSUFFICIENT_BALANCE` — Nợ không đủ.
-- **Error (409):** Idempotency key đã xử lý — trả response cached.
-
-### 5.2. Gợi ý tối ưu nợ
-- **`GET /api/v1/groups/:id/simplify-debts`**
-- **Response (200):**
-  ```json
-  "data": {
-    "currentTransactions": 8,
-    "optimizedTransactions": 3,
-    "suggestions": [
-      { "from": { "userId": "uuid-b", "username": "Lan" }, "to": { "userId": "uuid-a", "username": "Minh" }, "amount": 200000 },
-      { "from": { "userId": "uuid-d", "username": "Mai" }, "to": { "userId": "uuid-a", "username": "Minh" }, "amount": 150000 },
-      { "from": { "userId": "uuid-c", "username": "Hùng" }, "to": { "userId": "uuid-e", "username": "Tú" }, "amount": 100000 }
-    ]
-  }
-  ```
-
-### 5.3. Danh sách settlements
-- **`GET /api/v1/groups/:id/settlements`**
-- **Response (200):** Array of settlement records.
-
----
-
-## 6. BALANCE & ANALYTICS ENDPOINTS
-
-### 6.1. Balance summary (Ma trận nợ)
-- **`GET /api/v1/groups/:id/balances`**
-- **Response (200):**
-  ```json
-  "data": {
-    "myBalance": -350000,
-    "balances": [
-      { "fromUserId": "uuid-b", "fromUsername": "Lan", "toUserId": "uuid-a", "toUsername": "Minh", "amount": 200000 },
-      { "fromUserId": "uuid-b", "fromUsername": "Lan", "toUserId": "uuid-c", "toUsername": "Hùng", "amount": 150000 }
-    ]
-  }
-  ```
-
-### 6.2. Spending by Category
-- **`GET /api/v1/groups/:id/analytics/by-category`**
-- **Query:** `?from=2026-06-01&to=2026-06-30`
-- **Response (200):**
-  ```json
-  "data": [
-    { "category": "FOOD", "amount": 3000000, "percentage": 60 },
-    { "category": "TRANSPORT", "amount": 1000000, "percentage": 20 },
-    { "category": "ACCOMMODATION", "amount": 750000, "percentage": 15 },
-    { "category": "OTHER", "amount": 250000, "percentage": 5 }
-  ]
-  ```
-
-### 6.3. Monthly Trend
-- **`GET /api/v1/groups/:id/analytics/monthly`**
-- **Response (200):**
-  ```json
-  "data": [
-    { "month": "2026-04", "amount": 4500000 },
-    { "month": "2026-05", "amount": 5200000 },
-    { "month": "2026-06", "amount": 3800000 }
-  ]
-  ```
-
-### 6.4. Activity Log (Audit Trail)
-- **`GET /api/v1/groups/:id/activity`**
-- **Query:** `?page=1&limit=50`
-- **Response (200):**
-  ```json
-  "data": [
-    {
-      "eventType": "ExpenseCreated",
-      "description": "Minh thêm 'Ăn trưa' — 800,000₫",
-      "userId": "uuid-a",
-      "username": "Minh",
-      "timestamp": "2026-06-09T14:30:00Z",
-      "details": { "expenseId": "exp-uuid", "amount": 800000 }
-    },
-    {
-      "eventType": "SettlementCreated",
-      "description": "Lan trả Minh 200,000₫",
-      "userId": "uuid-b",
-      "username": "Lan",
-      "timestamp": "2026-06-09T15:00:00Z",
-      "details": { "settlementId": "settle-uuid", "amount": 200000 }
-    }
-  ]
-  ```
-
----
-
-## 7. EXCHANGE RATE ENDPOINT
-
-### 7.1. Lấy tỷ giá
-- **`GET /api/v1/exchange-rates?from=USD&to=VND`**
-- **Response (200):**
-  ```json
-  "data": {
-    "from": "USD",
-    "to": "VND",
-    "rate": 25000.000000,
-    "source": "fixer.io",
-    "cached": false,
-    "fetchedAt": "2026-06-09T14:00:00Z"
-  }
-  ```
-- **Note:** `cached: true` khi Circuit Breaker OPEN và dùng fallback cache.
-
----
-
-## 8. NOTIFICATION ENDPOINTS
-
-### 8.1. Danh sách notifications
-- **`GET /api/v1/notifications`**
-- **Query:** `?unreadOnly=true&page=1&limit=20`
-- **Response (200):**
-  ```json
-  "data": [
-    {
-      "id": "notif-uuid",
-      "type": "EXPENSE_CREATED",
-      "title": "Chi phí mới",
-      "body": "Minh thêm 'Ăn trưa' — Bạn nợ 200,000₫",
-      "groupId": "group-uuid",
-      "read": false,
-      "createdAt": "2026-06-09T14:30:00Z"
-    }
-  ]
-  ```
-
-### 8.2. Đánh dấu đã đọc
-- **`PUT /api/v1/notifications/:id/read`**
-
-### 8.3. Nhắc nợ (Remind)
-- **`POST /api/v1/groups/:id/remind`**
-- **Payload:** `{ "toUserId": "uuid-b" }`
-- **Response (200):** `"data": { "sent": true }`
-- **Rate Limit:** 1 reminder / 24h cho cùng 1 cặp.
-
----
-
-## 9. WEBSOCKET EVENTS
-
-### Connection
-```javascript
-const socket = io('wss://teamfin.app/ws', {
-  auth: { token: accessToken }
-});
+**Ví dụ OCC conflict:**
+```http
+PUT /api/v1/knowledge/abc {"body":"...","version":3}
+→ 409 { "errorCode":"OCC_CONFLICT", "data":{ "currentVersion":4 } }
 ```
 
-### Events (Server → Client)
+---
 
-| Event | Payload | Trigger |
-|-------|---------|---------|
-| `expense:created` | `{ expenseId, groupId, description, amount, yourShare }` | Expense mới trong nhóm |
-| `expense:updated` | `{ expenseId, groupId, changes }` | Expense bị sửa |
-| `expense:deleted` | `{ expenseId, groupId }` | Expense bị xóa |
-| `settlement:created` | `{ settlementId, groupId, from, to, amount }` | Ai đó settle nợ |
-| `balance:updated` | `{ groupId, myBalance }` | Balance thay đổi |
-| `member:joined` | `{ groupId, userId, username }` | Thành viên mới |
-| `reminder:received` | `{ groupId, fromUsername, amount }` | Bị nhắc nợ |
+## 5. CORE API — DISCOVERY (Search + AI)
+
+### Search (không tốn credit)
+```http
+GET /api/v1/search?q=rotate+jwt+secret&type=DOCUMENT&verified=true&limit=20
+→ 200 {
+  "data": {
+    "results": [
+      { "itemId":"...", "title":"Deploy Guide", "score":0.91, "source":"hybrid", "highlight":"…" }
+    ]
+  }
+}
+```
+Backend chạy **Hybrid Retrieval** (Elasticsearch BM25 + pgvector) → RRF.
+
+### Ask AI / RAG (tốn credit)
+```http
+POST /api/v1/ai/ask
+X-Idempotency-Key: ask-789
+{ "query": "làm sao rotate JWT secret khi deploy?", "spaceId": "optional" }
+
+→ 200 {
+  "data": {
+    "answer": "Để rotate JWT secret khi deploy…",
+    "citations": [
+      { "itemId":"...", "title":"Deploy Guide", "snippet":"…" }
+    ],
+    "creditCost": 5
+  }
+}
+```
+- **402** nếu org hết credit. **429** nếu vượt rate-limit. **503** `AI_UNAVAILABLE` → trả `keywordResults[]` fallback, **không trừ credit**.
+- Gửi lại cùng `X-Idempotency-Key` → trả kết quả cached, không trừ credit lần 2.
+
+### AI Chat (realtime, qua chat-service/WebSocket)
+- `WS /ws/ai-chat` — stream câu trả lời từng token, mỗi message kèm `citations`.
+
+---
+
+## 6. CORE API — CREDIT & BOUNTY
+
+| Method | Endpoint | Mô tả |
+|--------|----------|-------|
+| GET  | `/api/v1/credits/balance` | Số dư credit org (Read Model) |
+| GET  | `/api/v1/credits/ledger` | Lịch sử giao dịch (cursor) |
+| POST | `/api/v1/credits/purchase` | Mua credit pack (Owner) |
+| POST | `/api/v1/questions/{id}/bounty` | Stake credit (`X-Idempotency-Key`) |
+
+---
+
+## 7. CORE API — REPUTATION & FEED
+
+| Method | Endpoint | Mô tả |
+|--------|----------|-------|
+| GET | `/api/v1/feed` | Timeline "Mới trong Spaces của bạn" |
+| GET | `/api/v1/reputation/me` | Điểm + badges |
+| GET | `/api/v1/reputation/leaderboard` | Bảng xếp hạng org/space |
+
+---
+
+## 8. REALTIME (notification-service / chat-service)
+
+| Kênh | Mô tả |
+|------|------|
+| `WS /ws/notifications` | answered, doc-updated, @mention, digest |
+| `WS /ws/ai-chat` | AI Assistant streaming + citations |
+| `WS /ws/presence` | Ai đang xem doc / online (Redis-backed) |
+
+---
+
+## 9. Idempotency & OCC — Tóm tắt quy tắc
+
+1. **Idempotency** bắt buộc cho mọi action tốn credit → server lưu `IdempotencyRecord`, trả cached nếu trùng key.
+2. **OCC** bắt buộc cho update wiki → `version` mismatch ⇒ 409.
+3. **Tenant guard** áp ở mọi endpoint core-api → cross-org ⇒ 403 `FORBIDDEN_TENANT`.

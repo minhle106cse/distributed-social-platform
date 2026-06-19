@@ -10,3 +10,6 @@ export * from './http/base-meta.interface.js'
 export * from './schemas/common.schema.js'
 
 export * from './logger/index.js'
+
+// CQRS
+export * from './cqrs/index.js'

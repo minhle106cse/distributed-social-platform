@@ -2,187 +2,153 @@
 
 > 📖 **[English Version](./en/01_business_requirements.md)**
 
-Tài liệu này định nghĩa "Phần Hồn" của **TeamFin** — nền tảng quản lý tài chính nhóm. Hệ thống được xây dựng trên 4 Trụ Cột kinh doanh sắc bén, mỗi trụ cột đều sinh ra các bài toán System Design nâng cao một cách **tự nhiên**.
+Tài liệu này định nghĩa "Phần Hồn" của **Cortex** — nền tảng tri thức nội bộ có AI cho team/công ty. Hệ thống được xây dựng trên 5 Trụ Cột kinh doanh, mỗi trụ cột đều sinh ra các bài toán System Design nâng cao một cách **tự nhiên**.
+
+> **Nguyên tắc nền tảng:** Business sinh ra hạ tầng, không phải ngược lại. Mỗi yêu cầu dưới đây ép buộc một mảnh hạ tầng (pgvector, Kafka, Elasticsearch, Redis, chat, notification) tồn tại có lý do — đồng thời vẫn là một sản phẩm **launch được** (B2B SaaS: nỗi đau thật, có người trả tiền).
 
 ---
 
-## 🏛️ TRỤ CỘT 1: QUẢN LÝ NHÓM & CHI PHÍ (Group & Expense Management)
+## 🏛️ TRỤ CỘT 1: TRI THỨC & CỘNG TÁC (Knowledge & Collaboration)
 
-### 1.1. Nhóm Tài chính (Finance Group)
+### 1.1. Đơn vị Tri thức (Knowledge Item)
 
-Mỗi nhóm đại diện cho một **bối cảnh chia tiền** (ở chung nhà, du lịch, đi ăn, quỹ nhóm):
+Mọi nội dung trong Cortex là một **Knowledge Item** thuộc một trong các loại:
 
-- **Tạo nhóm** với tên, mô tả, đơn vị tiền tệ mặc định (VND/USD/EUR).
-- **Mời thành viên** qua Link/Mã QR (giống cách mời vào nhóm chat). Không tìm kiếm người lạ.
-- **Giới hạn**: Mỗi nhóm tối đa **50 thành viên** (đảm bảo thuật toán Debt Simplification chạy trong O(n log n)).
-- **Loại nhóm:**
-  - `PERSISTENT` — Nhóm dài hạn (ở chung nhà, quỹ team). Không có ngày kết thúc.
-  - `TRIP` — Nhóm sự kiện (du lịch, tiệc). Có `startDate` và `endDate`. Tự động lưu trữ (Archive) sau khi kết thúc và tất cả nợ được settle.
-  - `QUICK_SPLIT` — Chia nhanh 1 lần (đi ăn). Tự động Archive sau 24h kể từ khi tất cả nợ = 0.
+| Loại | Mô tả | Ví dụ |
+|------|-------|-------|
+| `DOCUMENT` | Tài liệu dài, wiki page | "Quy trình release", "Kiến trúc hệ thống thanh toán" |
+| `QUESTION` | Câu hỏi cần lời giải | "Làm sao rotate JWT secret khi deploy?" |
+| `ANSWER` | Câu trả lời cho 1 question | (gắn với 1 question) |
+| `RUNBOOK` | Quy trình xử lý sự cố | "Khi DB CPU > 90% thì làm gì" |
+| `ADR` | Architecture Decision Record | "Vì sao chọn Kafka thay vì RabbitMQ" |
 
-### 1.2. Chi phí (Expense)
+- **Tác giả & quyền:** mỗi item có `createdBy`, thuộc một **Space** (xem Trụ Cột 5) và một **Organization**.
+- **Trạng thái:** `DRAFT` → `PUBLISHED` → `ARCHIVED`/`STALE`.
+- **Metadata:** tags, ngày cập nhật, số lần xem, số vote, có được `VERIFIED` (kiểm chứng) hay không.
 
-Mỗi chi phí là một sự kiện tài chính được ghi nhận dưới dạng **Event bất biến (Immutable Event)** — giống sổ cái ngân hàng:
+### 1.2. Cộng tác kiểu Wiki & OCC
 
-- **Người trả (Payer):** Ai đã bỏ tiền túi ra trước? Hỗ trợ **nhiều người trả** cho cùng 1 hóa đơn (A trả 300k, B trả 200k).
-- **Loại tiền (Currency):** Mỗi expense có thể khác tiền tệ. Hệ thống tự động convert về tiền tệ mặc định của nhóm khi tính tổng.
-- **Phương thức chia (Split Method):**
+Nhiều người có thể cùng biên tập một `DOCUMENT`/`RUNBOOK`:
 
-| Method | Mô tả | Ví dụ |
-|--------|-------|-------|
-| `EQUAL` | Chia đều cho mọi người | 500k / 5 người = 100k/người |
-| `EXACT` | Số tiền chính xác cho từng người | A: 200k, B: 150k, C: 150k |
-| `PERCENTAGE` | Theo tỷ lệ phần trăm | A: 50%, B: 30%, C: 20% |
-| `SHARES` | Theo số phần (shares) | A: 2 phần, B: 1 phần, C: 1 phần |
+> **⚠️ RULE: Chống ghi đè mù (lost update).**
 
-- **Danh mục (Category):** `FOOD`, `TRANSPORT`, `ACCOMMODATION`, `ENTERTAINMENT`, `UTILITIES`, `SHOPPING`, `OTHER`.
-- **Metadata:** Ghi chú (note), ảnh hóa đơn (receipt image URL), ngày xảy ra (expenseDate khác createdAt).
-- **Loại trừ (Exclusion):** Cho phép loại trừ một số thành viên khỏi 1 expense cụ thể. Ví dụ: A trả tiền bia 300k nhưng C không uống → chỉ chia cho A và B.
+- Mỗi item có trường `version`. Khi user A và B cùng mở 1 doc và cùng lưu, người lưu sau bị từ chối nếu `version` đã đổi → **Optimistic Concurrency Control (OCC)**.
+- Mỗi lần lưu tạo một **revision** (lịch sử phiên bản) → xem diff, rollback được.
+- Audit: ai sửa (`updatedBy`), khi nào (`updatedAt`), sửa gì (revision diff).
 
-### 1.3. Nguyên tắc Bất biến của Sổ cái (Ledger Immutability)
+### 1.3. Kiểm chứng & Chất lượng (Verification)
 
-> **⚠️ RULE TUYỆT ĐỐI: Không bao giờ DELETE hoặc UPDATE trực tiếp một record tài chính.**
-
-- Khi "sửa" expense: Hệ thống tạo `ExpenseUpdatedEvent` ghi nhận thay đổi (delta), chứ KHÔNG update row cũ.
-- Khi "xóa" expense: Hệ thống tạo `ExpenseDeletedEvent` (soft delete). Row cũ vẫn tồn tại vĩnh viễn.
-- **Balance hiện tại = Replay toàn bộ events từ đầu**. Có thể rebuild bất cứ lúc nào.
-- **Audit Trail:** Mọi thay đổi đều có `userId` (ai sửa), `timestamp` (khi nào), `changes` (sửa gì). Đây là yêu cầu bắt buộc của fintech.
+- Expert/Moderator có thể đánh dấu một answer/doc là `VERIFIED` ("đã kiểm chứng, tin được").
+- `STALE`: tài liệu lâu không cập nhật hoặc có thay đổi liên quan → hệ thống gợi ý review (xem Trụ Cột 4 — Worker).
 
 ---
 
-## 🏛️ TRỤ CỘT 2: THANH TOÁN & TỐI ƯU NỢ (Settlement & Debt Resolution)
+## 🏛️ TRỤ CỘT 2: KHÁM PHÁ BẰNG AI (AI Discovery — RAG + Hybrid Search)
 
-### 2.1. Thanh toán Nợ (Settlement)
+> Đây là **trái tim** của sản phẩm và là highlight kỹ thuật quan trọng nhất.
 
-Khi A nợ B 200k và muốn trả:
+### 2.1. Vấn đề
+Search bằng keyword thất bại khi người dùng **không nhớ đúng từ khóa**. "Cách xoay vòng khóa bí mật" sẽ không khớp document tên "JWT secret rotation". Cần tìm theo **ngữ nghĩa**.
 
-- A bấm "Settle Up" → Chọn B → Nhập số tiền → Xác nhận.
-- Hệ thống tạo `SettlementCreatedEvent` → Chạy **Saga Pattern:**
-  - **Step 1:** Ghi nhận A đã trả (Debit Event).
-  - **Step 2:** Ghi nhận B đã nhận (Credit Event).
-  - **Step 3:** Update Read Model (Balance).
-  - Nếu bất kỳ step nào fail → **Compensating Transaction** rollback toàn bộ.
-- **Idempotency Key** bắt buộc: Chống double-settle khi mạng lag.
-- **Settlement Types:**
-  - `FULL` — Trả hết nợ cho 1 người.
-  - `PARTIAL` — Trả một phần.
-  - `RECORD_ONLY` — Chỉ ghi nhận (ví dụ: "B đã trả A bằng tiền mặt ngoài app").
+### 2.2. Hybrid Retrieval
+Cortex kết hợp 2 nguồn để cho kết quả tốt nhất:
 
-### 2.2. Thuật toán Tối ưu Nợ (Debt Simplification)
+| Nguồn | Cơ chế | Mạnh ở |
+|------|--------|--------|
+| **Elasticsearch** | BM25 full-text | Khớp keyword chính xác, filter/facet |
+| **pgvector** | Cosine similarity trên embedding | Khớp ngữ nghĩa, đồng nghĩa, diễn đạt khác |
 
-Đây là **bài toán NP-Hard** biến thể — và là highlight kỹ thuật quan trọng nhất:
+→ Hợp nhất bằng **Reciprocal Rank Fusion (RRF)** rồi re-rank.
 
-**Bài toán:** Nhóm 5 người, 20 giao dịch chồng chéo qua lại. Nếu settle từng cặp sẽ cần tối đa `n*(n-1)/2 = 10` giao dịch. Thuật toán tối ưu giảm xuống còn tối đa `n-1 = 4`.
+### 2.3. RAG (Retrieval-Augmented Generation)
+- Lấy top-N đoạn liên quan + câu hỏi → nạp vào **Claude** → câu trả lời tổng hợp.
+- **Citation bắt buộc:** mỗi câu trả lời dẫn lại document nguồn (chống hallucination, người dùng kiểm chứng được).
+- **Embedding** được sinh **bất đồng bộ** bởi `worker-service` (qua Kafka) mỗi khi document publish/đổi nội dung.
 
-**Thuật toán (Greedy Net Balance):**
-
-```
-Input:  A nợ B 100, B nợ C 50, C nợ A 30, A nợ C 20
-Step 1: Tính Net Balance:
-        A = -100 + 30 - 20 = -90  (nợ ròng 90)
-        B = +100 - 50      = +50  (được nợ 50)
-        C = +50 - 30 + 20  = +40  (được nợ 40)
-Step 2: Greedy Matching (Sắp xếp debtor/creditor):
-        Debtors:  [A: -90]
-        Creditors: [B: +50, C: +40]
-Step 3: Match:
-        A → B: 50 (B hết nợ)
-        A → C: 40 (C hết nợ)
-Output: Chỉ cần 2 giao dịch thay vì 4!
-```
-
-- **Trigger:** Thuật toán chạy theo yêu cầu (khi user bấm "Suggest Settlement") hoặc chạy nền định kỳ bởi Worker Service.
-- **Kết quả là GỢI Ý**, không tự động settle. User phải xác nhận từng khoản.
-
-### 2.3. Trạng thái Nợ của Nhóm (Group Debt Status)
-
-| Status | Mô tả |
-|--------|-------|
-| `ACTIVE` | Còn nợ chưa settle |
-| `SETTLED` | Tất cả balance = 0 |
-| `ARCHIVED` | Nhóm đã kết thúc (Trip/QuickSplit) |
-
-Chỉ khi status = `SETTLED`, nhóm `TRIP` mới được phép Archive tự động.
+### 2.4. Khả năng chịu lỗi
+- **Circuit Breaker** quanh AI provider: khi Claude/embedding API down → rơi về **keyword-only search** (vẫn dùng được, chỉ kém thông minh hơn).
+- **Rate Limiting:** AI query tốn tiền thật → giới hạn token-bucket per user/org.
 
 ---
 
-## 🏛️ TRỤ CỘT 3: ĐA TIỀN TỆ & TỶ GIÁ (Multi-currency & Exchange)
+## 🏛️ TRỤ CỘT 3: NỀN KINH TẾ CREDIT (Credit Economy — Ảo, không payout)
 
-### 3.1. Tỷ giá & Circuit Breaker
+Credit là **đơn vị đo lường & khuyến khích** trong org. Mua bằng tiền nhưng **không bao giờ rút ra tiền mặt** ⇒ đầy đủ rigor sổ cái nhưng nhẹ rủi ro pháp lý/payment.
 
-Mỗi nhóm có **đơn vị tiền tệ mặc định (Base Currency)**. Khi expense được tạo bằng tiền tệ khác:
+### 3.1. Nguồn & Tiêu Credit
 
-1. **Exchange Rate Service** gọi API bên thứ 3 (ExchangeRate-API / Fixer.io) để lấy tỷ giá.
-2. **Circuit Breaker Pattern** bảo vệ hệ thống:
-   - **CLOSED** (bình thường): Gọi API như thường, cache kết quả 1 giờ.
-   - **OPEN** (API chết): Sau 5 lỗi liên tiếp → Ngắt cầu dao → Trả về tỷ giá cache gần nhất. Không để 1 API bên thứ 3 chết kéo sập tính năng tạo expense.
-   - **HALF-OPEN** (thử lại): Sau 30 giây → Thử 1 request. Thành công → CLOSED. Thất bại → OPEN lại.
-3. **Tỷ giá được gắn cố định (Pinned)** vào expense tại thời điểm tạo. Không thay đổi dù tỷ giá biến động sau đó.
+| Hướng | Hành động | Sự kiện (Event) |
+|------|-----------|-----------------|
+| **+ Nạp** | Org mua credit pack | `CreditPurchasedEvent` |
+| **+ Thưởng** | Đóng góp được `VERIFIED`/answer được accept | `CreditAwardedEvent` |
+| **− Tiêu** | Gọi AI (RAG/summarize) | `CreditSpentEvent` |
+| **− Khóa tạm** | Stake credit treo bounty cho câu hỏi khó | `CreditStakedEvent` |
+| **+ Hoàn** | AI fail / bounty hủy | `CreditRefundedEvent` |
 
-### 3.2. Tiền tệ được hỗ trợ (Phase 1)
+### 3.2. Sổ cái Bất biến (Ledger Immutability)
 
-| Currency | Code | Symbol |
-|----------|------|--------|
-| Việt Nam Đồng | `VND` | ₫ |
-| US Dollar | `USD` | $ |
-| Euro | `EUR` | € |
-| Japanese Yen | `JPY` | ¥ |
-| Thai Baht | `THB` | ฿ |
+> **⚠️ RULE TUYỆT ĐỐI: Không bao giờ UPDATE trực tiếp số dư credit.**
 
-### 3.3. Quy tắc Convert
+- Mọi thay đổi là một **Event bất biến** trong Event Store.
+- **Balance hiện tại = Replay toàn bộ credit events**. Rebuild được bất cứ lúc nào.
+- **Ledger Integrity:** cron hằng đêm kiểm tra `Sum(events) == Current Balance` cho mọi org; drift → alert + auto-rebuild.
 
-- **Display:** Mỗi expense hiển thị ở **cả tiền gốc và tiền quy đổi**. VD: `$50 (≈ 1,250,000₫)`.
-- **Balance tính bằng Base Currency:** Tổng nợ luôn quy đổi về Base Currency của nhóm để tránh sai lệch.
-- **Settlement có thể bằng bất kỳ tiền tệ nào:** A nợ B 100 USD nhưng settle bằng VND → Hệ thống convert theo tỷ giá tại thời điểm settle.
+### 3.3. Saga cho giao dịch nhiều bước
+
+**AI-Query Saga:** Reserve credit → gọi RAG → commit (nếu OK) / refund (nếu fail).
+**Bounty Saga:** stake → accept answer → award + reputation + badge → notify; fail bất kỳ bước nào → compensate.
+
+**Idempotency Key** bắt buộc cho mọi command tốn credit → chống double-charge khi mạng lag.
 
 ---
 
-## 🏛️ TRỤ CỘT 4: PHÂN TÍCH & KIỂM TOÁN (Analytics & Audit Trail)
+## 🏛️ TRỤ CỘT 4: UY TÍN & GAMIFY ĐÓNG GÓP (Reputation & Gamification)
 
-### 4.1. Dashboard Analytics (Read Model — CQRS)
+Bài toán B2B kinh điển: **không ai muốn document**. Cortex dùng gamify để đảo ngược điều đó.
 
-Dashboard là **Read Model** — một bản chiếu (projection) được tính toán sẵn từ Event Store, phục vụ truy vấn nhanh mà không cần query Event Store mỗi lần:
+### 4.1. Điểm uy tín (Reputation)
+- Đóng góp được vote up / được accept / được `VERIFIED` → +reputation.
+- Reputation mở khóa đặc quyền (edit wiki không cần duyệt, verify nội dung người khác...).
 
-| Metric | Mô tả | Cách tính |
-|--------|-------|-----------|
-| **Total Group Spending** | Tổng chi tiêu nhóm | Sum of all ExpenseCreatedEvent amounts |
-| **My Balance** | Tôi nợ/được nợ bao nhiêu | Sum of my splits - Sum of my payments |
-| **Who Owes Whom** | Ma trận nợ đầy đủ | Aggregate balance per (userA, userB) pair |
-| **Spending by Category** | Chi tiêu theo danh mục | Group by category, sum amounts |
-| **Monthly Trend** | Xu hướng chi tiêu theo tháng | Group by month, sum amounts |
-| **Top Spender** | Ai chi nhiều nhất | Rank by total payment amount |
+### 4.2. Badge
+| Badge | Điều kiện |
+|------|-----------|
+| 🌱 First Contribution | Đăng item đầu tiên |
+| 🔥 Knowledge Streak | Đóng góp N ngày liên tục |
+| ✅ Trusted Expert | Có X nội dung được `VERIFIED` |
+| 🧭 Pathfinder | Trả lời câu hỏi được accept nhiều |
 
-### 4.2. Audit Trail (Event Sourcing)
+### 4.3. Bảng xếp hạng & Digest
+- Leaderboard theo org/space (đọc từ Read Model, cache Redis).
+- Digest định kỳ (`worker-service` + `notification-service`): "Tuần này 5 doc mới trong Space của bạn".
 
-Mọi thay đổi tài chính đều được ghi nhận như event bất biến:
+> Reputation cũng được ghi nhận qua event (`ReputationGrantedEvent`) → audit & rebuild được, tương tự credit.
 
+---
+
+## 🏛️ TRỤ CỘT 5: ĐA TỔ CHỨC & PHÂN QUYỀN (Multi-tenancy & Access)
+
+Cortex là **B2B SaaS** — nhiều tổ chức dùng chung hệ thống nhưng **dữ liệu phải cô lập tuyệt đối**.
+
+### 5.1. Cấu trúc
 ```
-[2026-06-09 14:30] ExpenseCreated   — by UserA — "Ăn trưa" — 500,000₫ — Split: EQUAL (5 người)
-[2026-06-09 14:35] ExpenseUpdated   — by UserA — Amount: 500,000 → 600,000₫ — Reason: "Quên tính thêm đồ uống"
-[2026-06-09 15:00] SettlementCreated — UserB → UserA — 120,000₫
-[2026-06-09 15:05] SettlementCreated — UserC → UserA — 120,000₫
+Organization (tenant)
+ └── Workspace / Space (nhóm nội dung theo team/chủ đề)
+      └── Knowledge Items
 ```
 
-- **Ai sửa, khi nào, sửa gì** — Hoàn toàn transparent.
-- **Replay:** Xóa toàn bộ Read Model, replay events → Balance chính xác 100%.
-- **Export:** PDF/CSV cho mục đích kế toán hoặc chia tay nhóm.
+### 5.2. Vai trò trong Org (RBAC)
+| Role | Quyền |
+|------|-------|
+| `OWNER` | Toàn quyền, quản lý billing/credit |
+| `ADMIN` | Quản lý thành viên, space, moderation |
+| `MEMBER` | Đọc/viết nội dung, hỏi AI |
+| `GUEST` | Chỉ đọc các space được mời |
 
-### 4.3. Thông báo Thông minh (Smart Notifications)
-
-| Sự kiện | Kênh | Mô tả |
-|---------|------|-------|
-| Expense mới được tạo | WebSocket + Push | "UserA vừa thêm 'Ăn trưa' — 500k. Bạn nợ 100k." |
-| Expense bị sửa | WebSocket + Push | "UserA sửa 'Ăn trưa': 500k → 600k" |
-| Settlement hoàn tất | WebSocket + Push | "UserB vừa trả bạn 120k!" |
-| Nhắc nợ (Reminder) | Push Only | "Bạn còn nợ UserA 250k trong nhóm 'Du lịch Đà Lạt'" |
-| Nhóm Trip sắp kết thúc | Push Only | "Nhóm 'Du lịch Đà Lạt' kết thúc sau 2 ngày. Hãy settle nợ!" |
-| Budget Alert | Push Only | "Nhóm 'Ở chung' đã chi 90% ngân sách tháng này." |
-
-### 4.4. Ngân sách Nhóm (Group Budget) — Optional Feature
-
-- **Đặt ngân sách tháng** cho nhóm `PERSISTENT` (VD: Quỹ nhà 10 triệu/tháng).
-- **Alert khi chi quá:** Gửi notification khi chi tiêu đạt 80%, 90%, 100% ngân sách.
-- **Báo cáo so sánh:** Tháng này vs tháng trước.
+### 5.3. Tenant Isolation (bắt buộc)
+- **Mọi truy vấn** scope theo `orgId` — không có ngoại lệ.
+- **AI Data Boundary:** dữ liệu org A **không bao giờ** lọt vào ngữ cảnh RAG của org B.
+- **Quota per tenant:** seat limit, credit balance, AI rate-limit riêng → chống *noisy-neighbor*.
 
 ---
 
@@ -192,15 +158,29 @@ Bảng tóm tắt cách mỗi trụ cột kinh doanh sinh ra System Design Patte
 
 | Trụ Cột | Yêu cầu Nghiệp vụ | Pattern BE | Tại sao bắt buộc? |
 |---------|---|---|---|
-| 1. Expense | Tạo expense + notify cùng lúc | **Outbox Pattern** | Ghi DB + publish event phải atomic |
-| 1. Expense | 2 người sửa cùng expense | **OCC (Versioning)** | Chống ghi đè dữ liệu |
-| 1. Expense | Sổ cái không bao giờ xóa | **Event Sourcing** | Audit trail bắt buộc cho fintech |
-| 2. Settlement | Trừ A + Cộng B phải atomic | **Saga Pattern** | Distributed transaction |
-| 2. Settlement | Bấm Pay 2 lần do lag | **Idempotency Key** | Chống double-charge |
-| 2. Settlement | Tối ưu nợ nhóm | **Debt Simplification** | Thuật toán NP-Hard |
-| 3. Currency | API tỷ giá bị down | **Circuit Breaker** | Fallback an toàn |
-| 3. Currency | Cache tỷ giá hot key | **Cache + Stampede** | Tránh thundering herd |
-| 4. Analytics | Dashboard query phức tạp | **CQRS Read Model** | Tách Read/Write optimize riêng |
-| 4. Analytics | Gửi notification thất bại | **DLQ + Retry** | Đảm bảo delivery |
-| All | Chống spam API tài chính | **Rate Limiting** | Token Bucket/Leaky Bucket |
-| All | Scale settlement riêng | **Strangler Fig** | Zero-downtime migration |
+| 1. Knowledge | Publish doc + re-index/re-embed cùng lúc | **Outbox Pattern** | Ghi DB + publish event phải atomic |
+| 1. Knowledge | 2 người sửa cùng 1 doc | **OCC (Versioning)** | Chống lost update |
+| 2. Discovery | Tìm theo ngữ nghĩa | **Vector Search (pgvector)** | Keyword search không đủ |
+| 2. Discovery | Full-text + filter | **Elasticsearch + RRF** | Hybrid retrieval cho kết quả tốt nhất |
+| 2. Discovery | AI provider down | **Circuit Breaker** | Fallback keyword search |
+| 2. Discovery | Search hot key | **Cache + Stampede Prevention** | Tránh thundering herd |
+| 3. Credit | Sổ cái không bao giờ sai | **Event Sourcing** | Audit + rebuild balance |
+| 3. Credit | Gọi AI fail phải hoàn credit | **Saga Pattern** | Distributed transaction |
+| 3. Credit | Bấm hỏi AI 2 lần do lag | **Idempotency Key** | Chống double-charge |
+| 4. Reputation | Dashboard/leaderboard query | **CQRS Read Model** | Tách Read/Write optimize riêng |
+| 4. Reputation | Digest/notify thất bại | **DLQ + Retry** | Đảm bảo delivery |
+| 5. Multi-tenancy | AI query đắt, chống lạm dụng | **Rate Limiting (Token Bucket)** | Quota per tenant |
+| 5. Multi-tenancy | Cô lập dữ liệu chéo org | **Tenant Isolation** | Bảo mật B2B bắt buộc |
+| All | Thông báo realtime | **WebSocket + Redis Pub/Sub** | Trải nghiệm realtime |
+| All | Scale discovery riêng | **Strangler Fig** | Zero-downtime migration |
+
+---
+
+## 💰 MÔ HÌNH DOANH THU (Practicality Check)
+
+| Câu hỏi | Trả lời |
+|--------|---------|
+| **Giải nỗi đau gì?** | Tri thức org tản mát & khó tìm; người mới onboard chậm; bus factor cao |
+| **Ai trả tiền?** | Công ty/team (B2B) — trả theo **seat** + **credit pack** cho AI usage |
+| **Vì sao không bị "clone bão hòa"?** | Khác StackOverflow công khai — đây là tri thức **nội bộ, riêng tư, có AI search**, cạnh tranh thực với Glean/Notion AI |
+| **Credit có rủi ro pháp lý?** | Không — credit **ảo, không payout**, chỉ luân chuyển nội bộ org |
