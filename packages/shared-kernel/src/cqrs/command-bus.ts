@@ -3,7 +3,7 @@ import { ICommandHandler } from './interfaces/command-handler.interface.js';
 import { ICommandMiddleware, NextFn } from './interfaces/command-middleware.interface.js';
 import { CommandHandlerNotFoundError } from './errors/cqrs.error.js';
 
-export class CommandBusService {
+export class CommandBus {
   private handlers = new Map<string, ICommandHandler>();
   private middlewares: ICommandMiddleware[] = [];
 

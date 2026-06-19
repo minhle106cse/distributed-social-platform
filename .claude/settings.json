@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"systemMessage\": \"Did you update .ai/KNOWLEDGE_INDEX.md and relevant directives/*.md?\"}'",
+            "shell": "bash"
+          }
+        ]
+      }
+    ]
+  }
+}

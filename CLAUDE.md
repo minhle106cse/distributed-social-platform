@@ -17,4 +17,4 @@ Source of truth: `.ai/KNOWLEDGE_INDEX.md` → `docs/01..10` → `readme.md` / `r
 ## ⛔ Hard Rules (see AGENTS.md for full text)
 - Never run `python`/`node` directly on host — use `docker exec agent-sandbox python ...` (no `-it`).
 - Never put infrastructure code in `common/`; never `console.log`; never `autoincrement()` PK; never CORS `['*']`.
-- After non-trivial work: log lessons to `.ai/memory/<category>.jsonl` and update the relevant `directives/*.md`.
+- After non-trivial work: log lessons to `.ai/memory/<category>.jsonl`, update the relevant `directives/*.md`, and **surgically edit `.ai/KNOWLEDGE_INDEX.md`** for any changed sections (don't wait for full regeneration).

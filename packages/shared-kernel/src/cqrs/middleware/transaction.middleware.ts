@@ -1,6 +1,6 @@
 import { ICommandMiddleware, NextFn } from '../interfaces/command-middleware.interface.js';
 import { ICommand } from '../interfaces/command.interface.js';
-import { type ITransactionManager } from '../interfaces/transaction-manager.interface.js';
+import { type ITransactionManager } from '../../database/transaction-manager.interface.js';
 import { ILogger } from '../../logger/index.js';
 
 export class TransactionMiddleware implements ICommandMiddleware {

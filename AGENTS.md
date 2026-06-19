@@ -126,7 +126,9 @@ After completing any non-trivial task, you **MUST**:
 
 2. **Update directives** — If a new convention or pattern was established, update the relevant `directives/*.md` file immediately. Do NOT postpone this.
 
-3. **Regenerate knowledge index** (if directives changed):
+3. **Surgically edit `.ai/KNOWLEDGE_INDEX.md`** — Directly update the affected sections (architecture, conventions, service list, folder structure, etc.) for any area that changed. **Do NOT wait for full regeneration.** The index is plain Markdown — edit it inline as part of every non-trivial task, the same way you update source code.
+
+4. **Full regeneration** — Only run after major structural changes (new service, new module layer, architecture shift):
    ```bash
    docker exec agent-sandbox python .ai/knowledge_builder.py
    ```

@@ -13,7 +13,7 @@ Cortex là **B2B SaaS đa tổ chức** — bảo mật ưu tiên hàng đầu l
 | Token | Lifetime | Lưu trữ | Mục đích |
 |-------|----------|---------|----------|
 | **Access Token** | 15 phút | HTTP-Only Cookie | Authenticate API requests |
-| **Refresh Token** | 7 ngày | HTTP-Only Secure Cookie | Renew Access Token |
+| **Refresh Token** | 30 ngày | HTTP-Only Secure Cookie | Renew Access Token |
 
 - **Access Token payload:** `sub` (userId), `orgId`, `role` (trong org), `jti`.
 - **Refresh Token Rotation:** mỗi lần dùng → cấp token mới + vô hiệu token cũ. Token cũ bị tái sử dụng → **revoke toàn bộ token family** (phát hiện theft).

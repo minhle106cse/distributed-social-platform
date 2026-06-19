@@ -2,7 +2,7 @@ import { IQuery } from './interfaces/query.interface.js';
 import { IQueryHandler } from './interfaces/query-handler.interface.js';
 import { QueryHandlerNotFoundError } from './errors/cqrs.error.js';
 
-export class QueryBusService {
+export class QueryBus {
   private handlers = new Map<string, IQueryHandler<any, any>>();
 
   register(queryName: string, handler: IQueryHandler<any, any>) {

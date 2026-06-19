@@ -13,3 +13,6 @@ export * from './logger/index.js'
 
 // CQRS
 export * from './cqrs/index.js'
+
+// Database abstractions
+export * from './database/transaction-manager.interface.js'

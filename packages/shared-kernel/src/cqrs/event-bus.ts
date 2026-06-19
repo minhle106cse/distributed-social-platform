@@ -3,7 +3,7 @@ import { IEvent } from './interfaces/event.interface.js';
 import { IEventHandler } from './interfaces/event-handler.interface.js';
 
 
-export class EventBusService {
+export class EventBus {
   private eventEmitter = new EventEmitter();
 
   register<T extends IEvent>(eventName: string, handler: IEventHandler<T>) {
