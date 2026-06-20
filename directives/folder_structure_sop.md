@@ -14,16 +14,16 @@ src/
 │   ├── server.ts                    # listen(), graceful shutdown
 │   └── swagger.ts                   # OpenAPI / Swagger setup
 ├── common/                          # Cross-cutting ABSTRACTIONS only — NO infrastructure code
+│   │                                # ⚠️ Error base classes KHÔNG nằm ở đây — dùng packages/shared-kernel/src/errors/
 │   ├── cqrs/                        # Command/Query bus abstractions & middlewares (PURE POJO ONLY)
 │   │   ├── index.ts                 # ICommand, ICommandHandler, CommandBus, IEvent, EventBus
 │   │   └── middlewares/             # NO @Injectable or NestJS decorators allowed here
 │   │       ├── logging.middleware.ts
 │   │       ├── retry.middleware.ts
 │   │       └── transaction.middleware.ts
-│   ├── database/                    # DB abstractions only
-│   │   ├── transaction-manager.interface.ts
-│   │   └── transaction.context.ts
-│   └── errors/                      # Domain/Application error base classes
+│   └── database/                    # DB abstractions only
+│       ├── transaction-manager.interface.ts
+│       └── transaction.context.ts
 ├── config/                          # Environment config loading & validation
 ├── container/                       # Manual DI wiring (bắt buộc vì Fastify không có DI)
 │   ├── infra.ts                     # Wires infrastructure deps (repositories, services, logger)
@@ -75,6 +75,7 @@ src/
 | Đặt Prisma module/service vào thư mục riêng `prisma/` ở root src | Prisma là infrastructure detail → phải nằm trong `infrastructure/database/prisma/` |
 | Đặt logger concrete implementation vào `common/logger/` | `common/` chứa interface, implementation dùng chung đã nằm trong `packages/shared-kernel` |
 | Đặt `ILogger` interface bên trong một service app (e.g. `auth-service/src/common/logger.ts`) | Interface dùng chung phải nằm trong `packages/shared-kernel` |
+| Đặt error base classes vào `common/errors/` trong service | Tất cả error base classes (`AppError`, `DomainError`, `ApplicationError`, `InfrastructureError`, `ResponseFormatError`) đều nằm trong `packages/shared-kernel/src/errors/` — import từ `@distributed-social-platform/shared-kernel` |
 | Tạo folder ngoài 5 thành phần chính khi không có lý do cụ thể | Phá vỡ tính nhất quán giữa các service |
 
 ---

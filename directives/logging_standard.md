@@ -39,9 +39,40 @@ Do not pollute the console with unstructured strings.
   - *Note for dev mode:* `createLogger` uses `pino-pretty` for console output and directly pushes to Elasticsearch via `pino-elasticsearch`.
 - Never `console.log`.
 
+## Shared HTTP Utilities (shared-kernel)
+
+To prevent response shape drift between services (auth-service dùng Fastify hooks, core-api dùng NestJS interceptors/filters), tất cả **business logic** của HTTP layer phải dùng chung từ `@distributed-social-platform/shared-kernel`.
+
+**Source files**:
+- `packages/shared-kernel/src/http/response.ts` — pure contracts: `BaseMeta`, `ErrorResponse`, `SuccessResponse`, `ApiResponse`
+- `packages/shared-kernel/src/http/response.utils.ts` — factory functions: `buildErrorBody()`, `buildSuccessBody()`, `httpStatusToCode()`
+- `packages/shared-kernel/src/errors/response-format.error.ts` — `ResponseFormatError` (thrown khi handler trả về sai type)
+
+**Naming convention**:
+- `ApiResponse` — data class route handlers trả về (thay `HttpResponseBuilder`)
+- `ResponseFormatError` — lỗi infrastructure khi handler vi phạm contract (thay `HttpResponseError`)
+
+| Utility | Import | Dùng ở |
+|---|---|---|
+| `httpStatusToCode(status)` | `shared-kernel` | Mọi exception filter/handler — map HTTP status → semantic code string |
+| `buildErrorBody({ code, message, details, requestId })` | `shared-kernel` | Mọi error handler/filter — trả về `ErrorResponse` chuẩn |
+| `buildSuccessBody({ data, message, requestId })` | `shared-kernel` | Mọi response wrapper — trả về `SuccessResponse` chuẩn |
+
+**Tuyệt đối không** tự build `{ success, message, error, meta }` inline trong hook/interceptor/filter. Phải gọi hàm từ shared-kernel.
+
+Response shape chuẩn (bất biến):
+```json
+// Success
+{ "success": true, "data": {}, "message": "...", "meta": { "requestId": "...", "timestamp": "...", "version": "1.0.0" } }
+
+// Error
+{ "success": false, "message": "...", "error": { "code": "NOT_FOUND", "details": [] }, "meta": { "requestId": "...", "timestamp": "...", "version": "1.0.0" } }
+```
+
 ## Enforcement for AI Workflows
 
 When an AI Agent is tasked with creating a new microservice or adding a new module:
 1. Ensure `httpLoggingHook` is attached in the `fastify.ts` setup.
 2. Ensure `LoggingMiddleware` is correctly applied to the `CommandBus` in the `container` initialization.
 3. **DO NOT** inject `ILogger` into Domain Entities or core Domain logic unless absolutely necessary. Rely on the CQRS pipeline for observability.
+4. **ALWAYS** use `buildErrorBody` / `buildSuccessBody` / `httpStatusToCode` from `shared-kernel` — never rebuild the response shape locally.

@@ -44,7 +44,35 @@ fastify.post('/login', {
   }
 }, handler)
 ```
-- **NestJS**: Sử dụng thư viện `nestjs-zod` để tạo DTO (`createZodDto`) và `@UseZodGuard`.
+- **NestJS**: Sử dụng thư viện `nestjs-zod` để tạo DTO (`createZodDto`) và `ZodValidationPipe` (global).
+
+**Ví dụ chuẩn (NestJS):**
+```typescript
+// modules/knowledge/presentation/schemas/create-knowledge-item.schema.ts
+import { z } from 'zod'
+import { createZodDto } from 'nestjs-zod'
+
+export const CreateKnowledgeItemSchema = z.object({
+  title: z.string().min(1).max(200),
+  content: z.string().min(1),
+  spaceId: z.string().uuid(),
+  tags: z.array(z.string()).optional().default([]),
+})
+
+// DTO dùng trong Controller — tự động validate bởi ZodValidationPipe global
+export class CreateKnowledgeItemDto extends createZodDto(CreateKnowledgeItemSchema) {}
+```
+
+```typescript
+// Controller — KHÔNG cần @UsePipes hay @Body() với type thủ công
+@Post()
+async create(@Body() dto: CreateKnowledgeItemDto) {
+  // dto đã được validate và typed đúng
+}
+```
+
+> `ZodValidationPipe` được đăng ký global trong `server.ts` (`app.useGlobalPipes(new ZodValidationPipe())`).
+> Không cần thêm `@UsePipes` ở từng controller.
 
 ## 🛠️ Execution & Tự động hoá
 Nếu viết API mới:

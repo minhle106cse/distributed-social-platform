@@ -75,6 +75,25 @@ What should the agent do when something goes wrong?
 
 ---
 
+## 📚 Directive Index
+
+| File | Mô tả | Đọc khi |
+|---|---|---|
+| `cqrs_pattern.md` | CQRS Middleware Pipeline, AsyncLocalStorage, Transaction | Viết module mới, Handler, Repository |
+| `folder_structure_sop.md` | Cấu trúc thư mục chuẩn, forbidden patterns | Tạo file mới bất kỳ |
+| `database_standard.md` | Naming, UUID PK, soft delete, Prisma v7 config | Thiết kế schema, Prisma config |
+| `microservice_architecture.md` | Bootstrap checklist, logger, health/metrics | Init service mới, config service |
+| `logging_standard.md` | Dual-log, shared-kernel HTTP utilities | HTTP layer, interceptors, filters |
+| `zod_validation.md` | Schema location, Fastify + NestJS patterns | Viết API endpoint |
+| `testing_standard.md` | Co-location, mock pattern, ESM handling | Viết test |
+| `qa_standard.md` | Zero Trust, Active Reflection, verification workflow | Hoàn thành task |
+| `multi_tenancy.md` | orgId isolation, tenant context, RBAC scope | Mọi module có data per-org |
+| `event_sourcing.md` | EventStore, OCC, projection, snapshot | Credit, Reputation modules |
+| `rag_ai_integration.md` | Hybrid search, pgvector, Elasticsearch, Circuit Breaker | AI/Search features |
+| `memory_sop.md` | Session start protocol, memory categories, knowledge update | Đầu mỗi session |
+
+---
+
 ## 🔄 The Self-Annealing Lifecycle
 
 When executing a directive, if a script in Layer 3 fails:

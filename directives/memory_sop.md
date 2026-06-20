@@ -68,11 +68,17 @@ Khi bắt đầu conversation mới, **BẮT BUỘC theo thứ tự**:
 
 ## 🔄 Cập Nhật Knowledge Index
 
-Khi directives thay đổi đáng kể hoặc nhiều memory entries mới được thêm:
+Khi directives thay đổi đáng kể hoặc nhiều memory entries mới được thêm, chạy:
 
 ```bash
+# Nếu agent-sandbox đang chạy:
 docker exec agent-sandbox python .ai/knowledge_builder.py
+
+# Nếu sandbox không chạy (thường gặp trong local dev):
+python .ai/knowledge_builder.py
 ```
+
+> **Khi nào cần chạy**: Sau khi sửa bất kỳ file nào trong `directives/`, append nhiều entries vào memory, hoặc thêm module mới vào `apps/`.
 
 Lệnh này sẽ re-scan toàn bộ `directives/`, `docs/`, `.ai/memory/`, `apps/`, `packages/` và tạo lại `KNOWLEDGE_INDEX.md`.
 

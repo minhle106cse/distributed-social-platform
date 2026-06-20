@@ -26,6 +26,9 @@ Nếu `verification_script` pass, bạn mới được báo cáo Done.
 1. Code feature / Fix bug.
 2. Viết / Cập nhật Test case.
 3. Chạy `npm run test` hoặc lệnh test tương ứng. Đọc log cẩn thận.
-4. Nếu FAIL -> Quay lại bước 1.
-5. Nếu PASS -> Nếu cấu trúc phức tạp, chạy verification script trên môi trường Harness.
-6. Khi hoàn toàn yên tâm, update `task.md` thành `[x]` và tạo `walkthrough.md`.
+4. Nếu FAIL → Quay lại bước 1.
+5. Nếu PASS → Nếu cấu trúc phức tạp, chạy verification script trên môi trường Harness.
+6. Khi hoàn toàn yên tâm:
+   - Append lessons vào `.ai/memory/<category>.jsonl` (bắt buộc nếu có gotcha mới)
+   - Cập nhật directive liên quan nếu có pattern mới được thiết lập
+   - Báo cáo Done với user

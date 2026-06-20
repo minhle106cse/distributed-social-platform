@@ -21,7 +21,10 @@
   - `notification-service` — unknown
   - `worker-service` — unknown
 - **Shared Packages** (`packages/`):
-  - `shared-kernel`
+  - `shared-kernel` — CQRS bus, errors, HTTP layer:
+    - `src/http/response.ts` — contracts: `BaseMeta`, `ErrorResponse`, `SuccessResponse`, `ApiResponse`
+    - `src/http/response.utils.ts` — factories: `buildErrorBody`, `buildSuccessBody`, `httpStatusToCode`
+    - `src/errors/response-format.error.ts` — `ResponseFormatError` (InfraError khi handler trả sai type)
 - **Database**: PostgreSQL + pgvector via Prisma v7, port `15432` (Event Store + Read Model + Embeddings)
 - **Cache**: Redis (cache, rate-limit, pub/sub)
 - **Message Broker**: Kafka (Event Backbone, KRaft mode)
@@ -61,7 +64,13 @@ Key sections:- SOP: Unit Testing & Coverage Standard  - 🎯 Goal  - 📜 Kiến
 ### 📄 `directives/tool_builder_sop.md` — Auto-Tool Generation SOP
 Key sections:- Auto-Tool Generation SOP  - 🛡️ Kiến trúc An Toàn Bắt Buộc (The Circuit Breaker Pattern)  - Vòng lặp tự xây dựng công cụ (Tool Builder Loop)    - 1. Phân tích Yêu cầu (Tool Spec)    - 2. Viết Code theo Chuẩn (Execution Standard)    - 3. Tự viết Unit Test (Sandbox Evaluation)    - 4. Đăng ký Tool
 ### 📄 `directives/zod_validation.md` — SOP: Validation & Swagger Standards
-Key sections:- SOP: Validation & Swagger Standards  - 🎯 Goal  - 📜 Luật Lệ (Rules)    - 1. Luôn sử dụng Zod làm Single Source of Truth    - 2. Định dạng file Schema    - 3. Cách cắm Schema vào Routes / Controller  - 🛠️ Execution & Tự động hoá
+Key sections:- SOP: Validation & Swagger Standards  - 🎯 Goal  - 📜 Luật Lệ (Rules)    - 1. Luôn sử dụng Zod làm Single Source of Truth    - 2. Định dạng file Schema    - 3. Cách cắm Schema vào Routes / Controller (Fastify: object spread; NestJS: createZodDto + ZodValidationPipe global)  - 🛠️ Execution & Tự động hoá
+### 📄 `directives/multi_tenancy.md` — SOP: Multi-Tenancy Standard
+Key sections:- Tenant = Organization. orgId BẮT BUỘC trong JWT payload - Tenant Context qua AsyncLocalStorage (runWithTenant / getTenantId) - Repository phải luôn filter `where: { orgId: getTenantId() }` - DB Schema: orgId column + compound index (orgId, ...) trên mọi domain model - Org-Switch Flow: issue new token với targetOrgId mới - Forbidden: query không có orgId filter, truyền orgId qua parameter thay vì AsyncLocalStorage
+### 📄 `directives/event_sourcing.md` — SOP: Event Sourcing Standard
+Key sections:- Áp dụng cho: CreditLedger, ReputationSummary. KHÔNG dùng cho CRUD thông thường - EventStore schema: DomainEvent với @@unique([aggregateId, version]) làm OCC lock - Read Model (Projection): CreditBalanceSummary updated synchronously trong cùng transaction - Aggregate pattern: rehydrate từ events, raise uncommitted events - Repository: load (rehydrate) + save (append events + update projection) - OCC: catch Prisma P2002 → throw OptimisticLockError - Snapshot pattern khi event stream > 500 events
+### 📄 `directives/rag_ai_integration.md` — RAG & AI Integration Standard
+Key sections:- Architecture: Hybrid Retrieval (pgvector cosine + Elasticsearch BM25) → RRF merge → Claude summarization - Circuit Breaker BẮT BUỘC cho mọi Claude API call (threshold=5 failures, 60s timeout) - pgvector schema: KnowledgeChunk với Unsupported("vector(1536)") + HNSW index qua raw SQL - Elasticsearch: per-tenant index (`knowledge-{orgId}`) cho isolation tự nhiên - RRF formula: score = Σ 1/(k+rank), k=60 - Chunking: 512 tokens chunk size, 64 token overlap - Models: Haiku cho embedding, Sonnet cho RAG summarization
 
 ## 3. Critical Rules Quick-Reference
 
@@ -118,6 +127,26 @@ src/
 - Dual-layer: HTTP hooks + CQRS LoggingMiddleware
 - Use `createLogger(serviceName)` from shared-kernel
 - NEVER `console.log`
+- **HTTP response shape**: ALWAYS use shared-kernel utilities — `buildErrorBody()`, `buildSuccessBody()`, `httpStatusToCode()`. Never inline `{ success, message, error, meta }` in hooks/filters/interceptors.
+
+### Multi-Tenancy (`multi_tenancy.md`)
+- `orgId` BẮT BUỘC trong JWT payload — auth guard reject nếu missing
+- Repositories dùng `getTenantId()` từ AsyncLocalStorage — KHÔNG truyền orgId qua parameter
+- Mọi DB query phải có `where: { orgId: getTenantId(), ... }` — không có exception trừ system admin
+- DB schema: orgId column + `@@index([orgId, ...])` trên mọi domain model
+- Org-switch = issue new token với targetOrgId mới
+
+### Event Sourcing (`event_sourcing.md`)
+- Chỉ dùng cho Credit và Reputation — không dùng cho CRUD modules
+- OCC: `@@unique([aggregateId, version])` → catch P2002 → `OptimisticLockError`
+- Projection (read model) update synchronously trong cùng transaction với event append
+- Event payload immutable — không modify stored events
+
+### RAG / AI (`rag_ai_integration.md`)
+- Circuit Breaker bắt buộc — không call Claude API trực tiếp
+- Hybrid search: pgvector (semantic) + Elasticsearch (keyword) → RRF merge
+- Per-tenant Elasticsearch index: `knowledge-{orgId}`
+- Chunk trước khi embed — không embed toàn bộ document
 
 ### Security
 - CORS origins from env vars, NEVER `['*']`
