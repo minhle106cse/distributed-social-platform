@@ -1,11 +1,22 @@
 {
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/doc-select.cjs",
+            "shell": "bash"
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"systemMessage\": \"Did you update .ai/KNOWLEDGE_INDEX.md and relevant directives/*.md?\"}'",
+            "command": "echo '{\"systemMessage\": \"Did you update .ai/KNOWLEDGE_INDEX.md and relevant directives/*.md? Did you append lessons to .ai/memory/*.jsonl?\"}'",
             "shell": "bash"
           }
         ]
