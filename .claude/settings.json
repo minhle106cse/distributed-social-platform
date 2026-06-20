@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"systemMessage\": \"Did you update .ai/KNOWLEDGE_INDEX.md and relevant directives/*.md? Did you append lessons to .ai/memory/*.jsonl?\"}'",
+            "command": "node scripts/sync.cjs",
             "shell": "bash"
           }
         ]

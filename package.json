@@ -23,7 +23,10 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "test:cov": "turbo run test:cov",
-    "format": "prettier --write \"**/*.{ts,tsx,md}\""
+    "format": "prettier --write \"**/*.{ts,tsx,md}\"",
+    "sync": "node scripts/sync.cjs",
+    "sync:all": "node scripts/sync.cjs --all",
+    "sync:check": "node scripts/sync.cjs --check"
   },
   "keywords": [],
   "author": "minhle106cse",
