@@ -35,6 +35,7 @@ AI_DIR = WORKSPACE_ROOT / ".ai"
 MEMORY_DIR = AI_DIR / "memory"
 OUTPUT_FILE = AI_DIR / "KNOWLEDGE_INDEX.md"
 STATUS_FILE = AI_DIR / "PROJECT_STATUS.md"
+QUICKREF_FILE = AI_DIR / "QUICK_REFERENCE.md"
 OLD_MEMORY_FILE = WORKSPACE_ROOT / ".tmp" / "agent_memory.json"
 
 DIRECTIVE_DIR = WORKSPACE_ROOT / "directives"
@@ -351,66 +352,17 @@ def build_index() -> str:
 > When in doubt, the directive file is the authority.
 {"".join(rules_lines)}""")
 
-    # ── 3. Critical Rules Quick-Reference ──
-    sections.append("""## 4. Critical Rules Quick-Reference
+    # ── 4. Critical Rules Quick-Reference (injected from .ai/QUICK_REFERENCE.md) ──
+    # Previously hardcoded here as a frozen string — duplicated directive content and
+    # silently went stale when directives changed. Now read from a curated markdown
+    # file (same pattern as PROJECT_STATUS.md) so it's editable + diffable.
+    quickref = read_text(QUICKREF_FILE).strip()
+    quickref_block = quickref if quickref else (
+        "_No `.ai/QUICK_REFERENCE.md` found — create it and re-run this builder._"
+    )
+    sections.append(f"""## 4. Critical Rules Quick-Reference
 
-These are the most frequently needed rules, extracted from directives:
-
-### Folder Structure (`folder_structure_sop.md`)
-```
-src/
-├── @types/           # Augmented global types
-├── bootstrap/        # App wiring: server, plugins, swagger
-├── common/           # ABSTRACTIONS ONLY — NO infrastructure code
-│   ├── cqrs/         # Pure POJO command/query bus & middlewares
-│   ├── database/     # DB abstractions (ITransactionManager, AsyncLocalStorage context)
-│   └── errors/       # Domain/Application error base classes
-├── config/           # Env loading & validation (Zod)
-├── container/        # Manual DI wiring (Fastify only, NestJS uses Modules)
-├── infrastructure/   # Concrete implementations (Prisma, Fastify hooks, Pino logger)
-├── modules/          # Feature modules by domain
-│   └── <domain>/
-│       ├── domain/           # Entities, Value Objects, Repo Interfaces (PURE TS)
-│       ├── application/      # Command/Query Handlers (orchestration via interfaces)
-│       ├── infrastructure/   # Concrete repos (PrismaXxxRepository), mappers
-│       └── presentation/     # Routes/Controllers, Zod schemas
-├── app.ts            # Root app factory (createApp)
-├── main.ts           # Local entrypoint (listen)
-└── main.lambda.ts    # AWS Lambda entrypoint
-```
-
-### CQRS Pipeline (`cqrs_pattern.md`)
-- Pipeline order: `LoggingMiddleware → RetryMiddleware → TransactionMiddleware → Handler`
-- Retry wraps Transaction → each retry gets a fresh DB transaction
-- Commands opt-in via `options: { transactional: true, retryable: true }`
-- TransactionMiddleware uses `ITransactionManager` (abstract) + `AsyncLocalStorage`
-- Repositories use `getTx() ?? this.prisma` — zero signature changes
-
-### Database (`database_standard.md`)
-- Primary keys: UUID (`@default(uuid())`), NEVER `autoincrement()`
-- Naming: camelCase in code, `@map("snake_case")` in DB
-- Soft delete: `deletedAt DateTime?` for important models
-- Prisma v7: NO `url` in `schema.prisma`, use `prisma.config.ts`
-- Port: `15432` (not default 5432)
-
-### Testing (`testing_standard.md`)
-- Co-location: `*.spec.ts` next to source file
-- Mock pattern: `jest.Mocked<Interface>` with `as unknown as` cast
-- ESM libraries: `jest.mock('uuid', () => ({ v7: jest.fn(() => 'mock-uuid') }))`
-- Path alias: `@/` mapped via `moduleNameMapper`
-
-### Validation (`zod_validation.md`)
-- Zod is the ONLY validation library (no class-validator, no typebox)
-- Schema location: `modules/<module>/presentation/schemas/<action>.schema.ts`
-
-### Logging (`logging_standard.md`)
-- Dual-layer: HTTP hooks + CQRS LoggingMiddleware
-- Use `createLogger(serviceName)` from shared-kernel
-- NEVER `console.log`
-
-### Security
-- CORS origins from env vars, NEVER `['*']`
-- Mandatory: `@fastify/helmet`, `@fastify/compress`, `@fastify/rate-limit`""")
+{quickref_block}""")
 
     # ── 4. Known Gotchas & Lessons ──
     all_memory = []

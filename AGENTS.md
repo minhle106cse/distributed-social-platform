@@ -1,6 +1,6 @@
 # Advanced Agent Instructions (Level 4/5)
 
-> **AGENTS.md is the canonical agent instruction file.** `CLAUDE.md` and `GEMINI.md` are thin pointers to this file so the same instructions load in any AI environment. Edit instructions here.
+> **AGENTS.md is the canonical agent instruction file.** `CLAUDE.md` is a thin pointer to this file so the same instructions load in any AI environment. Edit instructions here.
 
 ## 📦 Project Context — Cortex (AI-Powered Team Knowledge Hub)
 
