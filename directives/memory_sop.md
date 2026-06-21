@@ -57,11 +57,19 @@ Khi bắt đầu conversation mới, **BẮT BUỘC theo thứ tự**:
 - Gotcha về thư viện hoặc framework → `gotchas.jsonl`
 - Pattern/Anti-pattern kiến trúc → `architecture.jsonl`
 - Convention mới được thiết lập → `conventions.jsonl`
+- **Quyết định thiết kế quan trọng** (chọn approach A thay vì B) → `architecture.jsonl`
 - Bất kỳ vấn đề nào mất hơn 10 phút để giải quyết
 
-**Cách log**: Append một JSON line vào file `.ai/memory/<category>.jsonl`:
+**Hai format entry:**
+
+Format cho lỗi/bug (reactive):
 ```json
 {"id": 26, "timestamp": "2026-06-13T20:00:00+07:00", "error": "Mô tả vấn đề", "solution": "Cách giải quyết", "context": "File/module liên quan"}
+```
+
+Format cho quyết định thiết kế (proactive — khi chọn một approach và bỏ qua approach khác):
+```json
+{"id": 27, "timestamp": "2026-06-13T20:00:00+07:00", "decision": "Mô tả quyết định", "rationale": "Lý do chọn", "alternatives": "Các lựa chọn đã bỏ qua và lý do loại", "context": "File/module liên quan"}
 ```
 
 ---
@@ -88,9 +96,10 @@ Lệnh này sẽ re-scan toàn bộ `directives/`, `docs/`, `.ai/memory/`, `apps
 
 **QUY TẮC SỐNG CÒN (KHÔNG ĐỢI USER NHẮC NHỞ):**
 Nếu trong quá trình refactor hoặc code, một design pattern mới được chốt, hoặc một ranh giới kiến trúc (architectural boundary) được làm rõ, Agent **BẮT BUỘC** phải tự động:
-1. Ghi bài học đó vào `.ai/memory/<category>.jsonl`
+1. Ghi bài học đó vào `.ai/memory/<category>.jsonl` — dùng format `decision` nếu là quyết định thiết kế chủ động
 2. Mở file `.md` liên quan trong thư mục `directives/` (hoặc tạo mới nếu cần) và cập nhật quy tắc đó ngay lập tức
-3. Việc này phải được diễn ra **TRƯỚC KHI** báo cáo task hoàn thành
+3. **Nếu thay đổi giải quyết hoặc mâu thuẫn với bất kỳ nội dung nào trong `docs/*.md`** (review findings, API contracts, schema docs) → cập nhật file `docs/` đó luôn
+4. Việc này phải được diễn ra **TRƯỚC KHI** báo cáo task hoàn thành
 
 ---
 

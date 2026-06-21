@@ -29,8 +29,8 @@
 
 | # | Mức | Vấn đề | Khuyến nghị |
 |---|-----|--------|-------------|
-| 1 | 🟠 Design (multi-tenant) | **Access token thiếu `orgId`.** Payload hiện = `{sub, email, roles, permissions}`. Cortex cần tenant scope. | Thêm `orgId` + org-scoped `role` vào access token; re-issue khi đổi org. (Xem `docs/10` §1.2, §3) |
-| 2 | 🟠 Design (distributed) | JWT ký **HS256 (symmetric)**. Nếu `core-api` tự verify token, phải chia sẻ secret. | Cân nhắc **RS256/EdDSA (asymmetric)**: auth-service ký bằng private key, các service verify bằng public key — không chia sẻ secret. |
+| 1 | ✅ **RESOLVED** | ~~Access token thiếu `orgId`.~~ | **Đã giải quyết bằng `x-org-id` header approach** (core-api `OrgGuard`): client gửi `x-org-id` header, `OrgGuard` query DB lấy `membership.role` → inject `OrgContext`. auth-service không cần biết về org. JWT chỉ mang system-level `{sub, email, roles, permissions}`. Xem `apps/core-api/src/common/tenant/org.guard.ts`. |
+| 2 | ✅ **RESOLVED** | ~~JWT ký HS256 (symmetric).~~ | **Đã chuyển sang RS256** (asymmetric) trong `imp-token.service.ts`. Access token ký bằng private key, core-api verify bằng public key qua `JWT_PUBLIC_KEY` env var — không chia sẻ secret. Xem `apps/auth-service/src/modules/auth/infrastructure/services/imp-token.service.ts`. |
 | 3 | 🟡 Security | **Rate-limit chỉ global 100/min.** Docs yêu cầu login/register chặt hơn (5/5 phút). | Thêm rate-limit riêng cho route `auth/login`, `auth/register` (per-route config). |
 | 4 | 🟡 Consistency | **TTL refresh = 30d** (`imp-token.service.ts`) nhưng `docs/10` ghi 7 ngày. | Thống nhất 1 con số; nếu giữ 30d phải đảm bảo rotation + family-revoke chặt. |
 | 5 | 🟢 Verify | Cần xác nhận **refresh rotation + family-revoke on reuse** đã implement trong `refresh.handler.ts`. | Đọc/đảm bảo có test cho reuse-detection (token cũ dùng lại → revoke cả family). |

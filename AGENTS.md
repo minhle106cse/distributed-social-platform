@@ -114,17 +114,29 @@ Check `execution/` per your directive. If you need a scraper or a log parser and
 
 After completing any non-trivial task, you **MUST**:
 
-1. **Log lessons learned** — Append a JSON line to the appropriate `.ai/memory/*.jsonl` file:
+1. **Log lessons learned** — Append a JSON line to the appropriate `.ai/memory/*.jsonl` file.
+
+   **Two entry formats:**
+
+   For errors/bugs (reactive):
    ```json
-   {"id": <next_id>, "timestamp": "<ISO8601>", "error": "...", "solution": "...", "context": "..."}
+   {"id": <next_id>, "timestamp": "<ISO8601>", "error": "Mô tả vấn đề", "solution": "Cách giải quyết", "context": "File/module liên quan"}
    ```
+   For design decisions (proactive — dùng khi chọn một approach thay vì approach khác):
+   ```json
+   {"id": <next_id>, "timestamp": "<ISO8601>", "decision": "Mô tả quyết định", "rationale": "Lý do chọn", "alternatives": "Các lựa chọn đã bỏ qua", "context": "File/module liên quan"}
+   ```
+
    Categories:
    - `errors.jsonl` — Build/test/runtime errors and their solutions
-   - `architecture.jsonl` — Architecture decisions, pattern implementations
+   - `architecture.jsonl` — Architecture decisions (cả error-driven lẫn proactive design choices)
    - `conventions.jsonl` — New coding conventions established
    - `gotchas.jsonl` — Framework/library gotchas discovered
 
-2. **Update directives** — If a new convention or pattern was established, update the relevant `directives/*.md` file immediately. Do NOT postpone this.
+2. **Update docs & directives** — If a new convention, pattern, or design decision was established:
+   - Update the relevant `directives/*.md` file immediately.
+   - If the change **resolves or contradicts** anything in `docs/*.md` (e.g. a review finding, API contract, schema), update that `docs/` file too. Do NOT leave stale "open findings" in docs when the code has already addressed them.
+   - Do NOT postpone either step.
 
 3. **Surgically edit `.ai/KNOWLEDGE_INDEX.md`** — Directly update the affected sections (architecture, conventions, service list, folder structure, etc.) for any area that changed. **Do NOT wait for full regeneration.** The index is plain Markdown — edit it inline as part of every non-trivial task, the same way you update source code.
 

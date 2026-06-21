@@ -34,6 +34,7 @@ WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 AI_DIR = WORKSPACE_ROOT / ".ai"
 MEMORY_DIR = AI_DIR / "memory"
 OUTPUT_FILE = AI_DIR / "KNOWLEDGE_INDEX.md"
+STATUS_FILE = AI_DIR / "PROJECT_STATUS.md"
 OLD_MEMORY_FILE = WORKSPACE_ROOT / ".tmp" / "agent_memory.json"
 
 DIRECTIVE_DIR = WORKSPACE_ROOT / "directives"
@@ -172,6 +173,30 @@ def detect_packages(packages_dir: Path) -> list[str]:
     return packages
 
 
+def detect_modules(apps_dir: Path) -> dict[str, list[str]]:
+    """Map each service → feature module folders under src/modules/.
+
+    Pure filesystem fact (which module folders exist), regenerated on every run,
+    so it can never go stale. Used as a CROSS-CHECK against the curated status in
+    PROJECT_STATUS.md: a mismatch means the curated file is out of date.
+    """
+    result: dict[str, list[str]] = {}
+    if not apps_dir.exists():
+        return result
+    for child in sorted(apps_dir.iterdir()):
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        modules_dir = child / "src" / "modules"
+        mods: list[str] = []
+        if modules_dir.exists():
+            mods = sorted(
+                m.name for m in modules_dir.iterdir()
+                if m.is_dir() and not m.name.startswith(".")
+            )
+        result[child.name] = mods
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Migration: .tmp/agent_memory.json → .ai/memory/*.jsonl
 # ---------------------------------------------------------------------------
@@ -263,7 +288,7 @@ def build_index() -> str:
 - **Product**: B2B internal Knowledge Hub — AI Discovery (RAG + Hybrid Search), virtual credit economy, multi-tenancy. (Legacy "TeamFin" finance concept is RETIRED — do not reintroduce expense/settlement framing.)
 - **Type**: Monorepo (Turborepo) + TypeScript
 - **Architecture**: Hexagonal Architecture + CQRS + Event Sourcing + RAG/Hybrid Search + Multi-tenancy
-- **Phase**: Phase 0 (Foundation) — Phase 1 (Multi-tenant Knowledge Monolith) next
+- **Phase**: Phase 0 (Foundation) ✅ — Phase 1 (Multi-tenant Knowledge Monolith) IN PROGRESS (see §2 for live status)
 - **Services** (`apps/`):
 {chr(10).join(service_lines)}
 - **Shared Packages** (`packages/`):
@@ -275,7 +300,33 @@ def build_index() -> str:
 - **AI**: Claude (embedding + RAG summarization) via Circuit Breaker
 - **Frontend**: Vite + React 18 + Zustand + TanStack Query + TailwindCSS v3""")
 
-    # ── 2. Architecture Rules ──
+    # ── 2. Implementation Status ──
+    modules_map = detect_modules(APPS_DIR)
+    detected_lines = []
+    for svc, mods in modules_map.items():
+        mods_str = ", ".join(f"`{m}`" for m in mods) if mods else "_(no src/modules)_"
+        detected_lines.append(f"- **{svc}**: {mods_str}")
+
+    curated = read_text(STATUS_FILE).strip()
+    curated_block = curated if curated else (
+        "_No curated status yet — create `.ai/PROJECT_STATUS.md` and re-run this builder._"
+    )
+
+    sections.append(f"""## 2. Implementation Status
+
+> **Where the project actually is.** Check this BEFORE reading source to gauge progress.
+>
+> - **Curated** (phase %, current focus, next task) lives in `.ai/PROJECT_STATUS.md` and is injected verbatim below. Update it as part of the After-Task Protocol whenever a module/phase changes.
+> - **Auto-detected** module map is scanned fresh from `apps/*/src/modules/` on every regenerate — it can NEVER go stale.
+> - ⚠️ **Cross-check:** if the curated status claims a module is done but it's missing from the auto-scan (or vice-versa), the curated file is STALE — reconcile it before trusting the numbers.
+
+{curated_block}
+
+### 🔍 Auto-detected modules (filesystem ground truth)
+
+{chr(10).join(detected_lines) if detected_lines else "_No services found._"}""")
+
+    # ── 3. Architecture Rules ──
     directive_entries = []
     if DIRECTIVE_DIR.exists():
         for md_file in sorted(DIRECTIVE_DIR.glob("*.md")):
@@ -294,14 +345,14 @@ def build_index() -> str:
             for h in headings[:15]:  # Cap at 15 headings
                 rules_lines.append(h)
 
-    sections.append(f"""## 2. Architecture Rules & SOPs (from `directives/`)
+    sections.append(f"""## 3. Architecture Rules & SOPs (from `directives/`)
 
 > These are the **immutable directives** that govern all code in this project.
 > When in doubt, the directive file is the authority.
 {"".join(rules_lines)}""")
 
     # ── 3. Critical Rules Quick-Reference ──
-    sections.append("""## 3. Critical Rules Quick-Reference
+    sections.append("""## 4. Critical Rules Quick-Reference
 
 These are the most frequently needed rules, extracted from directives:
 
@@ -387,7 +438,7 @@ src/
             ctx_tag = f" `[{context}]`" if context else ""
             gotcha_lines.append(f"- **{error}**{ctx_tag}\n  → {solution}")
 
-    sections.append(f"""## 4. Known Gotchas & Lessons Learned (from memory)
+    sections.append(f"""## 5. Known Gotchas & Lessons Learned (from memory)
 
 > These are real problems encountered during development.
 > Search this section BEFORE debugging to avoid repeating mistakes.
@@ -404,14 +455,14 @@ src/
 
     doc_lines = [f"- `docs/{fname}` — {title}" for fname, title in doc_entries]
 
-    sections.append(f"""## 5. Business Domain Documentation (from `docs/`)
+    sections.append(f"""## 6. Business Domain Documentation (from `docs/`)
 
 > Read these files when you need business context for a feature.
 
 {chr(10).join(doc_lines) if doc_lines else "_No docs found._"}""")
 
     # ── 6. Agent Operating Protocol ──
-    sections.append("""## 6. Agent Operating Protocol
+    sections.append("""## 7. Agent Operating Protocol
 
 ### Session Start (MANDATORY)
 1. ✅ Read this file (`KNOWLEDGE_INDEX.md`) — you are doing this now
@@ -421,7 +472,9 @@ src/
 ### After Completing Work
 1. Log new lessons: append to `.ai/memory/<category>.jsonl`
 2. If a new convention/pattern was established: update the relevant `directives/*.md`
-3. Re-run `knowledge_builder.py` if directives changed significantly
+3. If a change resolves/contradicts a `docs/*.md` file (review finding, API contract, schema): update that doc too
+4. If a module/phase changed state: update `.ai/PROJECT_STATUS.md` (drives §2)
+5. Re-run `knowledge_builder.py` (via `docker exec agent-sandbox python .ai/knowledge_builder.py`) so §2 + memory refresh
 
 ### Memory Categories
 | File | Purpose |
