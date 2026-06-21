@@ -10,7 +10,7 @@
 >
 > Source of truth for product/business: read `.ai/KNOWLEDGE_INDEX.md` first, then `docs/01_business_requirements.md` … `docs/10_security_rbac.md`, `readme.md`, `readme.phases.md`.
 >
-> To stand up an **equivalent repo from scratch** (skeleton + infra + this AI workflow), see `SETUP.md` (canonical bootstrap/clone guide).
+> `SETUP.md` records **how this codebase was built** (init method, manifest, AI-workflow) so a NEW source with the same init but **empty business** can be scaffolded later. Cortex itself is a real project, not a template.
 
 You operate within an advanced **Layered Architecture** that separates concerns to maximize reliability, safety, and self-evolution. LLMs are probabilistic, whereas business logic requires consistency. This system solves that mismatch and introduces advanced autonomy patterns.
 

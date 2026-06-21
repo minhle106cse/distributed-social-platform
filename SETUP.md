@@ -1,13 +1,18 @@
-# 🏗️ SETUP — Bootstrap & Clone Guide
+# 🏗️ SETUP — Cách dựng source này (Build & Init Method)
 
-> **Một nơi duy nhất** để dựng lại một repo **structure-init tương đương** repo này (Cortex-class:
-> Turborepo monorepo + Hexagonal/CQRS services + Event-driven infra + **AI Agent Workflow**).
+> **Cortex là một project THẬT** (B2B AI knowledge hub) — **KHÔNG phải template**. Tài liệu này lưu lại
+> **phương pháp + thứ tự + quyết định** đã dùng để dựng codebase này (Turborepo monorepo + Hexagonal/CQRS
+> services + Event-driven infra + **AI Agent Workflow**).
 >
-> Tài liệu này là **hạt giống tái dựng**. Nội dung "lịch sử nhưng đúng" (migration SOPs, init scripts)
-> được gom về đây thay vì rải rác trong `directives/`. Bản gốc các script một-lần nằm ở `docs/archive/`.
+> 🎯 **Mục đích:** để **lần sau scaffold một source MỚI có init y hệt nhưng business RỖNG** —
+> skeleton + infra + AI-workflow, không kèm domain Cortex.
 >
-> ⚠️ **Trạng thái guarantee:** doc này mô tả công thức đầy đủ + manifest. Một bản clone **100% kiểm chứng**
-> cần thêm **init script đã chạy thử** (xem §8) — chưa làm, sẽ làm khi bạn yêu cầu clone.
+> Cách đọc manifest §2: hàng **`skeleton`** = phần tái dùng (copy sang repo mới); hàng **`content`** =
+> đặc thù Cortex (để trống / viết lại khi scaffold). Nội dung "lịch sử nhưng đúng" (migration SOPs, init
+> scripts) gom về đây thay vì rải rác trong `directives/`; script gốc một-lần ở `docs/archive/`.
+>
+> ⚠️ Doc này là **công thức + manifest**. Để scaffold skeleton-rỗng **kiểm chứng 100%** cần thêm
+> **init script đã chạy thử** (xem §8) — sẽ làm khi bạn yêu cầu dựng source mới.
 
 ---
 
@@ -134,13 +139,14 @@ giữ submodule (tách service repo) **hoặc** inline trong monorepo — tuỳ 
 
 ---
 
-## 8. "Clone 100%" — trạng thái thật & việc còn lại
+## 8. Scaffold source mới (business rỗng) — trạng thái & việc còn lại
 
-Doc này đủ để **dựng tay** một repo tương đương. Để **guarantee 100% tự động + kiểm chứng**, cần:
+Mục tiêu: từ doc này, dựng một repo **MỚI** có init y hệt (skeleton + infra + AI-workflow) nhưng
+**KHÔNG** có business Cortex. Doc đủ để **dựng tay**. Để **tự động hoá + kiểm chứng 100%**, cần:
 
-1. **`scripts/init-project.sh`** (chưa có) — scaffold skeleton + copy AI-workflow + sinh index, **đã chạy thử** trên thư mục trống.
-2. **Manifest assert** — script kiểm mọi file `skeleton` tồn tại sau init (giống §2 auto-detect: máy xác nhận, không tin prose).
+1. **`scripts/init-project.sh`** (chưa có) — copy các hàng `skeleton`, để trống các hàng `content`, sinh index, **đã chạy thử** trên thư mục rỗng.
+2. **Manifest assert** — kiểm mọi file `skeleton` tồn tại sau init (máy xác nhận, không tin prose — giống §2 auto-detect).
 3. Quyết định submodule vs inline (§7).
 
-> Khi bạn nhờ "clone ra repo mới", tôi sẽ viết + **chạy thử** init script này rồi mới khẳng định 100% —
+> Khi bạn nhờ dựng source mới, tôi viết + **chạy thử** init script rồi mới khẳng định 100% —
 > không tuyên bố 100% từ một doc chưa validate (đúng nguyên tắc chống parroting của dự án).
