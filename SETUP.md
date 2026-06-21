@@ -117,6 +117,10 @@ SOP markdown. Agent đọc trước khi code. Builder trích heading vào `KNOWL
   - **Stop** `scripts/sync.cjs` — sau mỗi lượt agent: detect git change → chạy đúng pipeline cần:
     `shared-kernel/src` → turbo build · `prisma/` → db:generate · `directives|docs|.ai/memory|.ai/PROJECT_STATUS|.ai/QUICK_REFERENCE` → regenerate index.
   - Không đổi gì relevant → trả về <100ms.
+  - **Warn-only checks** (machine-detected, không block): (A) sửa code `apps|packages/*/src/*.ts`
+    nhưng không có entry `.ai/memory` / `PROJECT_STATUS` mới hơn → nhắc After-Task (so sánh mtime vì
+    memory bị gitignore); (B) đang chạy trong **linked worktree** → cảnh báo sync có thể không khớp
+    nơi làm việc thật. Muốn enforce cứng → đổi check (A) sang `exit 2`.
 
 ### 5d. `AGENTS.md` (+ `CLAUDE.md` pointer)
 Instruction canonical: Session-Start Protocol, Rules #0–#3, After-Task Protocol (log memory + sync docs + update PROJECT_STATUS).
