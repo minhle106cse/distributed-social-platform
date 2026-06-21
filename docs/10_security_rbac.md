@@ -69,8 +69,14 @@ Platform (do bạn — nhà vận hành — sở hữu)
 ### 2.1. Tầng 1 — System RBAC (auth-service)
 
 - **Mô hình:** `Role` ──< `RolePermission` >── `Permission`; `User` ──< `UserRole`. (Đã có sẵn trong auth-service.)
-- **Permission ví dụ:** `platform:view_reports`, `platform:manage_reports`, `platform:monitor`, `platform:manage_users`, `platform:create_org` (nếu muốn kiểm soát ai được tạo org).
-- **Enforce:** auth-service routes dùng `requirePermissions([...])`; core-api endpoint hệ thống/admin đọc `permissions` từ JWT.
+- **Permission catalog:** định nghĩa trong `src/common/rbac/system-permissions.ts` (`SystemPermission` const). Format `resource:action` lowercase — đồng nhất với Org RBAC.
+- **Permission ví dụ:** `report:read`, `report:resolve`, `report:dismiss`, `system:monitor`, `system:resource_manage`, `user:ban`, `user:unban`, `org:suspend`, `billing:manage`, `rbac:*`.
+- **System Roles:** `SUPER_ADMIN` (implicit-all), `SUPPORT_AGENT`, `CONTENT_MODERATOR`, `SYSTEM_ENGINEER`, `BILLING_ADMIN`.
+- **Wildcard matching** (AWS IAM style) trong `requirePermissions([...])`:
+  - `'*'` → pass mọi thứ
+  - `'rbac:*'` → pass mọi action trên resource `rbac` (ví dụ: `rbac:read`, `rbac:create`)
+  - `'rbac:read'` → exact match
+- **Enforce:** auth-service routes dùng `fastify.requirePermissions(['rbac:*'])`; core-api endpoint admin đọc `permissions` từ JWT payload.
 - **Đặc tính:** ít thay đổi, gắn với vận hành platform, không biết gì về domain org.
 
 ### 2.2. Tầng 2 — Org RBAC (core-api) — **ĐỘNG, do OWNER quản lý**
@@ -141,15 +147,27 @@ Request + Cookie(accessToken) + Header(X-Org-Id: orgId)
   `@RequireOrgPermission(OrgPermission.ORG_MANAGE_MEMBERS)`.
 - Đổi "ai được làm gì" = đổi dữ liệu trong `org_role_permissions`, **không đụng code route**.
 
-### 2.4. API quản lý Org RBAC (do OWNER dùng)
+### 2.4. API quản lý Org RBAC & Invite
+
+**Org RBAC (do OWNER dùng):**
 
 | Method | Endpoint | Permission cần | Mô tả |
 |---|---|---|---|
-| `GET`  | `/api/v1/orgs/:id/role-permissions` | `org:manage_roles` | Xem mapping hiện tại của cả 4 role |
-| `PUT`  | `/api/v1/orgs/:id/role-permissions/:role` | `org:manage_roles` | Thay thế toàn bộ tập permission của 1 role (trừ OWNER) |
+| `GET`   | `/api/v1/orgs/:id/role-permissions`        | `org:manage_roles`   | Xem mapping hiện tại của cả 4 role |
+| `PATCH` | `/api/v1/orgs/:id/role-permissions/:role`  | `org:manage_roles`   | Thay thế toàn bộ tập permission của 1 role (trừ OWNER) |
 
-- Mọi thay đổi → invalidate cache `org_perms:{orgId}`.
-- Ghi audit (ai đổi, đổi gì, khi nào).
+- Mọi thay đổi → invalidate cache `org_perms:{orgId}` (Phase 3).
+
+**Invite (do ADMIN+ dùng):**
+
+| Method | Endpoint | Permission cần | Mô tả |
+|---|---|---|---|
+| `POST` | `/api/v1/orgs/:id/invites`  | `org:manage_members` | Tạo invite link; body: `{ role, ttlHours }` (1–168h, default 72h) |
+| `POST` | `/api/v1/invites/accept`    | JWT only             | Redeem token; body: `{ token }` → tạo Membership |
+
+- Token là 32-byte hex (64 ký tự), globally unique, single-use.
+- Accept là transactional: tạo `Membership` + đánh dấu `OrgInvite.usedAt` trong cùng 1 DB transaction.
+- Guard đầy đủ: token không tồn tại → 404, hết hạn → 410, đã dùng → 409, đã là member → 409.
 
 ### 2.5. Privilege theo Reputation (gamification — bổ trợ, không thay RBAC)
 | Ngưỡng | Mở khóa |

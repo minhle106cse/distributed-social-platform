@@ -125,9 +125,27 @@ model OrgRolePermission {
   @@index([orgId, role])
   @@map("org_role_permissions")
 }
+
+model OrgInvite {
+  id        String    @id @default(uuid())
+  token     String    @unique           // 32-byte hex, single-use
+  orgId     String
+  role      OrgRole   @default(MEMBER)  // role được cấp khi accept
+  createdBy String                      // loose ref userId (auth_db)
+  expiresAt DateTime                    // TTL 1–168h, default 72h
+  usedAt    DateTime?                   // null = chưa dùng
+  usedBy    String?                     // userId đã accept
+
+  org Organization @relation(fields: [orgId], references: [id])
+
+  @@index([orgId])
+  @@map("org_invites")
+}
 ```
 
-> **Org RBAC động:** Catalog (danh sách permission tồn tại) ở **code**; Mapping (role↔permission per-org) ở **DB**. OWNER quản lý qua API `PUT /orgs/:id/role-permissions/:role`. Chi tiết: `docs/10` §2.2.
+> **Org RBAC động:** Catalog (danh sách permission tồn tại) ở **code**; Mapping (role↔permission per-org) ở **DB**. OWNER quản lý qua API `PATCH /orgs/:id/role-permissions/:role`. Chi tiết: `docs/10` §2.2.
+>
+> **Invite flow:** `POST /orgs/:id/invites` (ADMIN+) → token hex 64 ký tự → share link → `POST /invites/accept` → tạo `Membership` + đánh dấu invite used trong cùng 1 transaction.
 
 ---
 
