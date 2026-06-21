@@ -108,7 +108,26 @@ model Space {
 }
 
 enum SpaceVisibility { ORG PRIVATE }
+
+/// Org RBAC động: mapping role → permission, per-org, OWNER chỉnh runtime.
+/// Catalog permission do code định nghĩa (OrgPermission const); bảng này chỉ
+/// lưu "role nào có permission nào" trong từng org. Seed default khi tạo org.
+/// OWNER KHÔNG cần row ở đây — OrgGuard coi OWNER có toàn bộ quyền (implicit).
+model OrgRolePermission {
+  id         String   @id @default(uuid())
+  orgId      String
+  role       OrgRole
+  permission String   // khớp giá trị trong OrgPermission catalog (vd: "knowledge:write")
+  createdAt  DateTime @default(now())
+  org        Organization @relation(fields: [orgId], references: [id])
+
+  @@unique([orgId, role, permission])
+  @@index([orgId, role])
+  @@map("org_role_permissions")
+}
 ```
+
+> **Org RBAC động:** Catalog (danh sách permission tồn tại) ở **code**; Mapping (role↔permission per-org) ở **DB**. OWNER quản lý qua API `PUT /orgs/:id/role-permissions/:role`. Chi tiết: `docs/10` §2.2.
 
 ---
 
@@ -309,6 +328,18 @@ model ReputationSummary {
   updatedAt DateTime @updatedAt
   @@map("reputation_summary")
 }
+
+/// User Identity Projection: bản sao tối giản danh tính từ auth_db để hiển thị
+/// tác giả/avatar mà không gọi auth-service mỗi lần render. Đồng bộ qua event
+/// (UserRegistered / UserProfileUpdated) ở Phase 2. userId là loose ref — no FK.
+model UserProfile {
+  userId      String   @id
+  displayName String
+  avatarUrl   String?
+  email       String
+  updatedAt   DateTime @updatedAt
+  @@map("user_profiles")
+}
 ```
 
 > Read Models có thể **rebuild** bất cứ lúc nào bằng replay Event Store + projection từ Kafka.
@@ -349,7 +380,8 @@ model IdempotencyRecord {
 
 | Module | Bảng chính | Vai trò |
 |--------|-----------|---------|
-| `tenant` | organizations, memberships, spaces | Multi-tenancy |
+| `tenant` | organizations, memberships, spaces, org_role_permissions | Multi-tenancy + Org RBAC động |
+| `identity` (projection) | user_profiles | Read-model danh tính (sync từ auth_db qua event) |
 | `knowledge` | knowledge_items, revisions, tags | Write + OCC + versioning |
 | `discovery` | embeddings (pgvector) | Semantic search / RAG |
 | `engagement` | votes, bookmarks | Tương tác |
