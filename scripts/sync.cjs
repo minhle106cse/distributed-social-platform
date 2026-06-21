@@ -5,7 +5,7 @@
  * Detects what changed (via git status) and only runs what's needed:
  *   shared-kernel/src/** → turbo build (shared-kernel)
  *   apps/*\/prisma/**    → turbo db:generate
- *   directives/** | .ai/memory/** → knowledge_builder.py
+ *   directives/** | docs/** | .ai/memory/** | .ai/PROJECT_STATUS.md | .ai/QUICK_REFERENCE.md → knowledge_builder.py
  *
  * Usage:
  *   node scripts/sync.cjs          # smart mode (detects changes)
@@ -66,7 +66,13 @@ if (touched('prisma/')) {
   })
 }
 
-if (touched('directives/') || touched('.ai/memory/') || touched('docs/')) {
+if (
+  touched('directives/') ||
+  touched('.ai/memory/') ||
+  touched('docs/') ||
+  touched('.ai/PROJECT_STATUS') ||
+  touched('.ai/QUICK_REFERENCE')
+) {
   const pythonCmd = (() => {
     for (const py of ['python', 'python3', 'py']) {
       try {

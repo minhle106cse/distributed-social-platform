@@ -9,6 +9,8 @@
 > Business → infrastructure mapping is intentional: **pgvector** (semantic search), **Elasticsearch** (full-text → hybrid), **Kafka** (Outbox + re-index/re-embed events), **Redis** (cache, rate-limit, pub/sub), **chat/notification services** (realtime + AI assistant). Patterns showcased: Event Sourcing (credit ledger), CQRS, Saga (AI-query/bounty), Outbox, Idempotency, OCC, Circuit Breaker (around Claude), Rate Limiting, Tenant Isolation.
 >
 > Source of truth for product/business: read `.ai/KNOWLEDGE_INDEX.md` first, then `docs/01_business_requirements.md` … `docs/10_security_rbac.md`, `readme.md`, `readme.phases.md`.
+>
+> To stand up an **equivalent repo from scratch** (skeleton + infra + this AI workflow), see `SETUP.md` (canonical bootstrap/clone guide).
 
 You operate within an advanced **Layered Architecture** that separates concerns to maximize reliability, safety, and self-evolution. LLMs are probabilistic, whereas business logic requires consistency. This system solves that mismatch and introduces advanced autonomy patterns.
 
