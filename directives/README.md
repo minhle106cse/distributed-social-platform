@@ -90,6 +90,7 @@ What should the agent do when something goes wrong?
 | `multi_tenancy.md` | orgId isolation, tenant context, RBAC scope | Mọi module có data per-org |
 | `event_sourcing.md` | EventStore, OCC, projection, snapshot | Credit, Reputation modules |
 | `rag_ai_integration.md` | Hybrid search, pgvector, Elasticsearch, Circuit Breaker | AI/Search features |
+| `resilience_patterns.md` | Idempotency, Transactional Outbox, Retry, Throttle | Mutation endpoint, AI workload, external service |
 | `memory_sop.md` | Session start protocol, memory categories, knowledge update | Đầu mỗi session |
 
 ---

@@ -234,27 +234,48 @@ model Bookmark {
 
 ---
 
-### 🟧 2.6. Credit Context (Event Sourcing — Write Model)
+### 🟧 2.6. Credit + Reputation Context (Event Sourcing — Write Model)
+
+Mỗi aggregate có bảng riêng để index nhỏ hơn và query không lẫn nhau.
 
 ```prisma
-/// Append-only. KHÔNG BAO GIỜ update/delete row.
-model EventStore {
-  id            String   @id @default(uuid())
-  aggregateType String   // "CreditAccount", "Reputation"
-  aggregateId   String   // orgId hoặc userId
-  eventType     String   // "CreditSpent", "CreditAwarded"...
-  version       Int      // per-aggregate sequence
-  payload       Json
-  userId        String?
-  createdAt     DateTime @default(now())
+/// Append-only credit event ledger. KHÔNG BAO GIỜ update/delete row.
+/// eventType: CreditPurchased | CreditAwarded | CreditRefunded (+)
+///            CreditSpent | CreditStaked | CreditReserved (−)
+model CreditEvent {
+  id          String   @id @default(uuid())
+  aggregateId String   // CreditAccount id = orgId
+  eventType   String
+  version     Int      // per-aggregate sequence cho OCC
+  payload     Json
+  userId      String?
+  createdAt   DateTime @default(now())
 
-  @@unique([aggregateType, aggregateId, version])
-  @@index([aggregateType, aggregateId])
-  @@map("event_store")
+  @@unique([aggregateId, version])
+  @@index([aggregateId])
+  @@map("credit_events")
+}
+
+/// Append-only reputation event ledger. KHÔNG BAO GIỜ update/delete row.
+/// eventType: PointsEarned | PointsDeducted | BadgeAwarded | BadgeRevoked
+model ReputationEvent {
+  id          String   @id @default(uuid())
+  aggregateId String   // userId (reputation per user per org)
+  eventType   String
+  version     Int      // per-aggregate sequence cho OCC
+  payload     Json
+  orgId       String   // reputation scoped per org
+  createdAt   DateTime @default(now())
+
+  @@unique([aggregateId, version])
+  @@index([aggregateId])
+  @@index([orgId])
+  @@map("reputation_events")
 }
 ```
 
 **Credit event types:** `CreditPurchased`, `CreditAwarded`, `CreditRefunded` (+) · `CreditSpent`, `CreditStaked`, `CreditReserved` (−).
+**Reputation event types:** `PointsEarned`, `PointsDeducted`, `BadgeAwarded`, `BadgeRevoked`.
 
 ---
 
@@ -332,8 +353,8 @@ model IdempotencyRecord {
 | `knowledge` | knowledge_items, revisions, tags | Write + OCC + versioning |
 | `discovery` | embeddings (pgvector) | Semantic search / RAG |
 | `engagement` | votes, bookmarks | Tương tác |
-| `credit` | event_store, credit_balance_summary | Event Sourcing ledger |
-| `reputation` | reputation_summary | Gamification (Read Model) |
+| `credit` | credit_events, credit_balance_summary | Event Sourcing ledger |
+| `reputation` | reputation_events, reputation_summary | Event Sourcing + Read Model |
 | `feed` | feed_timeline | CQRS Read Model |
 | (infra) | outbox_events, idempotency_records | Outbox + Idempotency |
 
