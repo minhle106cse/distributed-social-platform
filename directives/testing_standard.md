@@ -45,3 +45,22 @@ jest.mock('uuid', () => ({
   v7: jest.fn(() => 'mock-uuid-v7')
 }));
 ```
+
+### 5. Test cho package ESM (shared-kernel) — khác service
+- Các service (`apps/*`) là CommonJS → ts-jest dùng config mặc định OK.
+- `packages/shared-kernel` là **ESM** (`"type": "module"` + `tsconfig` NodeNext + import có đuôi `.js`). Jest chạy CJS runtime → phải ép ts-jest emit CommonJS, nếu không sẽ lỗi `SyntaxError: Cannot use import statement`.
+- Config bắt buộc trong `package.json` của shared-kernel:
+```json
+"jest": {
+  "transform": {
+    "^.+\\.(t|j)s$": ["ts-jest", {
+      "diagnostics": { "ignoreCodes": [151002] },
+      "tsconfig": { "module": "CommonJS", "moduleResolution": "node" }
+    }]
+  },
+  "moduleNameMapper": { "^(\\.{1,2}/.*)\\.js$": "$1" }
+}
+```
+  - `tsconfig` override ép CommonJS (phải đổi cả `moduleResolution` sang `node`, nếu không TS5110 vì NodeNext đòi module=NodeNext).
+  - `moduleNameMapper` strip `.js` để ts-jest resolve sang `.ts` nguồn.
+- **Tách spec khỏi build**: thêm `"exclude": ["**/*.spec.ts"]` vào `tsconfig.json` của package published, tránh ship test code vào `dist/`.

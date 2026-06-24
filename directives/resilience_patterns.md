@@ -219,6 +219,12 @@ const result = await withRetry(() => this.claudeClient.complete(prompt))
 - Max 3 attempts, exponential backoff
 - Luôn dùng Circuit Breaker bên ngoài Retry (xem `rag_ai_integration.md`)
 
+### Cập nhật (2026-06-22) + Readiness cho Phase 5 (OCC)
+- **Jitter**: `RetryMiddleware` giờ dùng *full jitter* — `delay = random(0, min(maxDelayMs, base·2^(n-1)))` thay backoff cố định, để các victim deadlock (P2034) không retry đồng pha rồi đâm lại nhau. Helper `withRetry` thủ công ở trên nên áp dụng jitter tương tự.
+- **Seam mở rộng**: middleware KHÔNG biết "lỗi nào là transient" — nó nhận predicate `isPrismaTransientError` inject ở composition root (`cqrs.module.ts`). Thêm loại lỗi retry-able → compose predicate ở đó, KHÔNG sửa middleware (giữ ORM-agnostic).
+- **⚠️ GAP phải đóng khi làm `knowledge-module` (OCC)**: OCC version-conflict trong Prisma nổi lên dưới dạng **P2025** (`update where version=X` khớp 0 row) hoặc `updateMany` trả `count: 0` — **KHÔNG phải P2034**. Predicate hiện chỉ bắt P2034/P2028 → sẽ KHÔNG retry OCC conflict. Khi code OCC: ném `OptimisticLockConflictError` riêng rồi compose vào predicate (hoặc nhận diện P2025-trong-ngữ-cảnh-versioned). Thứ tự **Retry-wraps-Transaction đã đúng sẵn** cho OCC: retry → tx mới → đọc lại version mới → re-apply.
+- **Điều kiện an toàn của retry**: chỉ an toàn khi mọi side-effect nằm TRONG transaction bị rollback. Không retry command có publish Kafka / gọi external trực tiếp giữa handler — đó là lý do Outbox (mục 2) là tiền đề để retry-safe khi có event.
+
 ---
 
 ## 4. Throttle (AI / Embedding workload)

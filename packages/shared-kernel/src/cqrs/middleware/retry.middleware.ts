@@ -14,6 +14,7 @@ export class RetryMiddleware implements ICommandMiddleware {
     private readonly isTransientError: (error: unknown) => boolean,
     private readonly maxRetries: number = 3,
     private readonly baseDelayMs: number = 100,
+    private readonly maxDelayMs: number = 2_000,
   ) {}
 
   async execute<T extends ICommand, R = any>(command: T, next: NextFn<R>): Promise<R> {
@@ -33,7 +34,11 @@ export class RetryMiddleware implements ICommandMiddleware {
           throw error;
         }
 
-        const delay = this.baseDelayMs * Math.pow(2, attempt - 1); // Exponential backoff
+        // Full jitter exponential backoff: random delay in [0, min(cap, base * 2^(attempt-1))].
+        // Jitter de-synchronizes concurrent deadlock victims (P2034) so they don't re-collide
+        // on retry in lockstep. The cap bounds tail latency under connection issues (P2028).
+        const backoffCeiling = Math.min(this.maxDelayMs, this.baseDelayMs * 2 ** (attempt - 1));
+        const delay = Math.round(Math.random() * backoffCeiling);
         this.logger.warn(
           `[RetryMiddleware] Command ${command.name} failed with transient error. Retrying ${attempt}/${this.maxRetries} after ${delay}ms...`,
         );

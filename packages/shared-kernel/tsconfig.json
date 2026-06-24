@@ -12,7 +12,8 @@
     "sourceMap": true,
     "declarationMap": true,
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["**/*.spec.ts"]
 }
 
 /*   "compilerOptions": {
