@@ -1,3 +1,3 @@
 export interface IEvent {
-  readonly name: string;
+  readonly name: string
 }

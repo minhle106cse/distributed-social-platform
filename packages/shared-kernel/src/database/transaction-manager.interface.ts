@@ -1,5 +1,5 @@
 export interface ITransactionManager {
-  run<R>(callback: () => Promise<R>): Promise<R>;
+  run<R>(callback: () => Promise<R>): Promise<R>
 }
 
-export const TRANSACTION_MANAGER = Symbol('ITransactionManager');
+export const TRANSACTION_MANAGER = Symbol('ITransactionManager')

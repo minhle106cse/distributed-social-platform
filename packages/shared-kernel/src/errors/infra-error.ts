@@ -16,6 +16,8 @@ export class ResponseFormatError extends InfrastructureError {
   readonly code = 'RESPONSE_FORMAT_ERROR'
 
   constructor() {
-    super('Route handler returned an unexpected response type. Use ApiResponse for all route return values.')
+    super(
+      'Route handler returned an unexpected response type. Use ApiResponse for all route return values.',
+    )
   }
 }
