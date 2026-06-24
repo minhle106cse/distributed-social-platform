@@ -37,10 +37,11 @@ export interface JwtPayload {
 **Bước 2a — OrgGuard** (chỉ áp cho route org-scoped): verify membership, resolve role + permissions, gắn `request.org`.
 
 ```typescript
-// common/tenant/org.guard.ts (rút gọn)
+// infrastructure/http/guards/org.guard.ts (rút gọn)
+// ⚠️ Guard là HTTP infra → KHÔNG inject PrismaService, đi qua repository interface.
 const orgId = request.headers['x-org-id']
 if (!orgId) throw new ForbiddenException('X-Org-Id header is required')
-const membership = await this.prisma.membership.findFirst({ where: { orgId, userId } })
+const membership = await this.membershipRepo.findByOrgAndUser(orgId, userId)
 if (!membership) throw new ForbiddenException('You are not a member of this organization')
 request.org = { orgId, orgRole: membership.role, permissions: await resolve(orgId, role) }
 ```
@@ -48,7 +49,7 @@ request.org = { orgId, orgRole: membership.role, permissions: await resolve(orgI
 **Bước 2b — TenantInterceptor**: đọc `request.org.orgId` (KHÔNG đọc từ token) → đưa vào AsyncLocalStorage.
 
 ```typescript
-// common/tenant/tenant.interceptor.ts
+// infrastructure/http/interceptors/tenant.interceptor.ts
 intercept(context, next) {
   const orgId = request.org?.orgId   // do OrgGuard set
   if (!orgId) return next.handle()
@@ -99,7 +100,7 @@ model KnowledgeItem {
 
 | Thành phần | Nguồn | File / Bảng |
 |---|---|---|
-| Permission catalog (action tồn tại) | **Code** | `common/tenant/org-permissions.ts` (`OrgPermission`) |
+| Permission catalog (action tồn tại) | **Code** | `modules/tenant/domain/org-permissions.ts` (`OrgPermission`) |
 | Role → permission mapping (per-org) | **DB** | `org_role_permissions` |
 
 ### Khai báo quyền trên route — theo ACTION, không theo role
@@ -143,6 +144,9 @@ Client chỉ cần đổi header `X-Org-Id` ở request kế tiếp. **KHÔNG** 
 | Hardcode `if (role === 'ADMIN')` trong route/handler | `@RequireOrgPermission(...)` + mapping DB |
 | Cho sửa permission của OWNER | OWNER implicit-all, reject mọi update |
 | Query `userId` không kèm `orgId` | `where: { userId, orgId }` (user thuộc nhiều org) |
+| Đặt `OrgGuard` / `TenantInterceptor` trong `common/` | HTTP infra → `infrastructure/http/{guards,interceptors}/` (xem `folder_structure_sop.md` §Enforcement) |
+| `OrgGuard` inject `PrismaService` query thẳng | Đi qua `IMembershipRepository` — guard không được bypass repository |
+| `org-permissions.ts` (catalog domain) đặt trong `common/` | `modules/tenant/domain/` — vocabulary của tenant domain, không phải abstraction cross-cutting |
 
 ---
 

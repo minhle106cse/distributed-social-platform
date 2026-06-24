@@ -95,11 +95,34 @@ src/
 
 ## core-api vs auth-service — Trạng Thái Đồng Bộ
 
-> Trạng thái tính đến 2026-06-01: `core-api` đã được refactor thành công để tuân thủ kiến trúc chuẩn.
+> Trạng thái tính đến 2026-06-25: `core-api` tuân thủ kiến trúc chuẩn, ngang `auth-service` về layering, và **đã được lint enforce** (xem §Enforcement bên dưới).
 
 - Toàn bộ các component infra (Prisma, Logger, HTTP Interceptors, Filters) đã được di dời từ `common/` sang `infrastructure/`.
 - CQRS buses ở `common/cqrs/` đã trở thành Pure POJO, framework module được đẩy sang `infrastructure/cqrs/`.
+- **Re-audit `modules/tenant` (2026-06-25):** sửa 3 vi phạm còn sót — `OrgGuard`/`TenantInterceptor` rời `common/` về `infrastructure/http/`; `OrgGuard` đi qua `IMembershipRepository` thay vì query Prisma thẳng; handler dùng `MembershipNotFoundError` thay vì `NotFoundException`. Dọn coupling: `org-permissions.ts` về `modules/tenant/domain/` (hết cycle domain↔common), `OrgContext` tách khỏi guard.
 - **Lưu ý:** `core-api` là NestJS app nên sử dụng `infrastructure/http/interceptors` thay vì `hooks` (như trong Fastify thuần của `auth-service`), và dùng cơ chế DI Module của NestJS thay vì thư mục `container/` thủ công.
+
+---
+
+## 🔒 Enforcement — Lint-Enforced Boundaries (core-api)
+
+> Tài liệu mô tả **ý định**; lint mới **bắt buộc**. Các ranh giới dưới đây được enforce qua
+> `@typescript-eslint/no-restricted-imports` trong `apps/core-api/eslint.config.mjs`
+> (bản `@typescript-eslint/` để bắt cả `import type` — type-only dependency xuyên layer vẫn là dependency).
+> Vi phạm = **lint fail tại commit/CI**, kèm message tiếng Việt chỉ rõ cách sửa.
+
+| Layer (`files`) | Cấm import | Được phép |
+|---|---|---|
+| `modules/*/domain/**` | NestJS, Fastify, Prisma/`@/generated`, mọi tầng ngoài (`@/common`, `@/infrastructure`, application/infra/presentation của module) | shared-kernel + relative cùng domain |
+| `modules/*/application/**` | ORM/DB/HTTP infra; **HTTP exceptions** (`NotFoundException`…) từ `@nestjs/common` | repo interface; `@/infrastructure/cqrs` (decorators); `@nestjs/common` DI (`@Injectable`/`@Inject`) |
+| `modules/*/presentation/**` | Prisma/`@/generated`, `@/infrastructure/database` | đẩy qua CommandBus/QueryBus |
+| `common/**` | `@/modules`, `@/infrastructure`, NestJS, Fastify, Prisma | shared-kernel + relative |
+
+**Ngoại lệ đã chốt (KHÔNG phải vi phạm):** `@Injectable()` / `@Inject()` / `@CommandHandler()` trong application layer là **idiom DI hợp lệ của NestJS** — chỉ HTTP exception mới bị cấm ở application. Đây là khác biệt framework, không phải lệch kiến trúc.
+
+**Quy trình khuyến nghị khi tạo module mới trong core-api:** bật/khớp lint boundary *trước*, code *sau* — để chính cổng lint chặn ngay trong lúc sinh code, thay vì phát hiện khi audit về sau.
+
+**Gate chất lượng (cả monorepo):** `npm run check` = `turbo run lint format:check` (read-only). Sửa nhanh: `npm run lint:fix` + `npm run format`.
 
 ---
 
@@ -118,3 +141,4 @@ src/
    - → `modules/<domain>/`
 5. Cấu trúc của service này có đồng bộ với auth-service chưa?
    - Đối chiếu với bảng 5 thành phần chính ở trên trước khi commit.
+6. (core-api) Chạy `npm run lint` trước khi commit — boundary rules ở §Enforcement sẽ tự chặn nếu đặt sai layer / import xuyên tầng.

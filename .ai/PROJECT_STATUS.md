@@ -1,6 +1,6 @@
 ### 📊 Curated Status — _cập nhật thủ công sau mỗi task (After-Task Protocol)_
 
-> Last curated: **2026-06-21**
+> Last curated: **2026-06-25**
 > Đây là nguồn chủ quan (phase %, focus). Phần auto-detect bên dưới mới là ground truth — nếu lệch nhau thì file này stale.
 
 **Overall:** ~22% · **Phase đang làm:** Phase 1 (Multi-tenant Knowledge Monolith) · **Next:** `knowledge-module` (core-api)
@@ -31,3 +31,4 @@
 
 **Quyết định kiến trúc đã chốt liên quan:**
 - Org context truyền qua `x-org-id` header + `OrgGuard` (KHÔNG nhúng `orgId` vào JWT). System RBAC (auth) và Org RBAC (core) tách biệt hoàn toàn. Xem `.ai/memory/architecture.jsonl#41`, `docs/11`.
+- **Clean-Arch boundaries của core-api đã lint-enforced** (`eslint.config.mjs`, `no-restricted-imports` per layer) sau re-audit `modules/tenant`. `OrgGuard`/`TenantInterceptor` ở `infrastructure/http/`, `org-permissions` ở `modules/tenant/domain/`. Xem `.ai/memory/architecture.jsonl#46`, `directives/folder_structure_sop.md` §Enforcement.

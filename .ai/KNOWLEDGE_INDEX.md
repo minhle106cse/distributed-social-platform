@@ -39,7 +39,7 @@
 
 ### 📊 Curated Status — _cập nhật thủ công sau mỗi task (After-Task Protocol)_
 
-> Last curated: **2026-06-21**
+> Last curated: **2026-06-25**
 > Đây là nguồn chủ quan (phase %, focus). Phần auto-detect bên dưới mới là ground truth — nếu lệch nhau thì file này stale.
 
 **Overall:** ~22% · **Phase đang làm:** Phase 1 (Multi-tenant Knowledge Monolith) · **Next:** `knowledge-module` (core-api)
@@ -70,6 +70,7 @@
 
 **Quyết định kiến trúc đã chốt liên quan:**
 - Org context truyền qua `x-org-id` header + `OrgGuard` (KHÔNG nhúng `orgId` vào JWT). System RBAC (auth) và Org RBAC (core) tách biệt hoàn toàn. Xem `.ai/memory/architecture.jsonl#41`, `docs/11`.
+- **Clean-Arch boundaries của core-api đã lint-enforced** (`eslint.config.mjs`, `no-restricted-imports` per layer) sau re-audit `modules/tenant`. `OrgGuard`/`TenantInterceptor` ở `infrastructure/http/`, `org-permissions` ở `modules/tenant/domain/`. Xem `.ai/memory/architecture.jsonl#46`, `directives/folder_structure_sop.md` §Enforcement.
 
 ### 🔍 Auto-detected modules (filesystem ground truth)
 
@@ -93,7 +94,7 @@ Key sections:- SOP: Database & Prisma Standard  - 🎯 Goal  - 📜 Kiến Trúc
 ### 📄 `directives/event_sourcing.md` — SOP: Event Sourcing Standard
 Key sections:- SOP: Event Sourcing Standard  - 🎯 When to Use  - 📜 Core Concepts    - 1. EventStore Schema    - 2. Read Model (Projection / Summary)    - 3. Aggregate Pattern    - 4. Repository — Load & Save Pattern    - 5. Snapshot Pattern (khi event stream > 500 events)  - ⚠️ Gotchas  - 🔗 Liên quan
 ### 📄 `directives/folder_structure_sop.md` — Folder Structure SOP — Distributed Social Platform
-Key sections:- Folder Structure SOP — Distributed Social Platform  - Canonical `src/` Structure  - ⛔ Forbidden Patterns — NEVER DO  - 5 Thành Phần Chính & Trách Nhiệm  - core-api vs auth-service — Trạng Thái Đồng Bộ  - Khi Agent Tạo File Mới
+Key sections:- Folder Structure SOP — Distributed Social Platform  - Canonical `src/` Structure  - ⛔ Forbidden Patterns — NEVER DO  - 5 Thành Phần Chính & Trách Nhiệm  - core-api vs auth-service — Trạng Thái Đồng Bộ  - 🔒 Enforcement — Lint-Enforced Boundaries (core-api)  - Khi Agent Tạo File Mới
 ### 📄 `directives/logging_standard.md` — Observability & Logging Standard
 Key sections:- Observability & Logging Standard  - The Dual-Logging Philosophy    - 1. HTTP Layer Log (Fastify Request Logger)    - 2. Business Layer Log (CQRS Middleware Logger)  - Standard Output Format  - Shared HTTP Utilities (shared-kernel)  - Enforcement for AI Workflows
 ### 📄 `directives/memory_sop.md` — SOP: Agent Memory (Experience Buffer) v2
@@ -145,6 +146,15 @@ src/
 ├── main.ts           # Local entrypoint (listen)
 └── main.lambda.ts    # AWS Lambda entrypoint
 ```
+
+### Layer Boundaries — lint-enforced in core-api (`folder_structure_sop.md` §Enforcement)
+> `apps/core-api/eslint.config.mjs` chặn import xuyên tầng qua `@typescript-eslint/no-restricted-imports` (bắt cả `import type`). Vi phạm = lint fail.
+- `domain/**` → chỉ shared-kernel + relative. Cấm NestJS/Fastify, Prisma/`@/generated`, mọi tầng ngoài.
+- `application/**` → cấm ORM/DB/HTTP infra + HTTP exceptions (`NotFoundException`…). Cho phép repo interface, `@/infrastructure/cqrs`, `@nestjs/common` DI (`@Injectable`/`@Inject`).
+- `presentation/**` → cấm Prisma/`@/generated`, `@/infrastructure/database`. Đẩy qua CommandBus/QueryBus.
+- `common/**` → cấm `@/modules`, `@/infrastructure`, NestJS, Fastify, Prisma. Chỉ shared-kernel + relative.
+- **Ngoại lệ:** `@Injectable`/`@Inject`/`@CommandHandler` trong application = idiom DI hợp lệ NestJS (chỉ HTTP exception bị cấm).
+- **Gate:** `npm run check` (= `turbo run lint format:check`). Fix: `npm run lint:fix` + `npm run format`.
 
 ### CQRS Pipeline (`cqrs_pattern.md`)
 - Pipeline order: `LoggingMiddleware → RetryMiddleware → TransactionMiddleware → Handler`
@@ -272,6 +282,8 @@ src/
   → In Fastify v5, the 'logger' option only accepts a boolean or configuration object. To pass a custom Pino logger instance, use the 'loggerInstance' option instead of 'logger'.
 - **FST_ERR_LOG_LOGGER_AND_LOGGER_INSTANCE_PROVIDED: You cannot provide both logger and loggerInstance** `[apps/auth-service/src/bootstrap/server.ts]`
   → When configuring Fastify logger, do not include both 'logger' and 'loggerInstance' in the options object (even if one is undefined). Use object spread to conditionally include only one: ...(isTest ? { logger: false } : { loggerInstance: createLogger() })
+- **core-api modules/tenant (AI code 100%) vi phạm hexagonal dù tài liệu đầy đủ: OrgGuard/TenantInterceptor trong common/ (HTTP infra), OrgGuard query Prisma thẳng bypass repository, application handler throw NotFoundException (HTTP), org-permissions catalog trong common/ gây cycle domain↔common.** `[core-api modules/tenant layering re-audit + eslint boundary enforcement]`
+  → Di dời guard/interceptor về `infrastructure/http/`; guard đi qua `IMembershipRepository`; throw `ApplicationError` subclass (`MembershipNotFoundError`) thay HTTP exception; `org-permissions` về `modules/tenant/domain/`; tách `OrgContext` sang `infrastructure/http/types`. Gốc rễ: prior NestJS mâu thuẫn directive, doc mô tả INTENT không ràng buộc OUTPUT → fix bền vững = lint boundary (`no-restricted-imports` per layer). Ngoại lệ: `@Injectable`/`@Inject`/`@CommandHandler` ở application là idiom DI hợp lệ, chỉ HTTP exception bị cấm. Xem `.ai/memory/architecture.jsonl#46`.
 
 ## 6. Business Domain Documentation (from `docs/`)
 

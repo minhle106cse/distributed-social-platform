@@ -25,6 +25,15 @@ src/
 └── main.lambda.ts    # AWS Lambda entrypoint
 ```
 
+### Layer Boundaries — lint-enforced in core-api (`folder_structure_sop.md` §Enforcement)
+> `apps/core-api/eslint.config.mjs` chặn import xuyên tầng qua `@typescript-eslint/no-restricted-imports` (bắt cả `import type`). Vi phạm = lint fail.
+- `domain/**` → chỉ shared-kernel + relative. Cấm NestJS/Fastify, Prisma/`@/generated`, mọi tầng ngoài.
+- `application/**` → cấm ORM/DB/HTTP infra + HTTP exceptions (`NotFoundException`…). Cho phép repo interface, `@/infrastructure/cqrs`, `@nestjs/common` DI (`@Injectable`/`@Inject`).
+- `presentation/**` → cấm Prisma/`@/generated`, `@/infrastructure/database`. Đẩy qua CommandBus/QueryBus.
+- `common/**` → cấm `@/modules`, `@/infrastructure`, NestJS, Fastify, Prisma. Chỉ shared-kernel + relative.
+- **Ngoại lệ:** `@Injectable`/`@Inject`/`@CommandHandler` trong application = idiom DI hợp lệ NestJS (chỉ HTTP exception bị cấm).
+- **Gate:** `npm run check` (= `turbo run lint format:check`). Fix: `npm run lint:fix` + `npm run format`.
+
 ### CQRS Pipeline (`cqrs_pattern.md`)
 - Pipeline order: `LoggingMiddleware → RetryMiddleware → TransactionMiddleware → Handler`
 - Retry wraps Transaction → each retry gets a fresh DB transaction
