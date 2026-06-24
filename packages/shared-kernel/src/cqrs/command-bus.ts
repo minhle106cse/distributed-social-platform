@@ -1,6 +1,6 @@
 import { ICommand } from './interfaces/command.interface.js';
 import { ICommandHandler } from './interfaces/command-handler.interface.js';
-import { ICommandMiddleware, NextFn } from './interfaces/command-middleware.interface.js';
+import { ICommandMiddleware } from './interfaces/command-middleware.interface.js';
 import { CommandHandlerNotFoundError } from './errors/cqrs.error.js';
 
 export class CommandBus {
