@@ -15,3 +15,4 @@ export * from './cqrs/index.js'
 
 // Database abstractions
 export * from './database/transaction-manager.interface.js'
+export * from './database/transaction.context.js'
