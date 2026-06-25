@@ -122,7 +122,7 @@ src/
 
 **Quy trình khuyến nghị khi tạo module mới trong core-api:** bật/khớp lint boundary *trước*, code *sau* — để chính cổng lint chặn ngay trong lúc sinh code, thay vì phát hiện khi audit về sau.
 
-**Gate chất lượng (cả monorepo):** `npm run check` = `turbo run lint format:check` (read-only). Sửa nhanh: `npm run lint:fix` + `npm run format`.
+**Gate chất lượng (cả monorepo):** `npm run check` = `turbo run typecheck lint format:check` (read-only). `typecheck` = `tsc --noEmit` mỗi workspace — bắt lỗi biên dịch mà lint/format bỏ sót (lint chỉ bắt rule, không bắt TS2322…). Sửa nhanh: `npm run lint:fix` + `npm run format`.
 
 ---
 

@@ -32,7 +32,7 @@ src/
 - `presentation/**` → cấm Prisma/`@/generated`, `@/infrastructure/database`. Đẩy qua CommandBus/QueryBus.
 - `common/**` → cấm `@/modules`, `@/infrastructure`, NestJS, Fastify, Prisma. Chỉ shared-kernel + relative.
 - **Ngoại lệ:** `@Injectable`/`@Inject`/`@CommandHandler` trong application = idiom DI hợp lệ NestJS (chỉ HTTP exception bị cấm).
-- **Gate:** `npm run check` (= `turbo run lint format:check`). Fix: `npm run lint:fix` + `npm run format`.
+- **Gate:** `npm run check` (= `turbo run typecheck lint format:check`). `typecheck` = `tsc --noEmit` bắt lỗi biên dịch lint bỏ sót. Fix: `npm run lint:fix` + `npm run format`.
 
 ### CQRS Pipeline (`cqrs_pattern.md`)
 - Pipeline order: `LoggingMiddleware → RetryMiddleware → TransactionMiddleware → Handler`
