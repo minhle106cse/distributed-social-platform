@@ -20,12 +20,18 @@ Mọi microservice trong `apps/` phải tuân theo cấu trúc file sau:
      - `@fastify/cors`: `{ origin: config.corsOrigins, credentials: true }` — **KHÔNG dùng `['*']`**, phải load từ env var (`CORS_ORIGINS`) để tránh lỗ hổng bảo mật (memory entry #8)
      - `@fastify/helmet`
      - `@fastify/compress`: `{ encodings: ['gzip', 'deflate', 'br'] }`
-     - `@fastify/rate-limit`: `{ max: 100, timeWindow: '1 minute' }` — **trần thô global theo IP** (anti-DoS ở mép Fastify), bắt buộc cho mọi service.
+     - **Rate limiting**: bắt buộc — nhưng **tool khác nhau theo framework** (xem mục riêng dưới đây).
 
-   - **Rate limit per-route (chỉ NestJS):** `@fastify/rate-limit` không set được per-route trong app NestJS (controller không lộ `config.rateLimit` của Fastify). Vì vậy NestJS service dùng thêm **`@nestjs/throttler`** cho lớp per-route:
-     - `ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }])` (default **khớp** trần fastify để route thường không bị siết gấp đôi) + `{ provide: APP_GUARD, useClass: ThrottlerGuard }`.
-     - Route nhạy cảm siết riêng bằng `@Throttle({ default: { ttl, limit } })`; endpoint hạ tầng (`/health`, `/metrics`) gắn `@SkipThrottle()`.
-     - 429 đi qua filter → cùng `buildErrorBody` (`code: TOO_MANY_REQUESTS`). Tương đương cơ chế `config.rateLimit` per-route của Fastify thuần (auth-service).
+   - **Rate limiting — chọn tool NATIVE theo framework.** Mỗi tool tự làm được **cả global default lẫn per-route**, nên mỗi service chỉ dùng **MỘT** cơ chế (không trộn):
+
+     | Service | Tool | Global default | Per-route |
+     |---|---|---|---|
+     | **Fastify thuần** (auth-service) | `@fastify/rate-limit` | `register(rateLimit, { max: 100, timeWindow: '1 minute' })` | `config.rateLimit` trên từng route |
+     | **NestJS** (core-api) | `@nestjs/throttler` | `ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }])` + `{ provide: APP_GUARD, useClass: ThrottlerGuard }` | `@Throttle({ default: { ttl, limit } })`; `@SkipThrottle()` cho `/health`,`/metrics` |
+
+     - ⛔ **KHÔNG** dùng `@fastify/rate-limit` trong app NestJS — controller không lộ `config.rateLimit` của Fastify nên không set được per-route. Dùng `@nestjs/throttler` thay thế (1 cơ chế duy nhất, không kèm `@fastify/rate-limit`).
+     - Lỗi **429** ở cả 2 framework đi qua error filter → cùng `buildErrorBody` (`code: TOO_MANY_REQUESTS`), giữ format response đồng nhất.
+     - Production nhiều replica: throttler cần `ThrottlerStorageRedis` (in-memory chỉ đúng cho 1 instance).
 
 3. **`src/app.ts`**
    - Import `buildServer` từ `bootstrap/server.ts`.
