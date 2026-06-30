@@ -47,7 +47,7 @@
 ### #6 · Multi-tenant B2B: cô lập dữ liệu tuyệt đối giữa các Organization
 **Góc:** Multi-tenancy architecture
 - Mọi bảng nội dung đều có `orgId` — không có ngoại lệ
-- AsyncLocalStorage + TenantInterceptor: tự động inject `orgId` từ JWT vào context, không phải truyền tay
+- AsyncLocalStorage + middleware: tự động inject `orgId` (từ header X-Org-Id) vào context, không phải truyền tay
 - AI Data Boundary: embedding retrieval luôn filter `WHERE org_id = ?` — dữ liệu org A không bao giờ vào RAG context của org B
 - Quota per tenant: seat limit, credit balance, AI rate-limit — chống noisy-neighbor
 

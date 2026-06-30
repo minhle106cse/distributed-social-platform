@@ -73,27 +73,49 @@ Cortex kết hợp 2 nguồn để cho kết quả tốt nhất:
 
 ## 🏛️ TRỤ CỘT 3: NỀN KINH TẾ CREDIT (Credit Economy — Ảo, không payout)
 
-Credit là **đơn vị đo lường & khuyến khích** trong org. Mua bằng tiền nhưng **không bao giờ rút ra tiền mặt** ⇒ đầy đủ rigor sổ cái nhưng nhẹ rủi ro pháp lý/payment.
+Credit là **đơn vị đo lường & khuyến khích** trong org. Nạp/cấp vào org nhưng **không bao giờ rút ra tiền mặt** ⇒ đầy đủ rigor sổ cái nhưng nhẹ rủi ro pháp lý/payment.
 
-### 3.1. Nguồn & Tiêu Credit
+### 3.1. Mô hình sở hữu (DECIDED: per-member)
+
+> Credit giữ ở **mức member** — số dư riêng của từng user *trong* một org — **KHÔNG** phải một túi chung của org.
+
+Dòng chảy 2 tầng:
+1. **Org treasury** được nạp credit (xem 3.2 — provisioning).
+2. **OWNER/ADMIN cấp / đặt hạn mức** credit cho từng member từ treasury → mỗi member có **số dư cá nhân trong org**.
+3. Member **tiêu** (gọi AI), **kiếm thêm** (đóng góp tốt / thắng bounty), **stake** (treo bounty) — tất cả trên số dư cá nhân.
+
+→ **Số dư member = (org cấp) + (tự kiếm) + (thắng bounty) − (tiêu AI) − (đang stake).**
+→ **Vì sao per-member:** bounty cần "stake credit *của tôi*" (bất khả thi nếu chỉ có túi chung); quota chống lạm dụng tự nhiên theo từng member.
+
+### 3.2. Provisioning — nạp credit vào Org
+
+> ⚠️ **Giai đoạn thử nghiệm hiện tại: CHƯA tích hợp thanh toán.**
+> **System admin** (người vận hành nền tảng) **cấp credit cho org thủ công qua Admin Dashboard** (kiểu cho dùng thử). Khi sản phẩm chứng minh hiệu quả → tích hợp payment; lúc đó org tự mua và credit treasury **tự tăng**. Cả 2 đều là event bất biến → đổi cơ chế nạp KHÔNG phá sổ cái.
+
+| Giai đoạn | Cách nạp | Sự kiện |
+|---|---|---|
+| **Thử nghiệm (hiện tại)** | System admin grant từ Admin Dashboard | `CreditGrantedEvent` (kèm `grantedBySystemAdminId`) |
+| **Sau (có payment)** | Org mua credit pack | `CreditPurchasedEvent` |
+
+### 3.3. Nguồn & Tiêu Credit (mức member)
 
 | Hướng | Hành động | Sự kiện (Event) |
 |------|-----------|-----------------|
-| **+ Nạp** | Org mua credit pack | `CreditPurchasedEvent` |
+| **+ Cấp** | OWNER/ADMIN cấp credit/hạn mức cho member từ treasury | `CreditAllocatedEvent` |
 | **+ Thưởng** | Đóng góp được `VERIFIED`/answer được accept | `CreditAwardedEvent` |
 | **− Tiêu** | Gọi AI (RAG/summarize) | `CreditSpentEvent` |
 | **− Khóa tạm** | Stake credit treo bounty cho câu hỏi khó | `CreditStakedEvent` |
 | **+ Hoàn** | AI fail / bounty hủy | `CreditRefundedEvent` |
 
-### 3.2. Sổ cái Bất biến (Ledger Immutability)
+### 3.4. Sổ cái Bất biến (Ledger Immutability)
 
 > **⚠️ RULE TUYỆT ĐỐI: Không bao giờ UPDATE trực tiếp số dư credit.**
 
-- Mọi thay đổi là một **Event bất biến** trong Event Store.
-- **Balance hiện tại = Replay toàn bộ credit events**. Rebuild được bất cứ lúc nào.
-- **Ledger Integrity:** cron hằng đêm kiểm tra `Sum(events) == Current Balance` cho mọi org; drift → alert + auto-rebuild.
+- Mọi thay đổi là một **Event bất biến** trong Event Store (mỗi event scope theo `orgId` + `userId`).
+- **Balance hiện tại = Replay toàn bộ credit events**. Rebuild được bất cứ lúc nào — cho từng **member balance** lẫn **org treasury**.
+- **Ledger Integrity:** cron hằng đêm kiểm tra `Sum(events) == Current Balance` cho **mỗi (org, member)** và cho treasury của mỗi org; drift → alert + auto-rebuild.
 
-### 3.3. Saga cho giao dịch nhiều bước
+### 3.5. Saga cho giao dịch nhiều bước
 
 **AI-Query Saga:** Reserve credit → gọi RAG → commit (nếu OK) / refund (nếu fail).
 **Bounty Saga:** stake → accept answer → award + reputation + badge → notify; fail bất kỳ bước nào → compensate.
@@ -181,6 +203,6 @@ Bảng tóm tắt cách mỗi trụ cột kinh doanh sinh ra System Design Patte
 | Câu hỏi | Trả lời |
 |--------|---------|
 | **Giải nỗi đau gì?** | Tri thức org tản mát & khó tìm; người mới onboard chậm; bus factor cao |
-| **Ai trả tiền?** | Công ty/team (B2B) — trả theo **seat** + **credit pack** cho AI usage |
+| **Ai trả tiền?** | Công ty/team (B2B) — trả theo **seat** + **credit pack** cho AI usage. ⚠️ **Hiện thử nghiệm: chưa thu tiền** — system admin cấp credit thủ công qua Admin Dashboard (xem §3.2); tích hợp payment khi sản phẩm chứng minh hiệu quả. |
 | **Vì sao không bị "clone bão hòa"?** | Khác StackOverflow công khai — đây là tri thức **nội bộ, riêng tư, có AI search**, cạnh tranh thực với Glean/Notion AI |
 | **Credit có rủi ro pháp lý?** | Không — credit **ảo, không payout**, chỉ luân chuyển nội bộ org |

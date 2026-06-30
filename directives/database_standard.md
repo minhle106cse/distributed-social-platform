@@ -30,9 +30,14 @@ id String @id @default(uuid())
 ```
 
 ### 3. Vòng đời dữ liệu (Soft Delete)
-- Hạn chế sử dụng Hard Delete (`DELETE` vật lý) trong Database.
-- Thay vào đó, thiết lập cột `deletedAt DateTime? @map("deleted_at")` cho các model quan trọng (Post, Comment, Profile).
-- Mọi logic query ở Repo đều phải có filter `deletedAt: null`.
+- Hạn chế Hard Delete (`DELETE` vật lý). Dùng cột `deletedAt DateTime? @map("deleted_at")` cho model quan trọng (Organization, Space, KnowledgeItem…). (Phân biệt với `isActive` = disable tạm — xem lesson trong KNOWLEDGE_INDEX.)
+- **Filter `deletedAt: null` là TỰ ĐỘNG, KHÔNG ghi tay ở repo.** Cả 2 service có Prisma Client Extension (`$extends` trong `PrismaService`) tự chèn `deletedAt: null` cho các model trong `SOFT_DELETE_MODELS`, chỉ với `findUnique/findFirst/findMany/count`.
+  - auth-service: `infrastructure/database/prisma/prisma.client.ts` (`['User','Role','Permission']`).
+  - core-api: `infrastructure/database/prisma/prisma.service.ts` (`['Organization','Space']`) — **composition**: `rawClient` (lifecycle, raw SQL) + `client` (đã extend); repo dùng `getTx() ?? this.prisma.client`; transaction manager gọi `this.prisma.client.$transaction` để `tx` cũng thừa hưởng filter.
+  - ⚠️ **Thêm model soft-delete mới → THÊM tên vào `SOFT_DELETE_MODELS`** (chỉ model thật sự có cột `deletedAt`, nếu không query sẽ lỗi).
+  - **Escape hatch:** truyền key `deletedAt` tường minh trong `where` (kể cả `undefined`) → extension KHÔNG override → dùng cho restore / tra cứu bản đã xóa.
+  - **Giới hạn:** extension KHÔNG lọc `update/updateMany/delete` và KHÔNG đụng raw SQL — cân nhắc khi thao tác ghi.
+- **Field UNIQUE + soft-delete → dùng PARTIAL unique index, KHÔNG `@unique` full.** `@@unique([slug], where: { deletedAt: null })` (cần `previewFeatures = ["partialIndexes"]` trong generator). Lý do: `@unique` full tính cả bản đã xóa → (1) slug bị "burn" vĩnh viễn, (2) lệch với app-check (findBySlug chỉ thấy bản live) → tạo mới báo "trống" nhưng DB ném P2002. Partial index enforce unique CHỈ trên bản chưa xóa → nhả slug khi xóa + khớp app-check. Ví dụ: `Organization.slug`. (Prisma `db push` tạo được; partial unique KHÔNG xuất hiện trong `WhereUniqueInput` nên query bằng `findFirst`, không `findUnique`.)
 
 ### 4. Prisma Client Generation
 - Prisma xả thư viện typing ra `node_modules` hoặc thư mục tùy chỉnh (e.g. `src/generated`). Do thư mục này không được đưa lên Git (bị block bởi `.gitignore`), nó sẽ gây lỗi "Cannot find module" nếu có Dev clone code về hoặc chạy Docker build mới.

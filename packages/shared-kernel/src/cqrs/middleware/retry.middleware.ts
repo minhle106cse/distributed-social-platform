@@ -1,6 +1,6 @@
 import { ICommandMiddleware, NextFn } from '../interfaces/command-middleware.interface.js'
 import { ICommand } from '../interfaces/command.interface.js'
-import { ILogger } from '../../logger/index.js'
+import { ILogger, LogContext } from '../../logger/index.js'
 import { UnreachableError } from '../../errors/infra-error.js'
 
 /**
@@ -40,7 +40,14 @@ export class RetryMiddleware implements ICommandMiddleware {
         const backoffCeiling = Math.min(this.maxDelayMs, this.baseDelayMs * 2 ** (attempt - 1))
         const delay = Math.round(Math.random() * backoffCeiling)
         this.logger.warn(
-          `[RetryMiddleware] Command ${command.name} failed with transient error. Retrying ${attempt}/${this.maxRetries} after ${delay}ms...`,
+          {
+            context: LogContext.RETRY,
+            command: command.name,
+            attempt,
+            maxRetries: this.maxRetries,
+            delayMs: delay,
+          },
+          `Command ${command.name} failed with transient error; retrying ${attempt}/${this.maxRetries} after ${delay}ms`,
         )
 
         await new Promise((resolve) => setTimeout(resolve, delay))

@@ -42,7 +42,7 @@ src/
 - Repositories use `getTx() ?? this.prisma` — zero signature changes
 
 ### Domain Modeling (`domain_modeling.md`)
-- Factories enforce invariants at construction — intention-revealing, not pass-through: `createOwner()` vs `createMember(role: ManageableOrgRole)`, `createForRegister(props, passwordService)`.
+- Factories enforce invariants at construction — intention-revealing, not pass-through: `createOwner()` vs `createMember(role: ManageableOrgRole)`. Naming: ONE rule — `create<Variant>` (1 path → bare `create`; ≥2 → name all, no bare `create`), NEVER `createFor<UseCase>`.
 - Security invariants via TYPE (compile-time) over runtime guards: `ManageableOrgRole = Exclude<OrgRole,'OWNER'>` → assigning OWNER is a compile error.
 - **Validate on WRITE, TRUST on READ:** `rehydrate`/`mapper.toDomain` must NOT re-validate persistence. Data is validated by factory + Zod + DB constraints; a logically-wrong value on read is impossible (corruption = infra/ACID incident, not the domain's job). No `toX(row.role)` throwing validators on read — type the row as the Prisma enum and assign/narrow.
 - Each entity has its own `infrastructure/mappers/<entity>.mapper.ts`; repos delegate, never `rehydrate(...)` inline.
@@ -62,6 +62,7 @@ src/
 
 ### Validation (`zod_validation.md`)
 - Zod is the ONLY validation library (no class-validator, no typebox)
+- **Zod is the ONLY place for input validation** — no `if (!x.trim()) throw` in entity/factory. Every input boundary (HTTP, event consumer) validates via Zod; domain trusts clean input. Non-blank: `z.string().trim().min(1)` (`.trim()` BEFORE `.min`).
 - Schema location: `modules/<module>/presentation/schemas/<action>.schema.ts`
 
 ### Logging (`logging_standard.md`)

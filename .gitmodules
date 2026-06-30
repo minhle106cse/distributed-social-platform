@@ -4,3 +4,6 @@
 [submodule "apps/core-api"]
 	path = apps/core-api
 	url = git@github-me:minhle106cse/distributed-social-platform_core-api.git
+[submodule "apps/worker-service"]
+	path = apps/worker-service
+	url = git@github-me:minhle106cse/distributed-social-platform_worker-service.git

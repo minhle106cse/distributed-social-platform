@@ -32,7 +32,7 @@ export interface JwtPayload {
 > **per-request** qua header `X-Org-Id`. Token thuần identity → không phải re-issue khi đổi org,
 > revoke membership có hiệu lực tức thì.
 
-### 2. Org context — header `X-Org-Id` → OrgGuard → TenantInterceptor
+### 2. Org context — header `X-Org-Id` → TenantContextMiddleware + OrgGuard
 
 **Bước 2a — OrgGuard** (chỉ áp cho route org-scoped): verify membership, resolve role + permissions, gắn `request.org`.
 
@@ -44,33 +44,44 @@ if (!orgId) throw new ForbiddenException('X-Org-Id header is required')
 const membership = await this.membershipRepo.findByOrgAndUser(orgId, userId)
 if (!membership) throw new ForbiddenException('You are not a member of this organization')
 request.org = { orgId, orgRole: membership.role, permissions: await resolve(orgId, role) }
+setTenantId(orgId) // điền orgId (đã xác thực) vào ALS cho repo dùng
 ```
 
-**Bước 2b — TenantInterceptor**: đọc `request.org.orgId` (KHÔNG đọc từ token) → đưa vào AsyncLocalStorage.
+**Bước 2b — TenantContextMiddleware** (global, chạy đầu request): mở AsyncLocalStorage context **rỗng** bọc TRỌN vòng đời request. **Dùng MIDDLEWARE, KHÔNG interceptor** — middleware gọi `next()` ngay trong scope `run()` nên context propagate đáng tin tới guard/handler/repo; interceptor trả Observable bị subscribe NGOÀI scope → dễ mất context. Store là object mutable; OrgGuard (2a) điền orgId qua `setTenantId` sau khi validate.
 
 ```typescript
-// infrastructure/http/interceptors/tenant.interceptor.ts
-intercept(context, next) {
-  const orgId = request.org?.orgId   // do OrgGuard set
-  if (!orgId) return next.handle()
-  return runWithTenant(orgId, () => next.handle())
+// infrastructure/http/middlewares/tenant-context.middleware.ts
+use(_req, _res, next) {
+  runWithTenantContext(() => next()) // store rỗng {}, bọc cả request
 }
 ```
 
 ```typescript
 // common/tenant/tenant.context.ts
-const tenantContext = new AsyncLocalStorage<string>()
-export const getTenantId = () => tenantContext.getStore()
-export const runWithTenant = <R>(orgId: string, fn: () => R): R => tenantContext.run(orgId, fn)
+const tenantStorage = new AsyncLocalStorage<{ orgId?: string }>()
+export const runWithTenantContext = <R>(fn: () => R): R => tenantStorage.run({}, fn)
+export const setTenantId = (orgId: string) => {
+  const s = tenantStorage.getStore()
+  if (s) s.orgId = orgId
+}
+export const getTenantId = () => tenantStorage.getStore()?.orgId
+// FAIL-CLOSED cho repo tenant-scoped: thiếu context → NÉM (chống `orgId: undefined`
+// lọt xuống Prisma → where bỏ filter → rò chéo tenant).
+export const requireTenantId = () => {
+  const id = getTenantId()
+  if (!id) throw new Error('Tenant context not set')
+  return id
+}
 ```
 
 ### 3. Repository — Bắt buộc filter bởi `orgId` (lấy từ `getTenantId()`)
 
 ```typescript
 async findById(id: string): Promise<KnowledgeItem | null> {
-  const orgId = getTenantId()
-  const db = (getTx() ?? this.prisma) as PrismaClient
-  const row = await db.knowledgeItem.findFirst({ where: { id, orgId, deletedAt: null } })
+  const orgId = requireTenantId() // fail-closed: không bao giờ query thiếu orgId
+  const db = getTx() ?? this.prisma.client
+  // deletedAt:null tự động bởi soft-delete extension (xem database_standard.md §3)
+  const row = await db.knowledgeItem.findFirst({ where: { id, orgId } })
   return row ? KnowledgeItemMapper.toDomain(row) : null
 }
 ```
@@ -144,7 +155,7 @@ Client chỉ cần đổi header `X-Org-Id` ở request kế tiếp. **KHÔNG** 
 | Hardcode `if (role === 'ADMIN')` trong route/handler | `@RequireOrgPermission(...)` + mapping DB |
 | Cho sửa permission của OWNER | OWNER implicit-all, reject mọi update |
 | Query `userId` không kèm `orgId` | `where: { userId, orgId }` (user thuộc nhiều org) |
-| Đặt `OrgGuard` / `TenantInterceptor` trong `common/` | HTTP infra → `infrastructure/http/{guards,interceptors}/` (xem `folder_structure_sop.md` §Enforcement) |
+| Đặt `OrgGuard` / `TenantContextMiddleware` trong `common/` | HTTP infra → `infrastructure/http/{guards,middlewares}/` (xem `folder_structure_sop.md` §Enforcement) |
 | `OrgGuard` inject `PrismaService` query thẳng | Đi qua `IMembershipRepository` — guard không được bypass repository |
 | `org-permissions.ts` (catalog domain) đặt trong `common/` | `modules/tenant/domain/` — vocabulary của tenant domain, không phải abstraction cross-cutting |
 

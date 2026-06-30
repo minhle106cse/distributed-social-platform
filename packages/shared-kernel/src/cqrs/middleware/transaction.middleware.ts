@@ -1,7 +1,7 @@
 import { ICommandMiddleware, NextFn } from '../interfaces/command-middleware.interface.js'
 import { ICommand } from '../interfaces/command.interface.js'
 import { type ITransactionManager } from '../../database/transaction-manager.interface.js'
-import { ILogger } from '../../logger/index.js'
+import { ILogger, LogContext } from '../../logger/index.js'
 
 export class TransactionMiddleware implements ICommandMiddleware {
   constructor(
@@ -14,16 +14,23 @@ export class TransactionMiddleware implements ICommandMiddleware {
       return next()
     }
 
-    this.logger.debug(`[TransactionMiddleware] Starting transaction for ${command.name}`)
+    this.logger.debug(
+      { context: LogContext.TRANSACTION },
+      `Starting transaction for ${command.name}`,
+    )
 
     return this.transactionManager.run(async () => {
       try {
         const result = await next()
-        this.logger.debug(`[TransactionMiddleware] Transaction committed for ${command.name}`)
+        this.logger.debug(
+          { context: LogContext.TRANSACTION },
+          `Transaction committed for ${command.name}`,
+        )
         return result
       } catch (error) {
         this.logger.debug(
-          `[TransactionMiddleware] Transaction rolled back for ${command.name} due to error`,
+          { context: LogContext.TRANSACTION },
+          `Transaction rolled back for ${command.name} due to error`,
         )
         throw error
       }

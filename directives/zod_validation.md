@@ -74,6 +74,20 @@ async create(@Body() dto: CreateKnowledgeItemDto) {
 > `ZodValidationPipe` được đăng ký global trong `server.ts` (`app.useGlobalPipes(new ZodValidationPipe())`).
 > Không cần thêm `@UsePipes` ở từng controller.
 
+### 4. Zod là nơi DUY NHẤT validate input — domain/entity KHÔNG validate input
+
+> ⛔ **RULE (đã chốt):** Mọi validation đầu vào (presence, format, length, range, non-blank) **chỉ** nằm ở Zod tại **input boundary**. **Cấm** `if (!x.trim()) throw` hay bất kỳ kiểm tra input nào trong entity factory / domain.
+
+- **Lý do:** một nguồn sự thật duy nhất cho input validation → không drift, không validate 2 nơi. Domain **TIN** rằng input đã sạch khi tới tay nó.
+- **Mọi cửa nhận input đều có Zod**, không chỉ HTTP: HTTP body/params/query, **event consumer** (Kafka), command — validate bằng Zod *trước* khi dựng entity. (Nhờ vậy domain không cần tự thủ cho path non-HTTP.)
+- Factory chỉ giữ **bất biến type/structural** (vd `ManageableOrgRole = Exclude<OrgRole,'OWNER'>` compile-time) + intention-revealing — KHÔNG validate giá trị input. Xem `domain_modeling.md` §1.
+- **DB constraint** (`NOT NULL`, unique, FK, enum) là lưới cuối cùng, không thay cho Zod.
+
+> ⚠️ **Gotchá non-blank — thứ tự `.trim()` quan trọng:**
+> - `z.string()` chấp nhận cả `""` lẫn `"   "`. `z.string().min(1)` vẫn cho `"   "` lọt (length 3 ≥ 1).
+> - ✅ Đúng: `z.string().trim().min(1)` — `.trim()` biến đổi TRƯỚC → `"   "` → `""` → fail. Bonus: chuẩn hoá khoảng trắng đầu/cuối khi lưu.
+> - ❌ Sai: `z.string().min(1).trim()` — check trên chuỗi gốc (pass) rồi mới trim → lưu `""`.
+
 ## 🛠️ Execution & Tự động hoá
 Nếu viết API mới:
 1. Tạo schema file trước.

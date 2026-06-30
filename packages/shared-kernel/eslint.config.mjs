@@ -12,6 +12,13 @@ export default tseslint.config(
   // Prettier owns formatting; turn off any stylistic ESLint rules that conflict.
   eslintConfigPrettier,
   {
+    languageOptions: {
+      parserOptions: {
+        // Required in monorepos where multiple tsconfig candidates exist.
+        // Tells the parser to root tsconfig lookups from this package's directory.
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
     rules: {
       // CQRS bus generics rely on `any` constraints; align with auth-service/core-api.
       '@typescript-eslint/no-explicit-any': 'off',

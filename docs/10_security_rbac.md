@@ -140,7 +140,7 @@ Request + Cookie(accessToken) + Header(X-Org-Id: orgId)
   │   5. request.org = { orgId, orgRole, permissions }
   │   6. nếu route có @RequireOrgPermission(p) và p ∉ permissions → 403
   │
-  └─ TenantInterceptor  runWithTenant(request.org.orgId) → getTenantId() khả dụng cho repo
+  └─ TenantContextMiddleware mở ALS (đầu request); OrgGuard setTenantId(orgId) → getTenantId() khả dụng cho repo
 ```
 
 - Decorator khai báo trên route theo **action**, không theo role:
@@ -185,7 +185,7 @@ Request + Cookie(accessToken) + Header(X-Org-Id: orgId)
 
 > **RULE: Mọi truy vấn core-api BẮT BUỘC scope theo `orgId`. Không có ngoại lệ.**
 
-- **Nguồn orgId:** header `X-Org-Id` → `OrgGuard` xác thực membership → `TenantInterceptor` đưa vào `AsyncLocalStorage`. Repository đọc `getTenantId()` để chèn `WHERE org_id = ?`. (KHÔNG lấy orgId từ token.)
+- **Nguồn orgId:** header `X-Org-Id` → `TenantContextMiddleware` mở `AsyncLocalStorage` → `OrgGuard` xác thực membership + `setTenantId(orgId)`. Repository đọc `requireTenantId()` (fail-closed) để chèn `WHERE org_id = ?`. (KHÔNG lấy orgId từ token.)
 - **Cross-org access** → HTTP 403 `FORBIDDEN_TENANT`.
 - **Defense in depth:** cân nhắc Postgres Row-Level Security (RLS) như lớp bảo vệ thứ hai (Phase 8).
 - **Test bắt buộc:** mỗi endpoint phải có test "user org A không thấy data org B" (xem `docs/08`).

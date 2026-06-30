@@ -39,6 +39,62 @@ Do not pollute the console with unstructured strings.
   - *Note for dev mode:* `createLogger` uses `pino-pretty` for console output and directly pushes to Elasticsearch via `pino-elasticsearch`.
 - Never `console.log`.
 
+## Logger Hierarchy — ROOT một lần, CHILD mọi nơi (BẮT BUỘC)
+
+> ⚠️ Gotcha đã cắn (2026-06-28): mỗi lần gọi `createLogger()` tạo **một bộ pino transport RIÊNG** (worker thread pretty + connection Elasticsearch riêng). Gọi `createLogger()` ad-hoc trong feature code = nhân bản kết nối ES + mất `requestId` correlation. Đó KHÔNG phải child logger.
+
+**Mô hình đúng (1 root → N child, chung 1 transport):**
+
+| Vai trò | Cách làm | Gọi ở đâu |
+|---|---|---|
+| **ROOT** logger (1 transport / process) | `createLogger('<service>')` | **CHỈ 1 nơi**: composition root |
+| **CHILD** logger (mọi component) | DI, không tự tạo | service/middleware/handler |
+
+- **core-api (NestJS):** root = `LoggerModule.forRootAsync({ pinoHttp: { logger: createLogger('core-api') } })` trong `app.module.ts` (duy nhất). Mọi nơi khác **inject** child logger:
+  ```ts
+  import { InjectPinoLogger, PinoLogger } from 'nestjs-pino'
+  constructor(@InjectPinoLogger(XxxService.name) private readonly logger: PinoLogger) {}
+  ```
+  `@InjectPinoLogger(name)` gắn field `context: name` → Kibana filter `serviceContext: core-api` + `context: XxxService`. CQRS middleware nhận PinoLogger qua `inject: [PinoLogger]` ở `cqrs.module.ts` cũng là child này.
+- **auth-service (Fastify):** root tạo 1 lần ở bootstrap (`loggerInstance`), child qua `logger.child({ context })`.
+- ⛔ **CẤM** `const logger = createLogger('foo')` ở module scope / trong feature code. `createLogger` chỉ dùng ở composition root.
+
+### Field `context` — taxonomy & cách gắn
+
+Mỗi log line nên có `context` để filter Kibana cùng với `serviceContext` (= tên service từ root).
+
+- **Cross-service shared contexts** (pattern tồn tại ở CẢ auth-service + core-api): khai báo MỘT lần trong `shared-kernel/src/logger/log-context.ts` (`LogContext`), dùng y hệt ở mọi service → query `context: "CommandBus"` trải mọi service. Hiện có: `CommandBus`, `QueryBus`, `RetryMiddleware`, `TransactionMiddleware`, `EventBus` (CQRS in-process), `HttpLayer` (interceptor/hook), `ExceptionFilter` (global error).
+- **Cách gắn:**
+  - CQRS middleware (shared-kernel): tự đính `this.logger.info({ context: LogContext.X }, msg)` → object-first. Nhờ vậy **không cần** set context ở composition root; core-api vẫn giữ `requestId` (PinoLogger lấy per-request logger lúc log), auth-service nhận field qua root.
+  - NestJS service app-local: `@InjectPinoLogger(XxxService.name)` (vd KafkaProducerService, PollingPublisherService) → context = tên class, self-maintaining, KHÔNG cho vào `LogContext`.
+  - HTTP payload / `req.log`: thêm `context` vào object truyền vào log call.
+- `ILogger` (shared-kernel) có overload object-first (`info(obj, msg?)`) khớp cả pino lẫn nestjs-pino — đó là cách đính structured field.
+
+### Bảo mật log — Redaction (BẮT BUỘC) + payload ở debug
+
+- **Redaction áp ở cấp LOGGER, KHÔNG per-method** → mọi level (`info/warn/error/debug/fatal/trace`) đều bị mask, child logger kế thừa redact của root. Nó KHÔNG gắn riêng với debug; đặt payload ở debug chỉ là quyết định độc lập về volume.
+- **Root logger `createLogger` có `redact`** (pino, in-process TRƯỚC mọi transport) mask secret ở MỌI log dù object shape gì: `password/newPassword/currentPassword/token/accessToken/refreshToken/secret/authorization/cookie` + biến thể `*.x` (1 cấp lồng) + `req(uest).headers.authorization/cookie`. Censor = `[REDACTED]`. Paths = single source `LOG_REDACT_PATHS` (test `redact.spec.ts` khoá hành vi).
+- ⚠️ **2 GIỚI HẠN của redaction (phải biết):**
+  1. **Chỉ mask đúng path khai báo, theo độ sâu.** `*.password` chỉ bắt 1 cấp lồng (`input.password`), KHÔNG bắt sâu hơn (`a.b.password`). Lồng sâu hơn phải khai báo path tường minh.
+  2. **Chỉ mask FIELD trong object, KHÔNG mask chuỗi message.** `logger.info(\`pw=${pw}\`)` SẼ leak vì pw nằm trong string. → LUÔN truyền dữ liệu qua object (`logger.info({ pw }, 'msg')`), TUYỆT ĐỐI không nội suy secret vào message string.
+- **Payload command:** `LoggingMiddleware` log `input: command` ở **`debug`** (im prod, tránh body-volume), KHÔNG ở info. An toàn vì redaction đã mask secret → đọc log debug vẫn biết command chạy với input gì (password đã thành `[REDACTED]`).
+- ⚠️ Khi thêm secret field mới (vd `apiKey`), thêm path vào `LOG_REDACT_PATHS` — KHÔNG dựa vào "nhớ đừng log".
+- Muốn input ở prod cho 1 command cụ thể → log domain identifier an toàn trong HANDLER (vd `{itemId, spaceId}`), KHÔNG hạ debug→info ở middleware chung.
+
+### Buses & logger — verbosity theo bản chất từng bus
+
+Mức log KHÔNG đồng đều giữa 3 bus; nó tỉ lệ với (tác động ghi × giá trị audit) và NGHỊCH với tần suất:
+
+| Bus | Nhận logger? | Mức log | Lý do |
+|---|---|---|---|
+| `CommandBus` | KHÔNG (log qua `LoggingMiddleware`) | `info` lifecycle (executing→success+duration) + `error` | ghi, 1 handler, caller chờ, đáng audit, tần suất thấp |
+| `QueryBus` | **CÓ** `new QueryBus(logger)` | chỉ `debug` (name+duration) | đọc, tần suất CAO, HTTP-layer đã log request; info nữa = nhiễu. Không log error (domain error = 4xx bình thường; lỗi bất ngờ do ExceptionFilter log) |
+| `EventBus` | **CÓ** `new EventBus(logger)` | `error` khi handler fail + `debug` dispatch | fan-out fire-and-forget; lỗi bị NUỐT nên `error` là tín hiệu duy nhất. KHÔNG `info` success (fan-out N handler = spam) |
+
+- ⛔ KHÔNG copy nguyên `info` executing/success của CommandBus sang Query/Event. Query đọc nhiều → debug; Event fan-out → chỉ error + debug.
+- `EventBus`/`QueryBus` BẮT BUỘC truyền logger ở composition root: auth-service `new XxxBus(infra.logger)`; core-api `useFactory: (logger: PinoLogger) => new XxxBus(logger), inject: [PinoLogger]`. `CommandBus` vẫn `useValue: new CommandBus()` (không cần logger).
+- Bus vẫn là pure POJO — `ILogger` là abstraction của shared-kernel, không vi phạm `cqrs_pattern.md`.
+
 ## Shared HTTP Utilities (shared-kernel)
 
 To prevent response shape drift between services (auth-service dùng Fastify hooks, core-api dùng NestJS interceptors/filters), tất cả **business logic** của HTTP layer phải dùng chung từ `@distributed-social-platform/shared-kernel`.
