@@ -3,15 +3,17 @@
 > Last curated: **2026-06-30**
 > Đây là nguồn chủ quan (phase %, focus). Phần auto-detect bên dưới mới là ground truth — nếu lệch nhau thì file này stale.
 
-**Overall:** ~67% · **Phase đang làm:** Phase 2 (Event Backbone) ✅ Done + hardened · **Next:** Phase 3 — CQRS Read Model (hoặc commit Phase 2 trước)
+**Overall:** ~72% · **Phase đang làm:** Phase 1 feed endpoint ✅ Done (query SoT) · **Next:** Phase 3 — CQRS Read Model (hoặc taxonomy)
 
-> ✅ **Phase 2 refactor/hardening (2026-06-30, chưa commit):** lớp messaging làm lại bài bản theo pattern chuẩn —
+> ✅ **Feed read endpoint (2026-06-30, committed):** `GET /feed` — fan-out-on-read, query thẳng SoT. Module `feed` mới trong core-api (chỉ query side): `GetFeedQuery → GetFeedHandler → PrismaFeedQueryRepository`. Logic: `follows(targetType=SPACE)` → `knowledge_items(spaceId IN, status=PUBLISHED, deletedAt IS NULL)` DESC createdAt. Guard: `OrgGuard + KNOWLEDGE_READ`. KHÔNG có bảng mới. Schema: `Embedding` model gỡ (defer Phase 4). `prisma db push` đã drop bảng cũ. `turbo run build typecheck lint` = 12/12 xanh.
+
+> ✅ **Phase 2 refactor/hardening (2026-06-30, committed):** lớp messaging làm lại bài bản theo pattern chuẩn —
 > `KafkaClientService` singleton; `CompositeMessagePublisher` + `EVENT_TRANSPORT_MAP` (binder pattern, Kafka+queue coexist, queue stub sẵn); `EventRouter` (Message Dispatcher, thay switch tay); `defineEvent` typed factory (vá `payload: unknown`); **envelope đổi sang CloudEvents 1.0** (`CloudEvent<T>`: id/source/type/time/data + orgid/partitionkey ext); worker có `PrismaTransactionManager` + `getTx()` (handler không chạm Prisma). Cấu trúc shared-kernel: `events/` (vocabulary) vs `messaging/routing|ports` (plumbing).
 > 📄 **Directive mới:** `directives/eventing_patterns.md` — reference architecture cho toàn bộ event-driven (domain vs integration event, CloudEvents, binder, dispatcher, idempotent receiver) + cite nguồn.
 > ✅ **Reliability hardening (2026-06-30, đợt 2):** Idempotent producer (`producer({ idempotent: true })`) + Consumer DLQ (`DeadLetterProducer` → `<topic>.DLQ`, retry bounded `CONSUMER_MAX_RETRIES` → poison pill dead-letter ngay). Cấu trúc: outbox module chia subfolder theo role (`repositories/`, `publishers/`); worker `application/events/<name>/` (bộ ba commands/queries/events); handler gom vào mảng `INTEGRATION_HANDLERS` (thêm handler = 1 dòng).
 > 🧭 **Quyết định eventing (2026-06-30):** EventRouter **1:1** trong 1 consumer group; fan-out 1 event → N concern = **N consumer GROUP riêng** (group id theo concern, vd `KAFKA_FEED_CONSUMER_GROUP`), KHÔNG nhồi N handler vào 1 router. EventRouter scope **per-module** (rẻ, là Map in-mem), KHÔNG global — khác `KafkaClientService` singleton (giữ connection).
 > ⛔ **ROLLBACK read model (2026-06-30):** Gỡ **`feed_timeline` (read model) + ProcessedEvent + toàn bộ worker feed projection** (handler, consumer, repo, DLQ, consumer env). Lý do: read model là optimization làm SỚM — app chưa xong, chưa có đường đọc nào dùng tới (bảng write-only). **Quy tắc mới:** schema chỉ chứa **source of truth**; query đi thẳng source of truth; read model/projection để dành tới **read phase** (Phase 3). GIỮ backbone: core-api outbox/Kafka vẫn emit, shared-kernel messaging, `Follow`. Worker = scaffold consumer rỗng (KafkaClientService inert), chờ consumer thật. ⚠️ DB vẫn còn bảng cũ tới khi chạy `prisma db push`.
-> ⛔ **Gỡ NỐT read model trong schema (2026-06-30):** xoá cả section `// READ MODELS — CQRS Projections` ở core-api schema — `CreditBalanceSummary`, `ReputationSummary`, `UserProfile` (cả 3 unused trong code). Schema giờ **chỉ source of truth**: giữ event ledger nguồn sự thật `CreditEvent` + `ReputationEvent` (append-only), gỡ projection của chúng → dựng lại ở read phase. (Còn `Embedding` = vector search index Phase 4, để riêng — chưa quyết.)
+> ⛔ **Gỡ NỐT read model trong schema (2026-06-30):** xoá cả section `// READ MODELS — CQRS Projections` ở core-api schema — `CreditBalanceSummary`, `ReputationSummary`, `UserProfile` (cả 3 unused trong code). Schema giờ **chỉ source of truth**: giữ event ledger nguồn sự thật `CreditEvent` + `ReputationEvent` (append-only), gỡ projection của chúng → dựng lại ở read phase. `Embedding` đã **gỡ** (defer Phase 4, quyết 2026-06-30).
 
 > ✅ **Phase 2a hoàn thành + smoke test Docker:** Transactional Outbox + Polling Publisher → Kafka. Resilience (Kafka down→up) OK.
 > ✅ **Phase 2b hoàn thành + smoke test:** worker-service consume knowledge-events → FeedTimeline fan-out + ProcessedEvent idempotency. `npm run check` xanh.
@@ -41,6 +43,7 @@
 | tenant (Org, Space, Membership, Invite, OrgGuard) | core-api | ✅ Done |
 | **knowledge** (KnowledgeItem CRUD + OCC versioning + Revision) | core-api | ✅ Done — 8 endpoints, OCC, soft-delete, Revision history |
 | **engagement** (Vote + Bookmark + Accept Answer + Follow) | core-api | ✅ Done — 11 endpoints, hard-delete, cross-module repo sharing |
+| **feed** (GET /feed — fan-out-on-read, query SoT) | core-api | ✅ Done — 1 endpoint, query follows×knowledge_items |
 | taxonomy (Tag/Topic, Space subscribe) | core-api | ⬜ Deferred — sau Phase 3 |
 
 #### Phase 2 — chi tiết
