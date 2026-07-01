@@ -42,7 +42,9 @@
 > Last curated: **2026-06-30**
 > Đây là nguồn chủ quan (phase %, focus). Phần auto-detect bên dưới mới là ground truth — nếu lệch nhau thì file này stale.
 
-**Overall:** ~79% · **Phase đang làm:** Phase 6 (early) — notification-service Milestone B2 ✅ Done · **Next:** Phase 3 CQRS Read Model hoặc taxonomy
+**Overall:** ~80% · **Phase đang làm:** Phase 6 (early) — notification-service B2 + reliability hardening ✅ Done · **Next:** Phase 3 CQRS Read Model hoặc taxonomy
+
+> ✅ **Pipeline hardening (2026-07-01):** principal review outbox→consumer. Fixed: consumer DLQ+bounded-retry (poison pill không còn nghẽn partition), partition-key ghost-follower (FollowCreated/Removed cùng key `Follow.streamKey`), outbox HA-safe (`FOR UPDATE SKIP LOCKED` claim + INFLIGHT reaper, core_db thêm `OutboxStatus.INFLIGHT`+`claimed_at`), consumer group đổi tên `notification-service-group`. Chi tiết trong `.ai/PROJECT_STATUS.md`.
 
 > ✅ **notification-service Milestone B2 (2026-06-30):** FOLLOW events + fan-out to space followers.
 > - **shared-kernel:** `FollowCreatedEvent` + `FollowRemovedEvent` (payload: orgId/userId/targetType/targetId) + export từ `events/index.ts`. Rebuild dist.

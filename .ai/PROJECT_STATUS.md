@@ -3,7 +3,15 @@
 > Last curated: **2026-06-30**
 > Đây là nguồn chủ quan (phase %, focus). Phần auto-detect bên dưới mới là ground truth — nếu lệch nhau thì file này stale.
 
-**Overall:** ~79% · **Phase đang làm:** Phase 6 (early) — notification-service Milestone B2 ✅ Done · **Next:** Phase 3 CQRS Read Model hoặc taxonomy
+**Overall:** ~80% · **Phase đang làm:** Phase 6 (early) — notification-service B2 + reliability hardening ✅ Done · **Next:** Phase 3 CQRS Read Model hoặc taxonomy
+
+> ✅ **Pipeline hardening (2026-07-01) — principal review + fix toàn bộ finding:**
+> - **[HIGH] Consumer DLQ + bounded retry (LIVE).** `DeadLetterProducer` (notification-service `infrastructure/kafka`). Poison pill (parse fail) → `<topic>.DLQ` ngay + commit; handler error → retry bounded (`KAFKA_CONSUMER_MAX_RETRIES=3`, linear backoff `KAFKA_CONSUMER_RETRY_BACKOFF_MS`) → hết budget thì DLQ + commit. Consumer LUÔN commit → hết cảnh poison pill nghẽn partition (trước đây `throw` → crash-loop vô hạn).
+> - **[HIGH] Partition-key ghost-follower bug (fixed).** FollowCreated keyed `follow.id`, FollowRemoved keyed `targetId` → lạc partition → unfollow có thể xử lý trước follow → follower ma. Nay CẢ HAI key bằng `Follow.streamKey(userId, targetType, targetId)` → per-relationship ordering đảm bảo.
+> - **[MED] Outbox HA-safe (fixed).** PollingPublisher đổi từ `findMany(PENDING)` trần → claim `FOR UPDATE SKIP LOCKED` (PENDING→INFLIGHT, publish ngoài tx) + Reaper reset INFLIGHT quá `OUTBOX_CLAIM_TIMEOUT_MS`. An toàn khi core-api chạy >1 replica. Schema core_db thêm `OutboxStatus.INFLIGHT` + `claimed_at` (đã `prisma db push`, verify SQL trên DB thật).
+> - **[LOW] Consumer group đổi tên** `notification-service-knowledge-group` → `notification-service-group` (đã consume cả engagement, tên cũ sai nghĩa). `.env` + defaults cập nhật.
+> - **Còn nợ có ý thức:** [LOW] retry outbox có thể reorder same-aggregate (fix = per-key sequencing, không tương xứng); [INFO] fan-out point-in-time, follow ngay sát publish có thể miss (bản chất async projection, best-effort).
+> - `turbo typecheck lint` core-api + notification-service = 5/5 xanh.
 
 > ✅ **notification-service Milestone B2 (2026-06-30):** FOLLOW events + fan-out to space followers.
 > - **shared-kernel:** `FollowCreatedEvent` + `FollowRemovedEvent` (payload: orgId/userId/targetType/targetId) + export từ `events/index.ts`. Rebuild dist.
