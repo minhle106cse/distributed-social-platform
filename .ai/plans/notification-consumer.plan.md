@@ -5,6 +5,50 @@
 
 ---
 
+## 🚦 TRẠNG THÁI (cập nhật 2026-06-30) — **B1 + B2 ĐÃ HOÀN TẤT**
+
+**✅ MILESTONE B2 HOÀN TẤT.** `turbo typecheck lint` = 5/5 xanh. `prisma db push notification_db` đã thêm bảng `space_followers`. Smoke test B2 chưa chạy — cần boot Docker + thực hiện REST calls follow/unfollow/publish. Đọc B2 Acceptance bên dưới để biết cần verify gì.
+
+### Cấu trúc B1 đã tạo (mirror khi viết B2)
+```
+apps/notification-service/
+├── package.json, tsconfig.json, nest-cli.json, eslint.config.mjs, prisma.config.ts
+├── prisma/schema.prisma                    # model Notification (đã db:push vào notification_db)
+└── src/
+    ├── main.ts, app.ts, bootstrap/{server.ts,fastify.ts}
+    ├── config/{env.validation.ts,env.config.ts,config.module.ts}
+    ├── app.module.ts
+    ├── infrastructure/
+    │   ├── database/prisma/{prisma.service.ts,prisma.module.ts}
+    │   ├── kafka/{kafka-client.service.ts,kafka.module.ts}
+    │   └── http/{guards/jwt-auth.guard.ts, filter/, interceptors/, controllers/health.controller.ts}
+    └── modules/notification/
+        ├── notification.module.ts
+        ├── application/
+        │   ├── repositories/notification.repository.interface.ts   # INotificationRepository + NOTIFICATION_REPOSITORY token
+        │   └── events/item-published/item-published.handler.ts     # ⚠️ B2.3 sẽ ĐỔI file này (fan-out)
+        ├── infrastructure/
+        │   ├── repositories/prisma-notification.repository.ts
+        │   └── consumers/knowledge-events.consumer.ts              # ⚠️ B2.2 mở rộng (subscribe thêm topic) HOẶC thêm consumer thứ 2
+        └── presentation/{notification.controller.ts, schemas/get-notifications.schema.ts}
+```
+
+### Sự thật đã verify (dùng cho B2 — KHÔNG đoán lại)
+- **Wire format core-api emit** (đã đọc `polling-publisher.service.ts` + `kafka-producer.service.ts`): topic = `topicForEventType(type)`, Kafka key = `event.partitionkey` (= aggregateId), value = `JSON.stringify(cloudEvent)`. CloudEvent 1.0: `{specversion,id,source:'/cortex/core-api/<aggregateType>',type,time,subject:aggregateId,datacontenttype,data:<flat payload>,orgid,partitionkey}`. `data` = payload phẳng.
+- **Outbox append idiom** (`publish-knowledge.handler.ts:34`): `await this.outboxRepo.append(XxxEvent.create({ aggregateId, orgId, payload: {...} }))`. Inject `@Inject(OUTBOX_REPOSITORY) IOutboxRepository` từ `@/modules/outbox/domain/repositories/outbox.repository`.
+- **FOLLOW infra đã có sẵn trong shared-kernel:** `EventType.FOLLOW_CREATED/FOLLOW_REMOVED` (event-types.ts), `EVENT_TOPIC_MAP` → `engagement-events`, `EVENT_TRANSPORT_MAP` → `[Transport.KAFKA]`. ⇒ B2.1 chỉ cần TẠO 2 file definition + wire vào handler. KHÔNG đụng maps.
+- **engagement follow/unfollow handlers** (đường dẫn thật):
+  - `apps/core-api/src/modules/engagement/application/commands/follow-target/follow-target.handler.ts` — hiện có `orgId = requireTenantId()`, `Follow.create(...)`, `followRepo.add(follow)`.
+  - `.../follow-target/follow-target.command.ts` — **`options = { transactional: false }`** ⚠️ phải đổi `transactional: true` để outbox append atomic (giống publish-knowledge).
+  - `.../unfollow-target/unfollow-target.handler.ts` — chỉ có `userId/targetType/targetId`, KHÔNG load entity ⇒ **không có followId sẵn**. Lấy `orgId = requireTenantId()`. ⇒ **FollowRemoved payload BỎ followId** (projection xoá theo PK `[spaceId,userId]`, không cần followId). Đổi command options → `transactional: true`.
+- **Smoke-test recipe** (đã verify B1): xem memory `smoke-test-kafka-consumer` — bơm CloudEvent byte-faithful vào topic, boot consumer TRƯỚC khi produce (`fromBeginning:false`), verify own-DB + `kafka-consumer-groups --describe` LAG 0. Scripts mẫu B1 ở scratchpad session trước (produce-event.cjs / make-jwt.cjs) — viết lại tương tự cho FOLLOW events + engagement-events topic.
+- **Finding nhỏ (tùy chọn fix):** mọi service đọc `KAFKA_CLIENT_ID` từ `.env` dùng chung (=`core-api`) ⇒ kafka-ui hiển thị clientId sai. Không ảnh hưởng delivery. Quyết định riêng của user, đừng tự sửa.
+- **Gotcha:** sửa shared-kernel xong PHẢI rebuild `dist/` (`turbo run build --filter=shared-kernel` hoặc xoá `packages/shared-kernel/dist` + rebuild) nếu không IDE/consumer đỏ. Git Bash Windows: `docker exec ... psql` cần `MSYS_NO_PATHCONV=1`. Tạo DB: `psql -U root -d postgres` (KHÔNG `-d root`).
+
+---
+
+---
+
 ## 0. BỐI CẢNH BẮT BUỘC ĐỌC
 
 Dự án **Cortex** (B2B knowledge hub). Backbone event đã LIVE nhưng **chưa ai consume** (cố ý):
@@ -105,9 +149,13 @@ model Notification {
 Notification "Mới trong space bạn follow" → recipient = followers của space (trừ tác giả). Cần FOLLOW events + local follower projection.
 
 ### B2.1 — core-api emit FOLLOW events (prereq)
-- Trong engagement module, command tạo/xoá follow → `outboxRepo.append(FollowCreatedEvent.create(...))` / `FollowRemovedEvent.create(...)` trong cùng tx (atomic, mirror publish-knowledge.handler).
-- Tạo `shared-kernel/src/events/definitions/follow-created.event.ts` + `follow-removed.event.ts` (payload `{ followId, orgId, userId, targetType, targetId }`). `EventType.FOLLOW_CREATED/REMOVED` + map đã có (topic `engagement-events`).
-- Verify outbox → Kafka `engagement-events` có message khi follow/unfollow.
+- **shared-kernel:** tạo `src/events/definitions/follow-created.event.ts` + `follow-removed.event.ts` (mirror `knowledge-published.event.ts`):
+  - `FollowCreatedPayload = { orgId, userId, targetType, targetId }` (BỎ followId — không cần cho projection; xem grounding). `defineEvent({ eventType: EventType.FOLLOW_CREATED, aggregateType: 'Follow' })`.
+  - `FollowRemovedPayload = { orgId, userId, targetType, targetId }` + `EventType.FOLLOW_REMOVED`.
+  - Export cả 2 trong `src/events/index.ts`. Rebuild dist (gotcha ở grounding).
+- **engagement follow-target.handler:** sau `followRepo.add(follow)` → `outboxRepo.append(FollowCreatedEvent.create({ aggregateId: follow.id, orgId, payload: { orgId, userId: follow.userId, targetType: follow.targetType, targetId: follow.targetId } }))`. Inject `OUTBOX_REPOSITORY`. Đổi `follow-target.command.ts` options → **`transactional: true`**.
+- **engagement unfollow-target.handler:** lấy `orgId = requireTenantId()` (thêm import); sau `followRepo.remove(...)` → `outboxRepo.append(FollowRemovedEvent.create({ aggregateId: command.targetId, orgId, payload: { orgId, userId: command.userId, targetType: command.targetType, targetId: command.targetId } }))`. Đổi `unfollow-target.command.ts` options → **`transactional: true`**. ⚠️ `requireTenantId()` import từ `@/common/tenant/tenant.context`.
+- **Verify:** smoke (memory `smoke-test-kafka-consumer` ngược lại — produce qua REST core-api hoặc đọc topic) → `kafka-console-consumer --topic engagement-events` thấy CloudEvent khi follow/unfollow. Hoặc gọn hơn: bơm thẳng test ở B2.2.
 
 ### B2.2 — notification-service: local follower projection
 ```prisma
@@ -121,12 +169,18 @@ model SpaceFollower {
   @@map("space_followers")
 }
 ```
-- Consumer thứ 2 (group riêng? — KHÔNG: cùng service, nhưng EventRouter 1:1 nên cần consumer cho topic `engagement-events`, group `KAFKA_NOTIFICATION_CONSUMER_GROUP` có thể subscribe nhiều topic; handler FOLLOW_CREATED/REMOVED riêng). Xem `eventing_patterns.md §4.2` về 1 consumer nhiều topic vs nhiều group.
-- Handler `FollowCreated` → upsert SpaceFollower (chỉ targetType=SPACE); `FollowRemoved` → delete. Idempotent (upsert/delete by PK).
+- `prisma db push` lại vào `notification_db` (thêm bảng `space_followers`, KHÔNG drop `notifications`).
+- **Consumer cho engagement-events** — quyết định đã chốt: KHÔNG fan-out (cùng concern notification), nên dùng **CÙNG group** `KAFKA_NOTIFICATION_CONSUMER_GROUP`. 2 lựa chọn cấu trúc (chọn cái sạch hơn):
+  - (a) **Mở rộng** `knowledge-events.consumer.ts` → subscribe CẢ `knowledge-events` + `engagement-events`, dùng 1 `EventRouter` register 3 handler (KNOWLEDGE_PUBLISHED, FOLLOW_CREATED, FOLLOW_REMOVED). Router 1:1 per-type vẫn đúng (3 type khác nhau, guard chỉ ném khi TRÙNG type). Rename file → `notification-events.consumer.ts` cho đúng nghĩa.
+  - (b) Thêm `engagement-events.consumer.ts` riêng cùng group. Nhiều file hơn nhưng tách topic rõ.
+  - → Khuyến nghị **(a)** (1 consumer, 1 router, ít bản sao boilerplate). EventRouter scope per-module vẫn 1 (cùng group).
+- **Handlers** (mirror `item-published.handler.ts`): `FollowCreatedHandler` (`readonly eventType = EventType.FOLLOW_CREATED`) → chỉ xử lý `targetType === 'SPACE'`, `upsert SpaceFollower` by PK `[spaceId,userId]` (spaceId = payload.targetId). `FollowRemovedHandler` → `delete` by PK. Idempotent tự nhiên (upsert/delete by PK). Đặt ở `application/events/follow-created/` + `follow-removed/`.
+- **Repo:** thêm `ISpaceFollowerRepository` (application) + `PrismaSpaceFollowerRepository` (infrastructure): `upsert(row)`, `remove(spaceId,userId)`, `findFollowerIds(orgId, spaceId)` (dùng ở B2.3). Đăng ký token trong `notification.module.ts`.
 
 ### B2.3 — Đổi item-published handler → fan-out
-- `handle()`: query local `SpaceFollower WHERE spaceId = payload.spaceId AND orgId = payload.orgId`, loại `payload.createdByUserId` → tạo N notification rows (type `NEW_IN_SPACE`), `createMany skipDuplicates` (unique `[recipientUserId, sourceEventId]` chặn trùng).
-- B1 notification cho tác giả: giữ hay bỏ? → đổi semantics sang follower fan-out (tác giả không tự notify mình). Ghi quyết định.
+- ⚠️ Sửa `application/events/item-published/item-published.handler.ts` (file B1 đã có). Inject thêm `ISpaceFollowerRepository`.
+- `handle()`: `const followerIds = await spaceFollowerRepo.findFollowerIds(payload.orgId, payload.spaceId)` → loại `payload.createdByUserId` → map thành N `InsertNotificationRow` (type **`NEW_IN_SPACE`**, recipientUserId = followerId, actorUserId = createdByUserId, titleSnapshot = payload.title) → `notificationRepo.insertMany(rows)` (đã `createMany skipDuplicates`; unique `[recipientUserId, sourceEventId]` chặn trùng khi redeliver). Nếu followerIds rỗng → insertMany([]) → no-op (repo đã guard `length === 0`).
+- **QUYẾT ĐỊNH (ghi vào memory + PROJECT_STATUS):** B1 notify tác giả (type ITEM_PUBLISHED); **B2 ĐỔI semantics** → fan-out cho follower của space, tác giả KHÔNG tự notify mình, type `NEW_IN_SPACE`. Type `ITEM_PUBLISHED` ngừng sinh (giữ enum cho lịch sử/rows cũ).
 
 ### B2 — Acceptance
 - [ ] Follow/unfollow ở core-api → notification-service SpaceFollower cập nhật (qua Kafka).

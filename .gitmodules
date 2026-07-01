@@ -7,3 +7,6 @@
 [submodule "apps/worker-service"]
 	path = apps/worker-service
 	url = git@github-me:minhle106cse/distributed-social-platform_worker-service.git
+[submodule "apps/notification-service"]
+	path = apps/notification-service
+	url = git@github-me:minhle106cse/distributed-social-platform_notification-service.git

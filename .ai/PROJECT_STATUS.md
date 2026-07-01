@@ -3,7 +3,15 @@
 > Last curated: **2026-06-30**
 > Đây là nguồn chủ quan (phase %, focus). Phần auto-detect bên dưới mới là ground truth — nếu lệch nhau thì file này stale.
 
-**Overall:** ~72% · **Phase đang làm:** Phase 1 feed endpoint ✅ Done (query SoT) · **Next:** Phase 3 — CQRS Read Model (hoặc taxonomy)
+**Overall:** ~79% · **Phase đang làm:** Phase 6 (early) — notification-service Milestone B2 ✅ Done · **Next:** Phase 3 CQRS Read Model hoặc taxonomy
+
+> ✅ **notification-service Milestone B2 (2026-06-30):** FOLLOW events + fan-out to space followers.
+> - **shared-kernel:** `FollowCreatedEvent` + `FollowRemovedEvent` (payload: orgId/userId/targetType/targetId) + export từ `events/index.ts`. Rebuild dist.
+> - **core-api engagement:** `follow-target.command.ts` + `unfollow-target.command.ts` → `transactional: true`. `FollowTargetHandler` inject `OUTBOX_REPOSITORY` → append `FollowCreatedEvent` sau `followRepo.add()`. `UnfollowTargetHandler` inject `OUTBOX_REPOSITORY` + `requireTenantId()` → append `FollowRemovedEvent` sau `followRepo.remove()`. `EngagementModule` import `OutboxModule`.
+> - **notification-service:** `SpaceFollower` model (PK `[spaceId,userId]`) + `prisma db push notification_db` ✅. `ISpaceFollowerRepository` + `PrismaSpaceFollowerRepository` (upsert/remove/findFollowerIds). `FollowCreatedHandler` (upsert SpaceFollower nếu targetType=SPACE). `FollowRemovedHandler` (remove by PK). `NotificationEventsConsumer` (rename từ `KnowledgeEventsConsumer`) — subscribe cả `knowledge-events` + `engagement-events`, 1 EventRouter register 3 handlers. `ItemPublishedHandler` đổi: fan-out to `findFollowerIds(orgId,spaceId)` → filter out author → `insertMany(NEW_IN_SPACE)`. `turbo typecheck lint` = 5/5 xanh.
+> - **Quyết định B2:** type `ITEM_PUBLISHED` ngừng sinh; `NEW_IN_SPACE` là type mới — tác giả KHÔNG tự notify mình (chỉ follower của space mà tác giả đăng vào). Rows cũ ITEM_PUBLISHED giữ trong DB (backward-compat). `space_followers` = local projection từ FOLLOW events (microservice own-data pattern), KHÔNG join core_db.
+
+> ✅ **notification-service Milestone B1 (2026-06-30):** First real Kafka consumer — notification-service fully bootstrapped. NestJS + Fastify + own DB (`notification_db`). `KnowledgeEventsConsumer` (kafkajs raw, group `notification-service-knowledge-group`) → `EventRouter` → `ItemPublishedHandler` → `PrismaNotificationRepository.insertMany(skipDuplicates)`. Idempotent via `@@unique([recipientUserId, sourceEventId])`. REST: `GET /api/v1/notifications` (JWT + X-Org-Id) + `PATCH /api/v1/notifications/:id/read`. No OrgGuard (notification-service has no memberships — JWT auth + recipientUserId filter = naturally tenant-safe). `prisma db push notification_db` ✅. `turbo build typecheck lint` = 4/4 xanh. **✅ SMOKE-TESTED end-to-end (2026-06-30):** bơm CloudEvent byte-faithful vào `knowledge-events` → row ghi đúng (titleSnapshot snapshot từ payload); redeliver cùng event id → KHÔNG nhân đôi (count=1); GET trả row (401 nếu thiếu JWT); PATCH read: other-user=404/author=200; consumer group LAG 0. ⚠️ **Finding nhỏ:** consumer/producer report `CLIENT-ID=core-api` trong kafka-ui vì `.env` set `KAFKA_CLIENT_ID=core-api` toàn cục (worker-service cùng pattern) — observability mờ, không ảnh hưởng delivery.
 
 > ✅ **Feed read endpoint (2026-06-30, committed):** `GET /feed` — fan-out-on-read, query thẳng SoT. Module `feed` mới trong core-api (chỉ query side): `GetFeedQuery → GetFeedHandler → PrismaFeedQueryRepository`. Logic: `follows(targetType=SPACE)` → `knowledge_items(spaceId IN, status=PUBLISHED, deletedAt IS NULL)` DESC createdAt. Guard: `OrgGuard + KNOWLEDGE_READ`. KHÔNG có bảng mới. Schema: `Embedding` model gỡ (defer Phase 4). `prisma db push` đã drop bảng cũ. `turbo run build typecheck lint` = 12/12 xanh.
 
@@ -29,7 +37,7 @@
 | 3 | CQRS & Read Model | ⬜ Chưa bắt đầu |
 | 4 | AI Search & Discovery (RAG) | ⬜ Chưa bắt đầu |
 | 5 | Credit Economy & Saga | ⬜ Chưa bắt đầu |
-| 6 | Realtime & Workers | ⬜ Chưa bắt đầu |
+| 6 | Realtime & Workers | 🔄 Khởi động sớm — notification-service B1+B2 done |
 | 7 | The Great Migration | ⬜ Chưa bắt đầu |
 | 8 | Production Hardening | ⬜ Chưa bắt đầu |
 
@@ -63,6 +71,18 @@
 | ~~Idempotency (ProcessedEvent guard)~~ | worker-service | ⛔ **Removed 2026-06-30** |
 | ~~FeedTimeline fan-out (read model projection)~~ | worker-service | ⛔ **Removed 2026-06-30** — defer tới read phase |
 | ~~Smoke test 2b (feed_timeline)~~ | — | ⛔ N/A sau rollback |
+
+#### Phase 6 (early) — notification-service
+
+| Hạng mục | Service | Trạng thái |
+|---|---|---|
+| Bootstrap NestJS+Fastify + own DB (notification_db) | notification-service | ✅ Done B1 |
+| KnowledgeEventsConsumer (kafkajs raw, group riêng) | notification-service | ✅ Done B1 |
+| ItemPublishedHandler → notify author | notification-service | ✅ Done B1 |
+| GET /notifications + PATCH /:id/read (JWT-only, no OrgGuard) | notification-service | ✅ Done B1 |
+| Emit FOLLOW_CREATED/REMOVED từ engagement module | core-api | ✅ Done B2 |
+| SpaceFollower local projection | notification-service | ✅ Done B2 |
+| Fan-out to space followers (NEW_IN_SPACE) | notification-service | ✅ Done B2 |
 
 **Quyết định kiến trúc đã chốt liên quan:**
 - Org context truyền qua `x-org-id` header + `OrgGuard` (KHÔNG nhúng `orgId` vào JWT). System RBAC (auth) và Org RBAC (core) tách biệt hoàn toàn.
