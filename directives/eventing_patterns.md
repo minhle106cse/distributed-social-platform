@@ -129,19 +129,22 @@ Topic Kafka tra qua `EVENT_TOPIC_MAP` (cả 2 map ở `shared-kernel/src/messagi
 
 ### 4.3 Handler — giống MediatR `INotificationHandler<T>`
 ```typescript
-class KnowledgePublishedHandler implements IIntegrationEventHandler<KnowledgePublishedPayload> {
-  readonly eventType = EventType.KNOWLEDGE_PUBLISHED   // subscription declaration
+class ItemPublishedHandler implements IIntegrationEventHandler<KnowledgePublishedPayload> {
+  readonly eventType = EventType.KNOWLEDGE_PUBLISHED         // subscription declaration
+  readonly idempotency = 'dedup-constraint' as const        // BẮT BUỘC — xem idempotency_strategy.md
   async handle(event: CloudEvent<KnowledgePublishedPayload>) {
-    if (await this.feedRepo.isEventProcessed(event.id)) return  // idempotent
-    await this.txManager.run(async () => { /* nhiều repo write atomic */ })
+    // dedup nằm NGAY trong lệnh ghi: createMany({ skipDuplicates }) trên
+    // @@unique([recipientUserId, sourceEventId]) — không cần check-rồi-ghi tách rời.
+    await this.notificationRepo.insertMany(rows)
   }
 }
 ```
 
 **Rules:**
 - Handler là **subscriber** → tự khai `readonly eventType` (event = 1:N, khác command 1:1). Đăng ký: `router.register(handler)`.
+- **`readonly idempotency` là BẮT BUỘC** (compile-time). Buộc tác giả trả lời "chạy 2 lần thì sao?" — `natural-key` (upsert/delete PK) hoặc `dedup-constraint` (unique trên event.id). `'none'` bị `register()` từ chối lúc boot. Toàn bộ ở `idempotency_strategy.md`.
+- Dedup đặt **nguyên tử trong lệnh ghi** (`ON CONFLICT`/upsert/delete PK), KHÔNG check-rồi-ghi tách rời (khe hở crash) và KHÔNG cần bảng inbox tập trung khi side effect là ghi-DB-cùng-database.
 - Handler KHÔNG import Prisma. Phối hợp nhiều repo qua `ITransactionManager.run()` (xem `domain_modeling.md` + getTx pattern).
-- Idempotency check theo `event.id` là **bắt buộc** với mọi handler có side-effect ghi DB.
 - Lỗi trong handler ném ra cho adapter (adapter quyết retry/DLQ) — đừng nuốt im lặng.
 
 ---

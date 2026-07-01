@@ -5,6 +5,12 @@
 
 **Overall:** ~80% · **Phase đang làm:** Phase 6 (early) — notification-service B2 + reliability hardening ✅ Done · **Next:** Phase 3 CQRS Read Model hoặc taxonomy
 
+> ✅ **Idempotency safety net (2026-07-02) — 6 nước đi principal giữ an toàn luồng:**
+> - **[Enforce] Compile-time invariant.** `IIntegrationEventHandler.idempotency` (shared-kernel) BẮT BUỘC: `'natural-key' | 'dedup-constraint' | 'none'`. Handler quên → `error TS2420` (đã chứng minh: bỏ field → typecheck đỏ). `EventRouter.register` ném lúc boot nếu `'none'`. → invariant *được ép buộc*, không *được nhớ* — chặn "handler tương lai quên idempotent".
+> - **[Observability] Metrics** (`/metrics`, prom-client): `notification_dedup_skipped_total` (từ `createMany().count`), `notification_dlq_total{reason}`, `notification_handler_retry_total{eventType}` → phân biệt "dedup khỏe" vs "ăn nhầm event thật".
+> - **[Docs] Directive mới `idempotency_strategy.md`:** chốt "dedup tại điểm ghi, không inbox tập trung" + 2 pattern được phê duyệt + **tripwire** (xem lại khi có side effect ngoài-DB / không-idempotent-tự-nhiên) + **đường lùi** (IdempotentRouter decorator, đã chứng minh rẻ) + YAGNI (không dựng inbox sớm). `eventing_patterns.md` §4.3 cập nhật field bắt buộc.
+> - **Giữ nguyên** idempotent-writes (quyết định cũ đúng); KHÔNG dựng inbox (chưa có side effect ngoài DB). `turbo typecheck lint` = xanh.
+
 > ✅ **Pipeline hardening (2026-07-01) — principal review + fix toàn bộ finding:**
 > - **[HIGH] Consumer DLQ + bounded retry (LIVE).** `DeadLetterProducer` (notification-service `infrastructure/kafka`). Poison pill (parse fail) → `<topic>.DLQ` ngay + commit; handler error → retry bounded (`KAFKA_CONSUMER_MAX_RETRIES=3`, linear backoff `KAFKA_CONSUMER_RETRY_BACKOFF_MS`) → hết budget thì DLQ + commit. Consumer LUÔN commit → hết cảnh poison pill nghẽn partition (trước đây `throw` → crash-loop vô hạn).
 > - **[HIGH] Partition-key ghost-follower bug (fixed).** FollowCreated keyed `follow.id`, FollowRemoved keyed `targetId` → lạc partition → unfollow có thể xử lý trước follow → follower ma. Nay CẢ HAI key bằng `Follow.streamKey(userId, targetType, targetId)` → per-relationship ordering đảm bảo.

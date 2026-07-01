@@ -44,6 +44,8 @@
 
 **Overall:** ~80% · **Phase đang làm:** Phase 6 (early) — notification-service B2 + reliability hardening ✅ Done · **Next:** Phase 3 CQRS Read Model hoặc taxonomy
 
+> ✅ **Idempotency safety net (2026-07-02):** `IIntegrationEventHandler.idempotency` field BẮT BUỘC (compile-time, `natural-key`|`dedup-constraint`|`none`) + `EventRouter.register` từ chối `'none'` lúc boot → chặn handler quên idempotent. Metrics dedup/DLQ/retry ở `/metrics`. Directive mới `idempotency_strategy.md` (quyết định + tripwire + đường lùi inbox decorator + YAGNI). Chi tiết `.ai/PROJECT_STATUS.md`.
+
 > ✅ **Pipeline hardening (2026-07-01):** principal review outbox→consumer. Fixed: consumer DLQ+bounded-retry (poison pill không còn nghẽn partition), partition-key ghost-follower (FollowCreated/Removed cùng key `Follow.streamKey`), outbox HA-safe (`FOR UPDATE SKIP LOCKED` claim + INFLIGHT reaper, core_db thêm `OutboxStatus.INFLIGHT`+`claimed_at`), consumer group đổi tên `notification-service-group`. Chi tiết trong `.ai/PROJECT_STATUS.md`.
 
 > ✅ **notification-service Milestone B2 (2026-06-30):** FOLLOW events + fan-out to space followers.

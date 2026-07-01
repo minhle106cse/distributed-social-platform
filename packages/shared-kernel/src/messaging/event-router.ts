@@ -2,6 +2,22 @@ import { CloudEvent } from '../events/cloud-event.js'
 import { ILogger, LogContext } from '../logger/index.js'
 
 /**
+ * How a handler stays safe under at-least-once delivery (the same event CAN be
+ * delivered more than once — outbox republish, reaper, redelivery on commit fail).
+ * Declaring this is MANDATORY: it forces every handler author to have answered
+ * "what happens if this runs twice?" at compile time, instead of leaving it to
+ * reviewer vigilance. See directives/eventing_patterns.md §4.3.
+ *
+ * - `natural-key`      — effect idempotent by construction (upsert / delete by PK).
+ * - `dedup-constraint` — a unique key on the event id (e.g. INSERT … ON CONFLICT
+ *                        DO NOTHING) makes a re-apply a no-op.
+ * - `none`             — NOT safe to re-apply. Forbidden for handlers with a
+ *                        persistent side effect; `EventRouter.register` rejects it.
+ *                        Only legitimate for a genuinely read-only/no-op handler.
+ */
+export type IdempotencyStrategy = 'natural-key' | 'dedup-constraint' | 'none'
+
+/**
  * Inbound handler for one integration event type. A handler is transport-blind:
  * it does not know whether the event arrived from Kafka or a queue worker — it
  * only knows its `eventType` (its subscription, like MediatR's
@@ -9,6 +25,8 @@ import { ILogger, LogContext } from '../logger/index.js'
  */
 export interface IIntegrationEventHandler<TData = unknown> {
   readonly eventType: string
+  /** How this handler survives a redelivered event. See IdempotencyStrategy. */
+  readonly idempotency: IdempotencyStrategy
   handle(event: CloudEvent<TData>): Promise<void>
 }
 
@@ -40,6 +58,16 @@ export class EventRouter {
       throw new Error(
         `Duplicate handler for event type "${handler.eventType}". One handler per type per ` +
           `consumer group — fan-out to another concern via a separate consumer group.`,
+      )
+    }
+    // At-least-once guard: a handler with a persistent side effect MUST declare a
+    // real idempotency strategy. Registering an 'none' handler is a boot-time
+    // failure — fail loud at startup, not silently on the first redelivery.
+    if (handler.idempotency === 'none') {
+      throw new Error(
+        `Handler for "${handler.eventType}" declares idempotency 'none'. Under at-least-once ` +
+          `delivery a redelivered event would double-apply. Make the write idempotent ` +
+          `(natural-key upsert/delete, or a dedup-constraint on the event id) before registering.`,
       )
     }
     this.handlers.set(handler.eventType, handler)
