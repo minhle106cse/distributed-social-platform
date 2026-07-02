@@ -12,17 +12,19 @@ Không áp dụng Microservices một cách mù quáng. Bắt đầu bằng **Mo
 
 ## 🏁 MASTER ROADMAP OVERVIEW
 
-| Phase | Mục tiêu | Output chính | Pattern Showcase |
-|-------|----------|-------------|-----------------|
-| Phase 0 | Foundation & Infra | Monorepo, Docker, AI Workflow | Hexagonal Architecture |
-| Phase 1 | Multi-tenant Knowledge Monolith | `core-api` (Tenant, Knowledge) | Domain Isolation, OCC, Multi-tenancy |
-| Phase 2 | Event Backbone | Kafka, Outbox, Event Store | Event Sourcing, Outbox |
-| Phase 3 | CQRS & Read Model | Feed/Digest projections, cache | CQRS, Projection, Stampede Prevention |
-| Phase 4 | AI Search & Discovery | pgvector + ES Hybrid, RAG | Vector Search, Circuit Breaker, RAG |
-| Phase 5 | Credit Economy & Saga | Credit ledger, AI-Query Saga | Saga, Idempotency, DLQ |
-| Phase 6 | Real-time & Workers | Notification, Chat/AI-Assistant | WebSocket, Pub/Sub |
-| Phase 7 | **The Great Migration** | Tách `discovery-service` | Strangler Fig, CDC |
-| Phase 8 | Production Hardening | Observability, Load Test, Security | Rate Limiting, Tracing, Tenant Isolation |
+> **Trạng thái cập nhật 2026-07-02** (ground truth: [`.ai/PROJECT_STATUS.md`](./.ai/PROJECT_STATUS.md)). Cột "Thực tế" ghi lại các quyết định đã làm lệch so với plan gốc — có chủ đích, đều được log trong `.ai/`.
+
+| Phase | Mục tiêu | Pattern Showcase | Trạng thái / Thực tế |
+|-------|----------|-----------------|---------------------|
+| 0 | Foundation & Infra | Hexagonal | ✅ Done |
+| 1 | Multi-tenant Knowledge Monolith | Domain Isolation, OCC, Multi-tenancy | ✅ Done (taxonomy deferred sau Phase 3) |
+| 2 | Event Backbone | Outbox, CloudEvents, DLQ | ✅ Done + hardened (outbox HA claim/reaper, idempotency enforce compile-time) |
+| 3 | CQRS & Read Model | CQRS, Projection, Stampede Prevention | ⬜ Deferred CÓ CHỦ ĐÍCH — read-model từng dựng sớm đã rollback (schema chỉ giữ source-of-truth; feed = fan-out-on-read) |
+| 4 | AI Search & Discovery | Vector Search, RRF, Circuit Breaker, RAG | ✅ Done (smoke-tested) — **khác plan: sinh thẳng `search-service` own-DB thay vì discovery-module trong core-api**; embeddings = self-hosted Ollama (Claude KHÔNG có embeddings API) |
+| 5 | Credit Economy & Saga | Saga, Idempotency, DLQ | ⬜ Chưa — ledger tables (CreditEvent/ReputationEvent) đã sẵn làm source-of-truth |
+| 6 | Real-time & Workers | WebSocket, Pub/Sub | 🔄 Partial — notification-service LIVE (Kafka consumer + REST fan-out); WebSocket/chat/worker chưa |
+| 7 | Migration/Extraction | Strangler Fig, CDC | ⬜ **RE-ANCHORED** — xem §Phase 7: discovery đã là microservice từ đầu, target mới = `credit-ledger-service` + CDC replay demo |
+| 8 | Production Hardening | Rate Limiting, Tracing, Tenant Isolation | 🔄 Một phần làm sớm (DLQ, outbox HA, prom metrics, dedup counters); tracing/K6/tenant-audit chưa |
 
 ---
 
@@ -184,20 +186,24 @@ Trái tim sản phẩm: tìm tri thức theo **ngữ nghĩa** + trả lời câu
 
 ### Deliverables
 
-1. **Embedding Pipeline (`worker-service`):**
-   - Khi document publish/update → sinh embedding (Claude embedding API) → lưu cột `vector` (pgvector).
-   - **Circuit Breaker** quanh AI API: khi down → rơi về keyword-only search.
-   - Re-embed khi nội dung đổi (idempotent theo content hash).
+> ✅ **ĐÃ HOÀN THÀNH (2026-07-02) — khác plan gốc ở 2 điểm, có chủ đích:**
+> (1) Toàn bộ Phase 4 sống trong **`search-service`** — microservice riêng own `search_db`, consume `knowledge-events` (embed-on-publish) — KHÔNG phải worker-service + discovery-module trong core-api. Lý do: tái dùng backbone consumer đã hardened, và tránh nhét workload AI vào monolith (đằng nào Phase 7 cũng phải tách).
+> (2) **Claude KHÔNG có embeddings API** (plan gốc ghi sai) → embeddings = self-hosted **Ollama `nomic-embed-text` (dim 768)** sau port `IEmbeddingService`. Claude/Gemini chỉ dùng cho RAG summarization (swap qua `ISummarizer`).
 
-2. **Hybrid Retrieval (`discovery-module`):**
-   - Elasticsearch (BM25 full-text) + pgvector (cosine similarity).
-   - **Reciprocal Rank Fusion (RRF)** hợp nhất 2 nguồn → re-rank.
+1. **Embedding Pipeline (`search-service`):** ✅
+   - Publish → Kafka → chunk (400 từ/overlap 64) → embed → `vector(768)` + HNSW cosine index.
+   - Re-publish → re-index sạch (delete+insert theo itemId, idempotent natural-key).
 
-3. **RAG Answer:**
-   - Nạp top-N đoạn liên quan + câu hỏi vào Claude → câu trả lời kèm **citation** (link document nguồn).
-   - **Rate Limiting (Token Bucket)** per user/org cho AI query (vì gọi AI đắt).
+2. **Hybrid Retrieval (`search-service`):** ✅
+   - Elasticsearch BM25 (per-tenant index) + pgvector cosine, chạy song song.
+   - **RRF (k=60, item-level)** hợp nhất; ES down → degrade semantic-only.
 
-4. **Cache embeddings & kết quả search hot trong Redis.**
+3. **RAG Answer:** ✅ (một phần)
+   - Top-N chunks + câu hỏi → Claude (`claude-opus-4-8`) hoặc Gemini → answer kèm **citation [n]**.
+   - **Circuit Breaker** quanh mọi call LLM: 5 fail → OPEN → search vẫn trả chunks (summary=null).
+   - ⬜ Còn lại: **Rate Limiting (Token Bucket)** per user/org cho AI query — dời sang Phase 5 (gắn với credit spend).
+
+4. ⬜ **Cache embeddings & kết quả search hot trong Redis** — chưa làm (defer: đúng nguyên tắc "source-of-truth trước, optimize sau"; làm cùng Phase 3/8).
 
 ### ✅ Acceptance Criteria
 - Semantic search trả đúng document dù query không chứa keyword khớp.
@@ -275,16 +281,19 @@ Thông báo thời gian thực + AI Assistant + Xử lý tác vụ nền.
 
 ---
 
-## 🔴 PHASE 7 — THE GREAT MIGRATION (MICROSERVICE EXTRACTION)
+## 🔴 PHASE 7 — MIGRATION / EXTRACTION (RE-ANCHORED 2026-07-02)
 
-### 🎯 Goal
-**Phô diễn kỹ năng Senior:** Tách `discovery-module` ra thành `discovery-service` độc lập — zero downtime.
+> ⚠️ **Plan gốc đã vô hiệu một nửa:** premise là "tách discovery-module RA KHỎI core-api" — nhưng Phase 4 đã sinh thẳng `search-service` như microservice own-DB ngay từ đầu (không có gì trong core-api để tách). Đây là trade-off có chủ đích: được kiến trúc đúng sớm hơn, đổi lại mất "câu chuyện migration" của discovery. Phase 7 re-anchor như sau:
 
-### Tình huống
-Discovery (embedding + vector + RAG) cần:
-- **Scale riêng biệt** (burst khi nhiều người search/hỏi AI cùng lúc).
-- **Cô lập chi phí** (workload AI-bound, tốn tiền theo token — cần đo & giới hạn riêng).
-- **Hồ sơ tài nguyên khác** (CPU/memory cho vector ops, khác hẳn CRUD).
+### 🎯 Goal (mới)
+Vẫn phô diễn **Strangler Fig + CDC replay**, nhưng trên target còn thật:
+1. **Primary: tách `credit-ledger-service`** (sau Phase 5) — module event-sourced ACID-critical, đúng phương án thay thế đã ghi trong readme gốc. Strangler: build service mới own ledger DB → gateway route `/credits/*` → dual-run so khớp balance → cutover.
+2. **CDC replay demo (làm được NGAY, không chờ Phase 5):** xóa `search_db` → replay `knowledge-events` từ offset 0 → search-service tự rebuild toàn bộ embeddings + ES index → verify kết quả search khớp trước-sau. Chứng minh "read model dựng lại được từ event log" — chính là giá trị của event backbone.
+
+### Tình huống (giữ nguyên lý do scale/cô lập chi phí — áp cho credit-ledger)
+- **ACID + audit độc lập** (sổ cái không được lệch, cần deploy/rollback riêng).
+- **Cô lập blast-radius** (bug ở knowledge không được đụng ledger).
+- **Hồ sơ tài nguyên khác** (append-heavy, rebuild theo replay).
 
 ### Deliverables
 

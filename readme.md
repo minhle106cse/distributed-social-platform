@@ -2,7 +2,7 @@
 
 [![Architecture](https://img.shields.io/badge/Architecture-Hexagonal%20%7C%20CQRS%20%7C%20Event--Sourcing-blue)](#-kiến-trúc-nâng-cao-showcase)
 [![AI](https://img.shields.io/badge/AI-RAG%20%7C%20pgvector%20%7C%20Hybrid%20Search-purple)](#-trí-tuệ-khám-phá-rag--hybrid-retrieval)
-[![Progress](https://img.shields.io/badge/Progress-Phase%200%20(Foundation)-brightgreen)](#-tiến-độ-dự-án)
+[![Progress](https://img.shields.io/badge/Progress-Phase%204%20(RAG%20Live)%20·%20~83%25-brightgreen)](#-tiến-độ-dự-án)
 [![License](https://img.shields.io/badge/License-MIT-green)](#)
 
 > 📖 **[English Version](./docs/en/README.md)**
@@ -100,15 +100,18 @@ Bắt đầu bằng **Modular Monolith** chặt chẽ, và chỉ tách thành **
                                         [Outbox Table]
                                                |
  =========================================================================
-  🌊 KAFKA EVENT STREAMING BACKBONE
+  🌊 KAFKA EVENT STREAMING BACKBONE (CloudEvents 1.0 · Outbox HA · DLQ)
  =========================================================================
-        |                  |                   |                    |
-        v                  v                   v                    v
-  [Worker Service]   [Search Service]   [Notification Svc]    [Chat Service]
-  (Embeddings,       (Kafka → ES        (WebSocket +          (AI Assistant /
-   re-index, RAG      indexer)           Redis Pub/Sub)        threads, presence)
-   summarize, digest)
+        |                        |                        |
+        v                        v                        v
+  [Search Service ✅]      [Notification Svc ✅]     [Worker / Chat ⏳]
+  (consumer #2 — own       (consumer #1 — own        (scaffold: digest,
+   search_db: embed-on-     notification_db:          stale-detect, WS
+   publish → pgvector +     fan-out NEW_IN_SPACE,     realtime, AI
+   ES · Hybrid RRF · RAG    follower projection,      assistant — future)
+   Claude/Gemini + CB)      REST + mark-read)
 ```
+> Ghi chú trạng thái: `discovery` KHÔNG nằm trong core-api như bản vẽ gốc — Phase 4 đã sinh thẳng `search-service` như một microservice own-DB (xem readme.phases §Phase 7 re-anchor). `worker-service`/`chat-service` còn là scaffold.
 
 ---
 
@@ -233,7 +236,7 @@ Reciprocal Rank Fusion (RRF) ──► hợp nhất & re-rank
 RAG: nạp top-N đoạn + câu hỏi vào Claude ──► câu trả lời kèm TRÍCH DẪN NGUỒN
 ```
 
-- **Embedding** sinh bất đồng bộ bởi `worker-service` (qua Kafka), lưu vào cột `vector` của pgvector.
+- **Embedding** sinh bất đồng bộ bởi `search-service` (consume `knowledge-events` qua Kafka, embed-on-publish), lưu cột `vector(768)` của pgvector. Provider = self-hosted Ollama sau port `IEmbeddingService` (Claude không có embeddings API).
 - **Citation bắt buộc:** mỗi câu trả lời AI đều dẫn lại document nguồn → chống "AI bịa" (hallucination), người dùng kiểm chứng được.
 
 ---
@@ -266,8 +269,8 @@ Dự án áp dụng hệ thống **Multi-Agent Orchestration (Level 4/5)** để
 | **Database** | PostgreSQL + **pgvector** (Event Store + Read Model + Embeddings) |
 | **Cache & Pub/Sub** | Redis |
 | **Message Broker** | Kafka (Event Backbone, KRaft mode) |
-| **Search** | Elasticsearch (Full-text) + pgvector (Semantic) → Hybrid |
-| **AI** | Claude (embedding + RAG summarization) qua Circuit Breaker |
+| **Search** | Elasticsearch (Full-text) + pgvector (Semantic) → Hybrid (RRF) |
+| **AI** | Embeddings: self-hosted (Ollama `nomic-embed-text`, dim 768 — Claude không có embeddings API) · RAG summarization: Claude/Gemini (swap qua `ISummarizer`) qua Circuit Breaker |
 | **Real-time** | WebSocket + Redis Pub/Sub adapter |
 | **Frontend** | Vite + React 18 (SPA) |
 | **State** | Zustand + TanStack Query |
@@ -279,17 +282,17 @@ Dự án áp dụng hệ thống **Multi-Agent Orchestration (Level 4/5)** để
 
 ## 📈 TIẾN ĐỘ DỰ ÁN
 
-Tiến độ hiện tại: **Phase 0 — Foundation & Scaffolding**
+Tiến độ hiện tại: **Phase 4 (RAG live, smoke-tested) — ~83%** · nguồn chi tiết: [`.ai/PROJECT_STATUS.md`](./.ai/PROJECT_STATUS.md)
 
 - [x] **Phase 0:** Foundation & Infra (Monorepo, Docker, AI Workflow, module scaffolds)
-- [ ] **Phase 1:** Multi-tenant Knowledge Monolith — Tenant, Knowledge, OCC versioning (NEXT)
-- [ ] **Phase 2:** Event Backbone — Kafka, Outbox, Event Store, Credit ledger event-sourced
-- [ ] **Phase 3:** CQRS & Read Model — Feed/Digest projections, Redis cache
-- [ ] **Phase 4:** AI Search & Discovery — pgvector + Elasticsearch Hybrid + RAG (Circuit Breaker)
-- [ ] **Phase 5:** Credit Economy & Saga — Spend/Stake, AI-Query Saga, Idempotency, DLQ
-- [ ] **Phase 6:** Real-time & Workers — Notification, Chat/AI-Assistant
-- [ ] **Phase 7:** The Great Migration — Tách `discovery-service`
-- [ ] **Phase 8:** Production Hardening — Observability, Tenant-isolation, Load Test
+- [x] **Phase 1:** Multi-tenant Knowledge Monolith — Tenant, Knowledge, Engagement, Feed (taxonomy deferred)
+- [x] **Phase 2:** Event Backbone — Kafka + Outbox (HA claim/reaper), CloudEvents 1.0, DLQ, idempotency enforce
+- [ ] **Phase 3:** CQRS & Read Model — deferred có chủ đích (schema chỉ giữ source-of-truth; xem quyết định rollback read-model)
+- [x] **Phase 4:** AI Search & Discovery — `search-service` (pgvector + ES Hybrid RRF + RAG Claude/Gemini + Circuit Breaker)
+- [ ] **Phase 5:** Credit Economy & Saga — Spend/Stake, AI-Query Saga (ledger tables đã sẵn)
+- [🔄] **Phase 6:** Real-time & Workers — notification-service LIVE (Kafka consumer + REST); WebSocket/chat chưa
+- [ ] **Phase 7:** Migration/Extraction — re-anchored: `search-service` đã sinh ra là microservice, target mới = tách `credit-ledger-service` (xem readme.phases)
+- [ ] **Phase 8:** Production Hardening — một phần đã làm sớm (DLQ, outbox HA, metrics); tracing/load-test chưa
 
 📋 Chi tiết từng Phase: [readme.phases.md](./readme.phases.md)
 
@@ -297,22 +300,24 @@ Tiến độ hiện tại: **Phase 0 — Foundation & Scaffolding**
 
 ## 🚀 KHỞI CHẠY NHANH
 
-```bash
-# 1. Clone
-git clone https://github.com/yourname/cortex-knowledge-hub.git
-cd cortex-knowledge-hub
+> Hướng dẫn đầy đủ (gateway URL, luồng end-to-end, gotchas): **[RUN.md](./RUN.md)**
 
-# 2. Install dependencies
+```bash
+# 1. Install
 npm install
 
-# 3. Start infrastructure (Postgres+pgvector, Redis, Kafka, Elasticsearch, Monitoring)
-docker-compose up -d
+# 2. Infra (Postgres+pgvector, Redis, Kafka, ES, Ollama embeddings, Nginx gateway, Monitoring)
+npm run infra:up
+docker exec dsp-embedding ollama pull nomic-embed-text   # first time only
 
-# 4. Run migrations
-npx turbo run db:migrate
+# 3. Push schemas (per-service DBs)
+npm run db:push
 
-# 5. Start development
-npx turbo run dev
+# 4. Backend stack (auth:4001 core:4002 notif:4003 search:4004 — hot reload)
+npm run dev:stack
+
+# → Toàn bộ API qua gateway: http://localhost:8000/api/v1/*
+# → Web SPA (apps/web): cd apps/web && npm run dev  →  http://localhost:3001
 ```
 
 ---
