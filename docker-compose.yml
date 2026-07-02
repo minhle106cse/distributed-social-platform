@@ -265,6 +265,23 @@ services:
       - api-gateway
     restart: always
 
+  # --------------------------------------------------------
+  # 17. Embedding Service (self-hosted, Cortex Phase 4 RAG)
+  #     Ollama serving nomic-embed-text (dim 768). Claude has NO embeddings API —
+  #     vectors come from here, not Anthropic. After up, pull the model once:
+  #       docker exec dsp-embedding ollama pull nomic-embed-text
+  #     Batch API: POST /api/embed {"model":"nomic-embed-text","input":[...]}
+  #       -> {"embeddings":[[...768...], ...]}
+  # --------------------------------------------------------
+  embedding:
+    image: ollama/ollama:latest
+    container_name: dsp-embedding
+    restart: always
+    ports:
+      - "${EMBEDDING_SERVICE_PORT}:11434"
+    volumes:
+      - embedding_data:/root/.ollama
+
 volumes:
   postgres_data:
   redis_data:
@@ -272,3 +289,4 @@ volumes:
   es_data:
   prometheus_data:
   grafana_data:
+  embedding_data:

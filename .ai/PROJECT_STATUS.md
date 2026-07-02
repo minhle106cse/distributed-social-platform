@@ -3,7 +3,7 @@
 > Last curated: **2026-06-30**
 > Đây là nguồn chủ quan (phase %, focus). Phần auto-detect bên dưới mới là ground truth — nếu lệch nhau thì file này stale.
 
-**Overall:** ~80% · **Phase đang làm:** Phase 6 (early) — notification-service B2 + reliability hardening ✅ Done · **Next:** Phase 3 CQRS Read Model hoặc taxonomy
+**Overall:** ~80% (hạ tầng ~85% / tính năng sản phẩm ~40% — RAG chưa có) · **Phase đang làm:** Phase 6 (early) done · **Next:** **Phase 4 RAG/AI Search** — plan tại `.ai/plans/phase4-rag-search.plan.md` (embeddings self-hosted local, search-service = consumer #2). ⚠️ `rag_ai_integration.md §1` có lỗi factual (Claude KHÔNG có embeddings API) — sửa ở C1.0.
 
 > ✅ **Idempotency safety net (2026-07-02) — 6 nước đi principal giữ an toàn luồng:**
 > - **[Enforce] Compile-time invariant.** `IIntegrationEventHandler.idempotency` (shared-kernel) BẮT BUỘC: `'natural-key' | 'dedup-constraint' | 'none'`. Handler quên → `error TS2420` (đã chứng minh: bỏ field → typecheck đỏ). `EventRouter.register` ném lúc boot nếu `'none'`. → invariant *được ép buộc*, không *được nhớ* — chặn "handler tương lai quên idempotent".

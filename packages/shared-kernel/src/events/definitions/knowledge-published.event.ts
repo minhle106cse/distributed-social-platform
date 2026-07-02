@@ -7,6 +7,10 @@ export interface KnowledgePublishedPayload {
   spaceId: string
   type: string
   title: string
+  // Full content snapshot at publish time — consumers (search-service) index this
+  // without joining core_db. Fat-event tradeoff accepted for MVP; scale path is the
+  // Claim-Check pattern (store body in object storage, event carries a pointer).
+  body: string
   createdByUserId: string
 }
 

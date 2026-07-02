@@ -2,7 +2,9 @@
 
 > [!NOTE]
 > Directive này quy định cách tích hợp AI (RAG, Hybrid Search, Embeddings) vào Cortex.
-> Áp dụng cho **core-api** — service chứa KnowledgeItem, Search, và AI Query endpoints.
+> Áp dụng cho **search-service** — microservice own `search_db` (pgvector), consume `knowledge-events` (embed-on-publish), expose Search + AI Query. (Trước đây ghi "core-api"; đã tách theo microservice trajectory — Phase 4, xem `.ai/plans/phase4-rag-search.plan.md`.)
+>
+> ⚠️ **Claude KHÔNG có embeddings API.** Không có model `claude-embed-*`; `messages.create` trả TEXT, không phải vector. Embeddings PHẢI qua provider ngoài (self-hosted local / Voyage / OpenAI) sau `IEmbeddingService`. Claude chỉ dùng cho **summarization** (§3+RAG).
 
 ---
 
@@ -28,34 +30,26 @@ SearchResult { chunks, summary, sources }
 
 ## 📜 Kiến Trúc Bắt Buộc
 
-### 1. Embedding Generation — Claude API
+### 1. Embedding Generation — provider NGOÀI Claude, sau `IEmbeddingService`
+
+Claude không sinh embedding. Dùng port `IEmbeddingService` + adapter tới provider embedding thật. **Chốt Cortex (Phase 4): self-hosted local** (miễn phí, không key ngoài, launchable) — một service nhỏ trong Docker (khuyến nghị Text-Embeddings-Inference `BAAI/bge-base-en-v1.5`, **dim 768**, hoặc Ollama `nomic-embed-text`). Swap Voyage/OpenAI = đổi 1 adapter (đổi dim ⇒ migrate cột `vector`).
 
 ```typescript
-// modules/knowledge/infrastructure/services/embedding.service.ts
-export class EmbeddingService implements IEmbeddingService {
-  constructor(
-    private readonly anthropic: Anthropic,
-    private readonly circuitBreaker: CircuitBreaker,
-  ) {}
+// search-service: application/ports/embedding.service.ts
+export interface IEmbeddingService {
+  embed(text: string): Promise<number[]>          // dim = EMBEDDING_DIM (768)
+  embedBatch(texts: string[]): Promise<number[][]>
+}
 
-  async embed(text: string): Promise<number[]> {
-    return this.circuitBreaker.execute(async () => {
-      const response = await this.anthropic.messages.create({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1,
-        messages: [{ role: 'user', content: text }],
-        // NOTE: Claude hiện dùng text generation để derive embedding proxy.
-        // Khi claude-embed-* available, chuyển sang đó.
-      })
-      // Tạm thời: dùng hash-based embedding cho dev, real API cho prod
-      return this.deriveEmbedding(text)
-    })
-  }
+// search-service: infrastructure/embedding/http-embedding.service.ts
+export class HttpEmbeddingService implements IEmbeddingService {
+  // POST EMBEDDING_SERVICE_URL/embed { inputs } → number[][]. KHÔNG gọi Anthropic.
+  async embedBatch(texts: string[]): Promise<number[][]> { /* fetch → vectors */ }
 }
 ```
 
-> **Model cho embedding**: `claude-haiku-4-5-20251001` (fastest + cheapest).
-> **Model cho RAG summarization**: `claude-sonnet-4-6` (quality).
+> **Model embedding**: provider ngoài (local `bge-base-en-v1.5` dim 768). **KHÔNG phải Claude.**
+> **Model RAG summarization (§3)**: `claude-opus-4-8` (default, mạnh nhất) hoặc `claude-sonnet-4-6` (rẻ, volume cao). Dùng alias — **KHÔNG date-suffix**. Model 4.6+: `thinking:{type:'adaptive'}`, KHÔNG `budget_tokens`.
 
 ---
 
@@ -266,7 +260,7 @@ export class ElasticsearchKnowledgeRepository implements IKeywordSearchRepositor
 
 - **Circuit Breaker là bắt buộc** — không call Claude API trực tiếp. Search vẫn trả về kết quả khi AI down, chỉ không có summary.
 - **pgvector HNSW index** phải được tạo qua raw SQL migration, không thể qua Prisma schema attributes.
-- **Embedding dimensions**: Claude embedding proxy → 1536 dims. Nếu đổi model, phải migrate toàn bộ `embedding` column.
+- **Embedding dimensions**: theo provider (Cortex local `bge-base` → **768**). Cột `vector(N)` phải khớp; đổi provider/dim ⇒ migrate cột `embedding` + re-embed toàn bộ.
 - **Elasticsearch index per tenant**: Xóa index khi org bị deleted. Đừng dùng shared index với filter — cross-tenant data risk.
 - **Chunking trước embedding**: Không embed toàn bộ document — chunk trước, embed từng chunk.
 
