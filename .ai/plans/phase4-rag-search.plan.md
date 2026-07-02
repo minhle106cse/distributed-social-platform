@@ -3,6 +3,12 @@
 > **Cho session mới.** Đọc trọn file + `directives/rag_ai_integration.md` (⚠️ có lỗi factual, xem §0) + `directives/eventing_patterns.md` + `directives/idempotency_strategy.md` trước khi code. Làm **C1 → C2 → C3** theo thứ tự. Không nhảy cóc.
 > Ngày lập: 2026-07-02. Duyệt hướng (user): embeddings = **self-hosted local**; search = **service riêng (consumer #2)**.
 
+## 🚦 TRẠNG THÁI (2026-07-02)
+- **C1.0 ✅ DONE + committed** (root `e71be9b`): directive §1 fixed, `body` vào KnowledgePublished payload (shared-kernel + core-api `6742b35`), docker-compose embedding (Ollama nomic-embed-text dim 768), init-dbs `search_db`, `.env`.
+- **C1.1–C1.5 ✅ CODE DONE + SMOKE-TESTED END-TO-END** (chưa commit — chờ tạo GitHub repo cho submodule). search-service bootstrap (mirror notification), `KnowledgeChunk` schema (`vector(768)`) + `prisma db push search_db` ✅ + **HNSW index** raw SQL ✅. `IEmbeddingService`/`HttpEmbeddingService` (Ollama `/api/embed`), `TextChunker`, `IndexKnowledgeHandler` (`idempotency='natural-key'`), `KnowledgeIndexerConsumer` (group riêng + DLQ + retry), `PrismaSearchChunkRepository` (raw pgvector insert + `<=>` cosine), `POST /api/v1/search` (JWT + X-Org-Id). **`turbo typecheck lint` = 3/3 xanh.**
+- **✅ SMOKE TEST (2026-07-02):** boot search-service (health ok, consumer group `search-service-indexer-group` LAG 0) → bơm 3 KnowledgePublished (Kafka/Postgres/React) → 3 chunks ghi với `vector_dims=768` → `POST /search "scale event streaming consumers"` xếp **Kafka item top (score 0.625)**, Postgres kế (semantic đúng, không cần trùng keyword). Phủ định: no-JWT=401, org khác=0 (tenant isolation), thiếu X-Org-Id=400. **Bug tìm thấy khi smoke:** `prisma.service.ts` copy sót `NOTIFICATION_DATABASE_URL` → sửa `SEARCH_DATABASE_URL` (đã fix). Gotcha: boot service nhiều lần → consumer group churn "coordinator not aware" → phải `kafka-consumer-groups --delete` + boot 1 bản + chờ stable rồi mới produce.
+- **CÒN LẠI C1:** tạo GitHub repo `distributed-social-platform_search-service` → init/push/`git submodule add` (như notification) → commit. Code + fix (`prisma.service` SEARCH_DATABASE_URL) đang ở working tree, chưa versioned.
+
 ---
 
 ## 0. ⚠️ SỬA LỖI DIRECTIVE TRƯỚC KHI CODE (bắt buộc)
