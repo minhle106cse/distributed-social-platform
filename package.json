@@ -18,6 +18,7 @@
     "db:studio": "turbo run db:studio",
     "infra:up": "docker-compose up -d",
     "infra:down": "docker-compose down",
+    "dev:stack": "node scripts/dev-stack.cjs",
     "agent:up": "docker-compose -f docker-compose.agent.yml up -d",
     "agent:down": "docker-compose -f docker-compose.agent.yml down",
     "lint": "turbo run lint",
