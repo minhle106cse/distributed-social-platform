@@ -1,9 +1,17 @@
 ### 📊 Curated Status — _cập nhật thủ công sau mỗi task (After-Task Protocol)_
 
-> Last curated: **2026-06-30**
+> Last curated: **2026-07-02**
 > Đây là nguồn chủ quan (phase %, focus). Phần auto-detect bên dưới mới là ground truth — nếu lệch nhau thì file này stale.
 
-**Overall:** ~80% (hạ tầng ~85% / tính năng sản phẩm ~40% — RAG chưa có) · **Phase đang làm:** Phase 6 (early) done · **Next:** **Phase 4 RAG/AI Search** — plan tại `.ai/plans/phase4-rag-search.plan.md` (embeddings self-hosted local, search-service = consumer #2). ⚠️ `rag_ai_integration.md §1` có lỗi factual (Claude KHÔNG có embeddings API) — sửa ở C1.0.
+**Overall:** ~83% (hạ tầng ~87% / tính năng sản phẩm ~50% — RAG đã có) · **Phase đang làm:** Phase 4 RAG/AI Search **code-complete + smoke-tested** · **Next:** commit search-service (chờ GitHub repo) + test summary thật (cần ANTHROPIC_API_KEY); hoặc Phase 3 read models / Phase 5 credit.
+
+> ✅ **Phase 4 — RAG/AI Search (2026-07-02): search-service = consumer #2, own `search_db` (pgvector). CODE-COMPLETE + SMOKE-TESTED, CHƯA commit (chờ GitHub repo).**
+> - **Quyết định:** embeddings **self-hosted local** (Ollama `nomic-embed-text` dim 768 — Claude KHÔNG có embeddings API, đã sửa `rag_ai_integration.md §1`); search = **service riêng** consume `knowledge-events` (mirror notification, tái dùng backbone hardened). `KnowledgePublished` payload += `body` (snapshot, no cross-DB join; fat-event, scale path = Claim-Check).
+> - **C1 semantic:** embed-on-publish → `KnowledgeChunk` (`vector(768)` + HNSW cosine) → `POST /api/v1/search` (JWT + X-Org-Id, no OrgGuard). Smoke: semantic ranking đúng, 401/tenant-isolation/400.
+> - **C2 hybrid:** `ElasticsearchKeywordRepository` (per-tenant index BM25) + **RRF fusion** (k=60, item-level). Smoke: keyword-exact→ES top, semantic→pgvector top, ES down→degrade semantic-only (201 không 500).
+> - **C3 RAG summary:** `ClaudeSummarizer` (`claude-opus-4-8`) + **Circuit Breaker** (5 fail→OPEN→fail-fast). Smoke: key rỗng→degrade summary:null, breaker trip đúng 3 pha. Happy-path summary chưa test (cần key).
+> - Reliability tái dùng: consumer group riêng, DLQ + bounded retry, idempotency `natural-key` (replaceForItem + ES upsert), `@InjectPinoLogger`. `turbo typecheck lint` = 3/3 xanh.
+> - **Bug/gotcha:** copy-tree scaffold sót `prisma.service` DATABASE_URL var (fix); TEI hf-hub bug→Ollama; multi-boot→consumer group churn "coordinator not aware".
 
 > ✅ **Idempotency safety net (2026-07-02) — 6 nước đi principal giữ an toàn luồng:**
 > - **[Enforce] Compile-time invariant.** `IIntegrationEventHandler.idempotency` (shared-kernel) BẮT BUỘC: `'natural-key' | 'dedup-constraint' | 'none'`. Handler quên → `error TS2420` (đã chứng minh: bỏ field → typecheck đỏ). `EventRouter.register` ném lúc boot nếu `'none'`. → invariant *được ép buộc*, không *được nhớ* — chặn "handler tương lai quên idempotent".
@@ -49,7 +57,7 @@
 | 1 | Multi-tenant Knowledge Monolith | ✅ Done (taxonomy deferred) |
 | 2 | Event Backbone (Kafka + Outbox) | ✅ Done — 2a + 2b smoke tested |
 | 3 | CQRS & Read Model | ⬜ Chưa bắt đầu |
-| 4 | AI Search & Discovery (RAG) | ⬜ Chưa bắt đầu |
+| 4 | AI Search & Discovery (RAG) | 🔄 Code-complete + smoke-tested (search-service; chưa commit/chờ repo) |
 | 5 | Credit Economy & Saga | ⬜ Chưa bắt đầu |
 | 6 | Realtime & Workers | 🔄 Khởi động sớm — notification-service B1+B2 done |
 | 7 | The Great Migration | ⬜ Chưa bắt đầu |

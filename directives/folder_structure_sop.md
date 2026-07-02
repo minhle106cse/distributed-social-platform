@@ -49,17 +49,30 @@ src/
 │       ├── application/             # Application Layer (Orchestration & CQRS)
 │       │   ├── commands/            # Command Handlers (Write Model)
 │       │   ├── queries/             # Query Handlers (Read Model)
+│       │   ├── events/             # Integration-event Handlers (consumer services) †
 │       │   └── repositories/        # Query Repository Interfaces (returns DTOs)
-│       ├── domain/                  # Domain Layer (Core Business Rules)
+│       ├── domain/                  # Domain Layer (Core Business Rules) — PURE TS, no NestJS
 │       │   ├── entities/            # Aggregate Roots & Entities
 │       │   ├── value-objects/       # Immutable Value Objects
+│       │   ├── services/           # Domain services + OUTBOUND service ports (interfaces) †
 │       │   └── repositories/        # Command Repository Interfaces (returns Entities)
 │       ├── infrastructure/          # Infrastructure Layer (Concrete Implementations)
 │       │   ├── mappers/             # Domain <-> Persistence Mappers
+│       │   ├── consumers/          # Kafka consumers (event-driven services) †
+│       │   ├── services/           # Concrete adapters implementing domain service ports †
 │       │   └── repositories/        # Concrete Prisma Repositories (Flat structure, both queries/commands)
 │       └── presentation/            # UI/Delivery Layer
-│           ├── routes/              # HTTP Routes (Fastify)
+│           ├── routes/              # HTTP Routes (Fastify) / controllers (NestJS)
 │           └── schemas/             # Zod Validation Schemas
+
+# † Mở rộng owner-approved 2026-07-02 cho service consumer/AI (notification, search):
+#   - application/events/     : handler cho integration event (IIntegrationEventHandler)
+#   - domain/services/        : domain service THUẦN (vd TextChunker — KHÔNG @Injectable/NestJS)
+#                               + PORT dịch vụ outbound (interface: IEmbeddingService, ISummarizer)
+#   - infrastructure/services/: adapter cụ thể của port (HttpEmbedding, ClaudeSummarizer, GeminiSummarizer…)
+#   - infrastructure/consumers/: Kafka consumer (KnowledgeIndexerConsumer, NotificationEventsConsumer)
+#   Service projection/search KHÔNG có domain entity → domain/ chỉ có services/ (không entities/repositories).
+#   ⚠️ domain/ pure TS: domain service THUẦN bỏ @Injectable (Nest vẫn DI-instantiate class 0-tham-số).
 ├── app.ts                           # Root Fastify app factory
 ├── main.ts                          # Entrypoint (local)
 └── main.lambda.ts                   # Entrypoint (AWS Lambda)

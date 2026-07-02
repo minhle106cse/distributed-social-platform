@@ -1,5 +1,7 @@
 # SOP: RAG & AI Integration Standard
 
+> ✅ **TRẠNG THÁI: LIVE ở search-service (Phase 4, 2026-07-02, smoke-tested).** C1 semantic (pgvector embed-on-publish) + C2 hybrid (ES BM25 + RRF) + C3 RAG summary (Claude + circuit breaker). Consumer #2 (`KnowledgeIndexerConsumer`, group `search-service-indexer-group`). Còn: happy-path summary cần `ANTHROPIC_API_KEY` hợp lệ; search-service chưa versioned (chờ GitHub repo).
+
 > [!NOTE]
 > Directive này quy định cách tích hợp AI (RAG, Hybrid Search, Embeddings) vào Cortex.
 > Áp dụng cho **search-service** — microservice own `search_db` (pgvector), consume `knowledge-events` (embed-on-publish), expose Search + AI Query. (Trước đây ghi "core-api"; đã tách theo microservice trajectory — Phase 4, xem `.ai/plans/phase4-rag-search.plan.md`.)
@@ -59,18 +61,21 @@ export class HttpEmbeddingService implements IEmbeddingService {
 // Cần enable pgvector extension trong prisma/migrations/
 // CREATE EXTENSION IF NOT EXISTS vector;
 
+// ⬇️ Actual (search-service own search_db). NO relation to KnowledgeItem — that
+// lives in core_db; search-service snapshots title+content from the event (no
+// cross-DB join). dim = 768 (nomic-embed-text), not 1536.
 model KnowledgeChunk {
-  id              String                  @id @default(uuid())
-  knowledgeItemId String                  @map("knowledge_item_id")
-  orgId           String                  @map("org_id")
-  content         String                  // raw text chunk
-  embedding       Unsupported("vector(1536)")? // pgvector column
-  chunkIndex      Int                     @map("chunk_index")
-  tokenCount      Int                     @map("token_count")
-  createdAt       DateTime                @default(now()) @map("created_at")
+  id              String   @id @default(uuid())
+  knowledgeItemId String   @map("knowledge_item_id")
+  orgId           String   @map("org_id")
+  spaceId         String   @map("space_id")
+  chunkIndex      Int      @map("chunk_index")
+  content         String
+  titleSnapshot   String   @map("title_snapshot")
+  embedding       Unsupported("vector(768)")?
+  createdAt       DateTime @default(now()) @map("created_at")
 
-  knowledgeItem KnowledgeItem @relation(fields: [knowledgeItemId], references: [id])
-
+  @@unique([knowledgeItemId, chunkIndex]) // idempotent re-index (delete+insert by itemId)
   @@index([orgId])
   @@map("knowledge_chunks")
 }
@@ -144,43 +149,39 @@ export class CircuitBreaker {
 ### 4. Hybrid Search — RRF Merge
 
 ```typescript
-// modules/search/application/queries/search-knowledge.handler.ts
-export class SearchKnowledgeHandler implements IQueryHandler<SearchKnowledgeQuery> {
-  async execute(query: SearchKnowledgeQuery): Promise<SearchResult> {
-    const orgId = getTenantId()
+// search-service: modules/search/application/queries/search-knowledge.service.ts
+// (plain application service, not the CQRS QueryBus — search-service has no bus)
+async search(orgId, query, topK, summarize): Promise<SearchResult> {
+  const [queryVec] = await this.embedding.embedBatch([query])
 
-    // Run both searches in parallel
-    const [semanticResults, keywordResults] = await Promise.all([
-      this.semanticSearch(query.text, orgId),       // pgvector cosine
-      this.keywordSearch(query.text, orgId),         // Elasticsearch BM25
-    ])
+  const [semanticChunks, keywordHits] = await Promise.all([
+    this.chunkRepo.semanticSearch(orgId, queryVec, fetch),        // pgvector <=> cosine
+    this.keywordRepo.search(orgId, query, fetch).catch(() => []), // ES BM25; ES down → degrade
+  ])
 
-    // RRF merge: score = Σ 1/(k + rank_i), k=60 is standard
-    const merged = this.rrfMerge(semanticResults, keywordResults, 60)
-    const topChunks = merged.slice(0, query.topK ?? 10)
+  // ⚠️ FUSE AT ITEM LEVEL. Semantic is chunk-level → dedupe to best chunk per item
+  // first, so both lists rank the SAME identity (knowledgeItemId).
+  const semanticItems = this.dedupeToItems(semanticChunks)
+  const chunks = this.rrfMerge(semanticItems, keywordHits).slice(0, topK)
 
-    // RAG summarization — optional, skip if circuit open
-    const summary = await this.summarize(query.text, topChunks).catch(() => null)
+  // Best-effort RAG summary (circuit breaker inside): failure/open → null.
+  const summary = summarize && chunks.length
+    ? await this.summarizer.summarize(query, chunks).catch(() => null)
+    : null
+  return { chunks, summary: summary?.text ?? null, sources: summary?.sources ?? [] }
+}
 
-    return { chunks: topChunks, summary, sources: this.extractSources(topChunks) }
-  }
-
-  private rrfMerge(semantic: RankedResult[], keyword: RankedResult[], k: number) {
-    const scoreMap = new Map<string, number>()
-
-    for (const [rank, result] of semantic.entries()) {
-      scoreMap.set(result.id, (scoreMap.get(result.id) ?? 0) + 1 / (k + rank + 1))
-    }
-    for (const [rank, result] of keyword.entries()) {
-      scoreMap.set(result.id, (scoreMap.get(result.id) ?? 0) + 1 / (k + rank + 1))
-    }
-
-    return [...scoreMap.entries()]
-      .sort(([, a], [, b]) => b - a)
-      .map(([id]) => [...semantic, ...keyword].find(r => r.id === id)!)
-  }
+// RRF by knowledgeItemId: score = Σ 1/(k + rank), k=60. Keep a representative
+// snippet per item (prefer the semantic chunk). Avoids the concat-then-find bug.
+private rrfMerge(semantic: RankedItem[], keyword: KeywordHit[]): RankedItem[] {
+  const scores = new Map<string, number>()
+  const repr = new Map<string, { content: string; titleSnapshot: string }>()
+  semantic.forEach((it, rank) => { addRrf(scores, it.knowledgeItemId, rank); repr.set(it.knowledgeItemId, it) })
+  keyword.forEach((h, rank) => { addRrf(scores, h.knowledgeItemId, rank); if (!repr.has(h.knowledgeItemId)) repr.set(h.knowledgeItemId, h) })
+  return [...scores.entries()].sort(([, a], [, b]) => b - a).map(([id, score]) => ({ knowledgeItemId: id, score, ...repr.get(id)! }))
 }
 ```
+> **Đã LIVE (Phase 4, 2026-07-02):** RRF fusion ở `SearchKnowledgeService`. `rank` bắt đầu từ 0 (`1/(60+rank)`). Smoke: keyword-exact → ES top, semantic → pgvector top, item ở CẢ hai list → điểm cao nhất (2×1/60).
 
 ---
 
@@ -242,17 +243,22 @@ export class ElasticsearchKnowledgeRepository implements IKeywordSearchRepositor
     }))
   }
 
-  async index(chunk: KnowledgeChunk): Promise<void> {
+  // Index ONE doc per ITEM (id = itemId), not per chunk — keyword hits are
+  // item-level, matching the RRF fusion granularity. Upsert by id = idempotent.
+  async indexItem(doc: IndexItemDoc): Promise<void> {
     await this.client.index({
-      index: `knowledge-${chunk.orgId}`,
-      id: chunk.id,
-      document: { title: chunk.title, content: chunk.content, itemId: chunk.knowledgeItemId },
+      index: `knowledge-${doc.orgId}`,
+      id: doc.knowledgeItemId,
+      document: { orgId: doc.orgId, spaceId: doc.spaceId, title: doc.title, content: doc.content },
+      refresh: 'wait_for', // searchable ≤1s, no forced global refresh
     })
   }
 }
+// search(): index-not-found (org chưa index) → catch statusCode 404 → return []
 ```
 
 > **Per-tenant index** (`knowledge-{orgId}`) — isolation tự nhiên, không cần filter trong query.
+> **Đã LIVE (Phase 4):** `ElasticsearchKeywordRepository` + `ElasticsearchClientService` (singleton, http+basic auth, security-on/TLS-off local). Indexing per-item trong `IndexKnowledgeHandler` (song song pgvector). ES down lúc index → handler throw → retry → DLQ (cả 2 store idempotent). ES down lúc search → degrade semantic-only.
 
 ---
 
