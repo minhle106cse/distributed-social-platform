@@ -13,3 +13,6 @@
 [submodule "apps/search-service"]
 	path = apps/search-service
 	url = git@github-me:minhle106cse/distributed-social-platform_search-service.git
+[submodule "apps/web"]
+	path = apps/web
+	url = git@github-me:minhle106cse/distributed-social-platform_web.git
