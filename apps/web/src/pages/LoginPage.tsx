@@ -28,7 +28,15 @@ export function LoginPage() {
       // The SPA never sees the token — the cookie rides along on every call.
       await api.post('/auth/login', { email, password })
       loginWithCookie(email)
-      if (orgIdInput.trim()) setOrgId(orgIdInput.trim())
+      if (orgIdInput.trim()) {
+        setOrgId(orgIdInput.trim())
+      } else {
+        // Auto-discover: first org from GET /orgs (membership-scoped).
+        const orgs = await api
+          .get<{ orgId: string; name: string }[]>('/orgs')
+          .catch(() => [] as { orgId: string; name: string }[])
+        if (orgs.length > 0) setOrgId(orgs[0].orgId)
+      }
       navigate('/search')
     } catch (err) {
       setError(err instanceof ApiError ? err.message : (err as Error).message)
@@ -70,7 +78,7 @@ export function LoginPage() {
           />
           <input
             className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-xs outline-none focus:border-brand-500"
-            placeholder="Org ID (uuid) — dán org của bạn"
+            placeholder="Org ID (tuỳ chọn — tự lấy org đầu tiên nếu bỏ trống)"
             value={orgIdInput}
             onChange={(e) => setOrgIdInput(e.target.value)}
           />

@@ -20,7 +20,29 @@ interface Envelope<T> {
   error?: { code?: string; details?: unknown }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+// Single-flight refresh: N requests hitting 401 at once trigger ONE
+// POST /auth/refresh (refresh tokens rotate — a second concurrent call would
+// burn the newly-issued token and log everyone out).
+let refreshing: Promise<boolean> | null = null
+
+function refreshSession(): Promise<boolean> {
+  // `{}` body: the refresh route declares a (all-optional) body schema, so
+  // Fastify 400s a body-less request — an empty JSON object satisfies it.
+  refreshing ??= fetch(`${BASE}/auth/refresh`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: '{}',
+  })
+    .then((res) => res.ok)
+    .catch(() => false)
+    .finally(() => {
+      refreshing = null
+    })
+  return refreshing
+}
+
+async function request<T>(path: string, init: RequestInit = {}, isRetry = false): Promise<T> {
   const { token, orgId } = useAuth.getState()
   const headers: Record<string, string> = {
     // Only claim a JSON body when there IS one — Fastify rejects
@@ -47,7 +69,18 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   if (!res.ok) {
-    if (res.status === 401) useAuth.getState().logout()
+    if (res.status === 401) {
+      // Access token (15 min) likely expired. For cookie sessions, try one
+      // silent refresh (rotates the refresh-token cookie) and replay the
+      // request. Never for /auth/* (would loop) or a request we already retried.
+      const cookieSession = !token
+      if (cookieSession && !isRetry && !path.startsWith('/auth/')) {
+        if (await refreshSession()) {
+          return request<T>(path, init, true)
+        }
+      }
+      useAuth.getState().logout()
+    }
     throw new ApiError(res.status, body?.message ?? res.statusText, body?.error?.code)
   }
 
