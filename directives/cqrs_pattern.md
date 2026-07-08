@@ -172,3 +172,25 @@ The CQRS implementation dictates a strict directory separation based on Hexagona
 7. **`src/modules/[module]/presentation/`**: Contains Fastify routes/controllers. **Rule:** Translates HTTP requests into Commands/Queries and pushes them to the `CommandBus`.
 
 By strictly enforcing this folder structure and the "Pure POJO" rule for the CQRS core, the business logic and messaging patterns remain fully decoupled from HTTP, Database, and Framework specifics (like NestJS DI).
+
+---
+
+## Repository-interface & DTO placement — CANONICAL (enforced across ALL services)
+
+> Ruling 2026-07-03 after a cross-service audit found repo interfaces scattered across three different folders (`domain/repositories/`, `application/queries/`, `application/repositories/`). There are now **exactly two** legal locations for a repository interface. `application/repositories/` is **banned** — it existed only as a neutral "I'm not sure" folder and is what caused the drift.
+
+**Decision rule — classify a repo by what its result is used for, not by whether it happens to read or write:**
+
+| Repo kind | Location | File | Types |
+|---|---|---|---|
+| **Command / write-side** (entity-based, serves command handlers) | `domain/repositories/` | `<name>.repository.ts` | write-input types **inline** in the file |
+| **Projection / write-model** (maintained from events; has NO entity/invariant; any read it exposes is an *internal* pipeline lookup, not an HTTP response) | `domain/repositories/` | `<name>.repository.ts` | input/intermediate types **inline** |
+| **Mixed write + internal-read** (e.g. a search index: written by an event handler, read internally to feed further logic — the read result is an *intermediate*, not the endpoint's response DTO) | `domain/repositories/` | `<name>.repository.ts` | **inline** |
+| **Query-side** (returns a DTO that is handed **straight back** to a query handler / the client) | `application/queries/` | `<module>.query-repository.ts` | response DTO in its **own** `<module>.dto.ts` next to it |
+
+**Rules:**
+- A query-repo interface shared by more than one query lives at the **`application/queries/` level**, NOT inside one query's sub-folder (a shared repo buried in `get-org-members/` forcing `list-my-orgs` to reach across is the anti-pattern that was fixed).
+- **Response DTOs are FLAT — one `<name>.dto.ts` per query-repo, at the `application/queries/` level, NOT nested per-query** (`get-me/get-me.dto.ts`, `get-org-members/get-org-members.dto.ts` were the anti-pattern; flattened to `user.dto.ts`, `membership.dto.ts` 2026-07-03). The DTO file is named to match its query-repo (`membership.query-repository.ts` ↔ `membership.dto.ts`, `wallet.query-repository.ts` ↔ `wallet.dto.ts`). All DTOs a given query-repo returns go in that one file, even if consumed by several query handlers (`membership.dto.ts` holds both `MemberDto` and `MyOrgDto`). Query `.query.ts` + `.handler.ts` stay in their per-query sub-folder; only the DTO comes up a level. (Request/input DTOs are a different artifact — they live in `presentation/schemas/` as Zod-schema types and are out of scope for this rule.)
+- **Response DTOs get their own `.dto.ts` file** (query side). **Write-input/intermediate types stay inline** in the domain repo file (mirrors `InsertNotificationRow` in `notification.repository.ts`). Do NOT invert this.
+- The deciding question for a repo that both reads and writes: **"does its read result go straight out as the query response, or is it an intermediate step inside a handler/service?"** Straight-out → `application/queries/`. Intermediate → `domain/repositories/`. (Examples: `space_followers.findFollowerIds` feeds fan-out → domain; `ISearchChunkRepository.semanticSearch` feeds RRF fusion → domain; `INotificationQueryRepository.findByRecipient` → returns `NotificationDto[]` to the query handler → `application/queries/`.)
+- **NEVER** create `application/repositories/`. (Historical note: auth-service originally put query-repos there; migrated 2026-07-03.)

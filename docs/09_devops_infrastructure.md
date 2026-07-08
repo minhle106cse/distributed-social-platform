@@ -127,7 +127,7 @@ Nhóm chính (xem `.env.example`):
 
 ```bash
 docker-compose up -d           # Postgres+pgvector, Redis, Kafka, ES, Monitoring
-npx turbo run db:migrate       # Prisma migrate (core_db + auth_db)
+npx turbo run db:push          # Prisma db push (mỗi service push DB riêng của mình)
 npx turbo run dev              # Chạy tất cả apps
 # Agent sandbox (khi cần chạy tool AI workflow):
 docker-compose -f docker-compose.agent.yml up -d

@@ -37,19 +37,29 @@ Mọi microservice trong `apps/` phải tuân theo cấu trúc file sau:
    - Import `buildServer` từ `bootstrap/server.ts`.
    - Export hàm `createApp()` trả về application instance đã hoàn thiện.
    - Không chứa logic listen port ở đây.
+   - **Nếu service có nhiều hơn 1 transport** (HTTP + gRPC, HTTP + worker consumer...): `createApp()` **nhận `Application` (đã build sẵn) làm tham số**, KHÔNG tự `buildInfra`/`buildApplication` bên trong nó — xem mục "Composition Root" bên dưới.
 
 4. **`src/main.ts`** (Local Entrypoint)
    - Chứa hàm `bootstrap()`.
-   - Gọi `const app = await createApp()`.
+   - **Là composition root duy nhất của process này** — `buildInfra()`+`buildApplication()` gọi **đúng 1 lần** ở đây, rồi truyền `application` xuống mọi transport (`createApp(application, logger)` cho HTTP, `startGrpcServer(application.CommandBus, logger)` cho gRPC nếu có, v.v.) — không transport nào tự build bản sao riêng.
    - Gọi `app.listen({ port, host: '0.0.0.0' })`.
    - **BẮT BUỘC** có `.catch` để log và `process.exit(1)` khi bootstrap fail.
+   - Service chạy dài hạn (không phải Lambda) nên đăng ký graceful shutdown (`SIGTERM`/`SIGINT`) ở đây — xem `resilience_patterns.md` mục 5.
 
 5. **`src/main.lambda.ts`** (AWS Lambda Entrypoint)
    - Bắt buộc cài đặt thư viện `@fastify/aws-lambda`.
-   - Gọi `createApp()`.
+   - **Composition root riêng của process Lambda** — tự `buildInfra()`+`buildApplication()` (không share với `main.ts`, đây là process/runtime khác hẳn), rồi `createApp(application, logger)`.
    - Trả về proxy handler bằng `awsLambdaFastify(instance)`.
    - Export `handler` để AWS API Gateway/Lambda kích hoạt.
    - **BẮT BUỘC** dùng proper types `APIGatewayProxyEvent`, `Context` từ `aws-lambda` — không dùng `any`.
+
+## 🧩 Composition Root — build DI graph đúng 1 lần mỗi process
+
+**Vấn đề:** khi 1 service có nhiều transport (HTTP + gRPC, HTTP + Kafka consumer...), dễ mắc lỗi để mỗi transport tự `buildInfra()`+`buildApplication()` riêng "cho tiện lúc viết" — tạo ra 2+ `CommandBus`/`QueryBus` độc lập, mỗi cái tự new lại toàn bộ handler/repository instance trong cùng 1 process. Thường vẫn chạy được (vì Prisma client bên dưới là module-level singleton) nhưng đó là **an toàn nhờ may mắn**, không phải do thiết kế đúng — không đảm bảo nếu sau này có thêm state khác (cache in-memory, connection pool riêng...).
+
+**Rule:** mỗi process (`main.ts`, `main.lambda.ts`, `worker.ts`...) build DI graph (`buildInfra`+`buildApplication`) **đúng 1 lần**, ngay đầu hàm `bootstrap()`, rồi truyền `application` (hoặc từng phần của nó như `application.CommandBus`) xuống **mọi** transport của process đó. `app.ts`'s `createApp()` nhận `application` làm tham số thay vì tự build — nó không còn là composition root, chỉ là nơi lắp transport HTTP vào 1 graph đã có sẵn.
+
+**Ngoại lệ hợp lệ:** `main.ts` và `main.lambda.ts` là 2 **process khác nhau** (long-running server vs. serverless invocation) — mỗi process tự build composition root riêng của mình là đúng, không phải trùng lặp cần gộp. Trùng lặp cần tránh là **trong cùng 1 process**.
 
 ## 🔧 Bootstrap Checklist
 

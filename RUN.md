@@ -7,6 +7,10 @@ Docker) proxies to the host services, so everything is reachable through **one U
 ## Prerequisites
 - Node 20+, npm 11+, Docker Desktop
 - A `.env` at the repo root (see the env keys validated in each `apps/*/src/config/env.validation.ts`)
+- `protoc` on PATH — only needed to regenerate `packages/shared-kernel/src/grpc/*`
+  after editing a `.proto` file (`npm run proto:gen --workspace=@distributed-social-platform/shared-kernel`).
+  Not needed just to run the app — generated code is committed. Install via
+  `choco install protoc` (Windows) or your OS package manager.
 
 ## Start
 
@@ -19,8 +23,8 @@ npm run infra:up
 docker exec dsp-embedding ollama pull nomic-embed-text
 npm run db:push                       # prisma db push across services
 
-# 3. Backend: all HTTP services with hot-reload (auth:4001 core:4002 notif:4003 search:4004)
-npm run dev:stack
+# 3. All services with hot-reload (auth:4001 core:4002 notif:4003 search:4004 + web:3001)
+npm run dev
 ```
 
 ## One gateway URL
@@ -53,6 +57,6 @@ GET  http://localhost:8000/api/v1/notifications        # notifications from foll
 
 ## Stop
 ```bash
-# Ctrl+C the dev:stack process, then:
+# Ctrl+C the dev process, then:
 npm run infra:down
 ```

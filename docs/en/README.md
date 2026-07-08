@@ -137,6 +137,6 @@ git clone https://github.com/yourname/cortex-knowledge-hub.git
 cd cortex-knowledge-hub
 npm install
 docker-compose up -d        # Postgres+pgvector, Redis, Kafka, Elasticsearch, Monitoring
-npx turbo run db:migrate
+npx turbo run db:push
 npx turbo run dev
 ```

@@ -13,6 +13,7 @@
 | Sau khi save DB cần publish event ra Kafka | Transactional Outbox |
 | Gọi external service có thể fail tạm thời | Retry |
 | Gọi Claude API / embedding cho nhiều item | Throttle |
+| Viết `main.ts`/entrypoint mới cho 1 service | Graceful Shutdown |
 
 ---
 
@@ -274,6 +275,67 @@ async enforceOrgAiRateLimit(orgId: string): Promise<void> {
 
 ---
 
+## 5. Graceful Shutdown
+
+### Vấn đề
+Process bị dừng đột ngột (deploy mới, container restart, autoscale scale-down, `docker stop`) trong lúc đang xử lý dở:
+- Request HTTP đang chạy bị cắt ngang → client nhận connection reset thay vì response.
+- Cuộc gọi gRPC đang chạy bị cắt ngang giữa chừng — **nguy hiểm hơn HTTP thường** khi RPC đó là 1 bước trong saga cross-service: ví dụ `ProvisionUser` (xem `microservice_architecture.md`/org-provisioning saga) đã tạo xong user ở `auth_db` nhưng response chưa kịp về tới core-api — core-api coi như fail, chạy compensation, nhưng user vừa tạo có thể đã "kịp" trả lời trước khi process chết → race hiếm nhưng có thật.
+- Connection pool Postgres bị ngắt đột ngột thay vì đóng sạch (Prisma không kịp `$disconnect()`).
+
+### Giải pháp
+Bắt tín hiệu dừng (`SIGTERM`/`SIGINT`) → **ngừng nhận việc mới** trên mọi transport (HTTP, gRPC...) nhưng **cho việc đang chạy dở hoàn tất** (giới hạn bởi 1 timeout) → sau đó mới đóng kết nối DB → thoát process sạch.
+
+### Implement — ví dụ thật từ `auth-service/src/main.ts`
+```typescript
+const SHUTDOWN_TIMEOUT_MS = 10_000
+
+async function bootstrap() {
+  // ...composition root + app.listen() + startGrpcServer()...
+  const grpcServer = startGrpcServer(application.CommandBus, logger)
+
+  const shutdown = (signal: string) => {
+    logger.info(`${signal} received, shutting down gracefully...`)
+
+    const forceExit = setTimeout(() => {
+      logger.error('Graceful shutdown timed out, forcing exit')
+      process.exit(1)
+    }, SHUTDOWN_TIMEOUT_MS)
+    forceExit.unref() // timer này không được giữ process sống nếu shutdown xong sớm
+
+    Promise.all([
+      app.close(),                                                       // 1. ngừng nhận HTTP mới, đợi request dở xong
+      new Promise<void>((resolve) => grpcServer.tryShutdown(() => resolve())), // 2. tương tự cho gRPC
+    ])
+      .then(() => prismaService.disconnect())                            // 3. CHỈ đóng DB sau khi cả 2 transport đã đóng sạch
+      .then(() => {
+        clearTimeout(forceExit)
+        logger.info('Shutdown complete')
+        process.exit(0)
+      })
+      .catch((err) => {
+        logger.error({ err }, 'Error during shutdown')
+        process.exit(1)
+      })
+  }
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'))
+  process.on('SIGINT', () => shutdown('SIGINT'))
+}
+```
+
+### ⚠️ Gotcha Windows (dev machine, không phải bug code)
+Windows **không có tín hiệu POSIX thật**. `SIGTERM`/`SIGINT` trên Node-Windows chỉ giả lập qua console-control-handler, **chỉ hoạt động khi tự bấm Ctrl+C trên đúng terminal** đang chạy process đó. Gửi tín hiệu từ ngoài (`taskkill` không `/F`, hoặc `process.kill(otherPid, 'SIGINT')` từ process khác) trên Windows hầu như luôn hành xử như giết cứng (bỏ qua handler đã đăng ký) — đã verify thực tế: cả 2 cách đều KHÔNG kích hoạt được log `"...shutting down gracefully"`. Muốn tự mắt thấy code này chạy trên Windows: mở terminal, `npm run dev`, tự bấm Ctrl+C. Trong Docker/Linux (nơi code này thực sự phục vụ) thì `docker stop`/Kubernetes gửi `SIGTERM` thật theo chuẩn POSIX, handler chạy đúng như thiết kế — đây là target thật của pattern này, không phải dev loop trên Windows.
+
+### Rules
+- ⛔ KHÔNG đóng DB trước khi đóng transport — request/RPC đang dở sẽ crash giữa chừng thay vì hoàn tất
+- Đăng ký handler **ở đúng 1 nơi** (composition root của `main.ts`, xem `microservice_architecture.md` phần Composition Root) — không rải rác nhiều nơi trong app
+- Timeout ép buộc (`forceExit`) là bắt buộc — nếu 1 request/RPC treo vô hạn (deadlock, external call không timeout), graceful shutdown phải có đường thoát cứng sau N giây, không được chờ mãi
+- `forceExit.unref()` — nếu shutdown xong sớm hơn timeout, timer đó không được giữ process sống thêm
+- Entry point khác (`main.lambda.ts`, cron job, worker consumer...) có process lifecycle khác hẳn (serverless không có "process sống lâu" để graceful shutdown) — pattern này chỉ áp dụng cho service chạy dài hạn (long-running), không áp máy móc cho mọi entrypoint
+
+---
+
 ## Tóm tắt — Pattern nào dùng khi nào
 
 ```
@@ -282,4 +344,5 @@ Sau domain write cần notify service khác → Transactional Outbox
 External service fail tạm thời → Retry (+ Circuit Breaker)
 Xử lý nhiều item AI cùng lúc → Throttle
 External service fail liên tục → Circuit Breaker (xem rag_ai_integration.md)
+Service chạy dài hạn cần dừng sạch (deploy/restart/scale-down) → Graceful Shutdown
 ```

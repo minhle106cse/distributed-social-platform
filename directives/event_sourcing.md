@@ -45,7 +45,17 @@ model DomainEvent {
 
 ### 2. Read Model (Projection / Summary)
 
-Không bao giờ query EventStore trực tiếp cho read operations. Maintain một **denormalized read model** được cập nhật sau mỗi event.
+> [!IMPORTANT]
+> **Quyết định 2026-07-03 (Phase 5a Credit) — override cho credit wallet: FOLD-ON-READ, KHÔNG summary table.**
+> Dự án đã rollback read-model (2026-06-30): schema chỉ chứa source-of-truth, projection defer tới Phase 3. Áp cho credit:
+> `CreditAccount` fold balance từ stream `credit_events` mỗi lần load/query — KHÔNG có `CreditBalanceSummary`.
+> Ưu điểm: `Sum(events) == balance` hiển nhiên đúng (không có bảng thứ 2 để lệch), không cần giữ đồng bộ trong tx.
+> Chi phí: mỗi spend load lại stream — chấp nhận được ở scale nhỏ; **snapshot (§5) khi stream > 500 event**.
+> Phần "summary trong cùng transaction" bên dưới GIỮ như tham khảo cho tương lai (khi read-path Phase 3 cần O(1) balance),
+> nhưng 5a KHÔNG dùng. OCC vẫn ép qua `@@unique([aggregateId, version])` trên chính event ledger.
+
+Không bao giờ query EventStore trực tiếp cho read operations (khi đã có read model). Nếu chọn read model,
+maintain một **denormalized read model** được cập nhật sau mỗi event.
 
 ```prisma
 model CreditBalanceSummary {

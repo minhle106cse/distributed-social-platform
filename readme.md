@@ -313,11 +313,11 @@ docker exec dsp-embedding ollama pull nomic-embed-text   # first time only
 # 3. Push schemas (per-service DBs)
 npm run db:push
 
-# 4. Backend stack (auth:4001 core:4002 notif:4003 search:4004 — hot reload)
-npm run dev:stack
+# 4. Everything with hot reload (auth:4001 core:4002 notif:4003 search:4004 + web:3001)
+npm run dev
 
 # → Toàn bộ API qua gateway: http://localhost:8000/api/v1/*
-# → Web SPA (apps/web): cd apps/web && npm run dev  →  http://localhost:3001
+# → Web SPA: http://localhost:3001
 ```
 
 ---

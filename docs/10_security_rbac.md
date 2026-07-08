@@ -68,8 +68,8 @@ Platform (do bạn — nhà vận hành — sở hữu)
 
 ### 2.1. Tầng 1 — System RBAC (auth-service)
 
-- **Mô hình:** `Role` ──< `RolePermission` >── `Permission`; `User` ──< `UserRole`. (Đã có sẵn trong auth-service.)
-- **Permission catalog:** định nghĩa trong `src/common/rbac/system-permissions.ts` (`SystemPermission` const). Format `resource:action` lowercase — đồng nhất với Org RBAC.
+- **Mô hình:** `Role` (có cột `permissions: String[]`, không phải bảng `Permission`/`RolePermission` join) ──< `UserRole` >── `User`.
+- **Permission catalog:** định nghĩa trong `packages/shared-kernel/src/auth/system-permissions.ts` (`SystemPermission` const) — closed set, KHÔNG có `POST /permissions` để tạo permission mới runtime. Lý do: guard (`SystemPermissionGuard`) chỉ so khớp chuỗi với `SystemPermissionValue` (union type từ catalog) — permission tạo runtime với code lạ sẽ vô tác dụng vì không có endpoint nào check nó. **Role thì ngược lại, tạo tự do runtime** (`POST /roles`) vì role chỉ là nhãn gộp permission có sẵn, guard không bao giờ check tên role. Format permission `resource:action` lowercase — đồng nhất với Org RBAC.
 - **Permission ví dụ:** `report:read`, `report:resolve`, `report:dismiss`, `system:monitor`, `system:resource_manage`, `user:ban`, `user:unban`, `org:suspend`, `billing:manage`, `rbac:*`.
 - **System Roles:** `SUPER_ADMIN` (implicit-all), `SUPPORT_AGENT`, `CONTENT_MODERATOR`, `SYSTEM_ENGINEER`, `BILLING_ADMIN`.
 - **Wildcard matching** (AWS IAM style) trong `requirePermissions([...])`:
