@@ -10,6 +10,9 @@ export * from './schemas/common.schema.js'
 
 export * from './logger/index.js'
 
+// Auth — system-level permission catalog (JWT claims, cross-service)
+export * from './auth/system-permissions.js'
+
 // CQRS
 export * from './cqrs/index.js'
 
