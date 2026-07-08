@@ -2,7 +2,6 @@ import { EventType } from '../event-types.js'
 import { defineEvent } from '../integration-event.js'
 
 export interface FollowRemovedPayload {
-  orgId: string
   userId: string
   targetType: string
   targetId: string

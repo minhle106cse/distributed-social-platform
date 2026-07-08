@@ -3,7 +3,6 @@ import { defineEvent } from '../integration-event.js'
 
 export interface KnowledgePublishedPayload {
   itemId: string
-  orgId: string
   spaceId: string
   type: string
   title: string
