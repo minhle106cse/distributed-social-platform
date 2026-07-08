@@ -71,6 +71,9 @@ web_modules/
 .env
 .env.*
 !.env.example
+# NOTE: apps/auth-service and apps/search-service are git submodules with
+# their OWN .gitignore — the .env.secrets.example exception for each lives
+# there, not here (root-level negation wouldn't reach inside a submodule).
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
