@@ -30,17 +30,25 @@ export interface MinimalConsumer {
   disconnect(): Promise<void>
 }
 
+/**
+ * Everything a dead-letter producer needs to reconstruct the original message
+ * and record why it died. Shared by the port below and every per-service
+ * DeadLetterProducer implementation — declare it once here instead of each
+ * service re-typing the same shape.
+ */
+export interface DeadLetterInput {
+  topic: string
+  key: Buffer | string | null
+  value: Buffer | string | null
+  reason: 'poison-pill' | 'handler-error'
+  error: string
+  partition: number
+  offset: string
+}
+
 /** Outbound port to a per-service dead-letter producer (`<topic>.DLQ`). */
 export interface DeadLetterPort {
-  send(input: {
-    topic: string
-    key: Buffer | string | null
-    value: Buffer | string | null
-    reason: 'poison-pill' | 'handler-error'
-    error: string
-    partition: number
-    offset: string
-  }): Promise<void>
+  send(input: DeadLetterInput): Promise<void>
 }
 
 export interface ResilientConsumerOptions {
