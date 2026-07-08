@@ -25,3 +25,11 @@ export * from './events/index.js'
 
 // Messaging — HOW events travel: transport, routing, publish/dispatch (Kafka + queue)
 export * from './messaging/index.js'
+
+// gRPC — generated (ts-proto) typed contracts for internal service-to-service
+// calls (e.g. core-api -> auth-service org provisioning). Regenerate via
+// `npm run proto:gen` after editing proto/org-provisioning.proto at repo root.
+export * from './grpc/org-provisioning.js'
+// gRPC — shared M2M auth convention (shared-secret metadata), reused by every
+// internal gRPC server/client so the wire format can't drift between them.
+export * from './grpc/internal-grpc-auth.js'

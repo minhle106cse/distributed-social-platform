@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package cortex.auth;
+
+// Internal service-to-service contract, NOT public API. Called by core-api
+// (platform-admin org provisioning) against auth-service. Secured by a
+// shared-secret in gRPC metadata (x-internal-secret), not end-user JWT — see
+// INTERNAL_GRPC_SHARED_SECRET in both services' env.
+service AuthProvisioning {
+  // Creates a new User + LOCAL AuthIdentity with a server-generated random
+  // password. Fails with ALREADY_EXISTS if the email is taken.
+  rpc ProvisionUser(ProvisionUserRequest) returns (ProvisionUserResponse);
+
+  // Compensating action for a saga rollback: hard-deletes a user that was
+  // just provisioned by ProvisionUser, if it hasn't been touched since
+  // (emailVerified still false). No-op (cancelled=false) otherwise.
+  rpc CancelProvisionedUser(CancelProvisionedUserRequest) returns (CancelProvisionedUserResponse);
+}
+
+message ProvisionUserRequest {
+  string email = 1;
+}
+
+message ProvisionUserResponse {
+  string user_id = 1;
+  string temporary_password = 2;
+}
+
+message CancelProvisionedUserRequest {
+  string user_id = 1;
+}
+
+message CancelProvisionedUserResponse {
+  bool cancelled = 1;
+}
