@@ -14,6 +14,18 @@ scrape_configs:
     static_configs:
       - targets: ['host.docker.internal:4001']
 
+  - job_name: 'core-api'
+    static_configs:
+      - targets: ['host.docker.internal:4002']
+
+  - job_name: 'notification-service'
+    static_configs:
+      - targets: ['host.docker.internal:4003']
+
+  - job_name: 'search-service'
+    static_configs:
+      - targets: ['host.docker.internal:4004']
+
   - job_name: 'postgres'
     static_configs:
       - targets: ['postgres-exporter:9187']
