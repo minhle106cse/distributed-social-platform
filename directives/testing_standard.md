@@ -64,3 +64,24 @@ jest.mock('uuid', () => ({
   - `tsconfig` override ép CommonJS (phải đổi cả `moduleResolution` sang `node`, nếu không TS5110 vì NodeNext đòi module=NodeNext).
   - `moduleNameMapper` strip `.js` để ts-jest resolve sang `.ts` nguồn.
 - **Tách spec khỏi build**: thêm `"exclude": ["**/*.spec.ts"]` vào `tsconfig.json` của package published, tránh ship test code vào `dist/`.
+
+### 6. Jest config bắt buộc cho MỌI service tiêu thụ `shared-kernel` (core-api, notification-service, search-service...)
+- `shared-kernel` là ESM (NodeNext, import `.js`-suffixed). Bất kỳ class dùng decorator `@CommandHandler`/`@QueryHandler` đều import RUNTIME (không phải `import type`) một hằng số từ `shared-kernel` — viết test cho handler đó sẽ trigger `SyntaxError: Unexpected token 'export'` nếu jest config thiếu 2 phần dưới. Đây là gap config có sẵn, không phải lỗi code test.
+- Bắt buộc trong `package.json` → `jest`:
+```json
+"transform": {
+  "^.+\\.(t|j)s$": ["ts-jest", {
+    "diagnostics": { "ignoreCodes": [151002] },
+    "tsconfig": { "module": "CommonJS", "moduleResolution": "node", "resolvePackageJsonExports": false }
+  }]
+},
+"moduleNameMapper": {
+  "^@/(.*)$": "<rootDir>/$1",
+  "^(\\.{1,2}/.*)\\.js$": "$1",
+  "^@distributed-social-platform/shared-kernel$": "<rootDir>/../../../packages/shared-kernel/src/index.ts",
+  "^uuid$": "uuid"
+},
+"transformIgnorePatterns": ["node_modules/(?!uuid)"]
+```
+- `resolvePackageJsonExports: false` chỉ cần nếu tsconfig gốc của service có `resolvePackageJsonExports: true` (TS5098 khi ép `moduleResolution: node`).
+- Chi tiết + lý do đầy đủ: `.ai/memory/gotchas.jsonl` "core-api had zero working Jest config...".

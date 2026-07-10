@@ -283,6 +283,12 @@
 - Structured Logging: Pino (JSON) → ELK Stack — correlation-id theo từng request
 - Tại sao cần cả 3? Metrics: "what is broken", Tracing: "where is slow", Logs: "why did it fail"
 
+**Chất liệu thật đã làm (2026-07-09), có thể tách thành 2 bài riêng nếu đủ sâu:**
+- **#35a · Gauge vs Counter — lỗi PromQL người mới hay mắc:** đọc thẳng `notification_dlq_total` (Counter) là vô nghĩa, phải `rate(...[5m])`; còn `kafka_consumergroup_lag` (Gauge) đọc trực tiếp được. Ví dụ thật: lag=0 ngay cả khi consumer chưa xử lý gì — vì Kafka consumer subscribe từ `onModuleInit`, lag=0 nghĩa là "không có gì mới để đọc", không phải "đã xử lý xong việc gì".
+- **#35b · Dashboard-as-code, không click-ops:** Prometheus recording rules (`rules.yml`) tách "công thức tính" khỏi "nơi hiển thị" — dashboard JSON chỉ tham chiếu tên rule (`notification:dlq_rate5m`), không tự tính `rate()`. Grafana dashboard + alert rules provision từ file JSON/YAML commit vào git (`docker-init/grafana/provisioning/`), không tạo tay qua UI → clone repo ở máy khác là có ngay, không phụ thuộc Docker volume.
+- **#35c · 1 gotcha thật đáng kể:** đổi `uid` của datasource sau khi Grafana đã provision 1 lần → container crash-loop vĩnh viễn (`data source not found`), vì record cũ trong volume không khớp uid mới. Fix bằng `deleteDatasources` trong provisioning YAML, không cần xóa volume — bài học: đổi identifying field của resource đã provision phải luôn kèm delete-directive.
+- **#35d · Góc nhìn Senior→Principal (bài quan điểm, khác hẳn kiểu bài kỹ thuật):** ranh giới "sở hữu WHY/WHAT" (metric nào đáng đo, ngưỡng alert bao nhiêu và vì sao — quyết định thiết kế hệ thống) vs "để AI/Platform lo HOW" (cú pháp YAML provisioning). Dùng AI pair-program để tự tay dựng cả bộ Prometheus+Grafana trong 1 buổi, nhưng vai trò là **ra quyết định + review**, không phải nhớ cú pháp — đúng mô hình làm việc thật ở tổ chức có Platform/SRE team riêng. Nguồn: `directives/observability_monitoring.md` §5.
+
 ### #36 · Load Testing với K6 — test những gì QUAN TRỌNG nhất
 **Góc:** Quality engineering
 - OCC test: 10 concurrent edit cùng 1 doc → chỉ 1 thành công (9 cái 409 Conflict)
