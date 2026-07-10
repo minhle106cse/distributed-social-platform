@@ -1,0 +1,30 @@
+groups:
+  - name: cortex_event_pipeline
+    interval: 15s
+    rules:
+      - record: notification:dlq_rate5m
+        expr: rate(notification_dlq_total[5m])
+
+      - record: notification:handler_retry_rate5m
+        expr: rate(notification_handler_retry_total[5m])
+
+      - record: notification:dedup_skipped_rate5m
+        expr: rate(notification_dedup_skipped_total[5m])
+
+      - record: search:dlq_rate5m
+        expr: rate(search_dlq_total[5m])
+
+      - record: search:handler_retry_rate5m
+        expr: rate(search_handler_retry_total[5m])
+
+      - record: search:chunks_indexed_rate5m
+        expr: rate(search_chunks_indexed_total[5m])
+
+      - record: kafka:consumergroup_lag_by_group
+        expr: sum by (consumergroup, topic) (kafka_consumergroup_lag)
+
+  - name: cortex_infra
+    interval: 15s
+    rules:
+      - record: postgres:app_connections
+        expr: sum by (datname) (pg_stat_database_numbackends{datname=~"core_db|auth_db|notification_db|search_db"})

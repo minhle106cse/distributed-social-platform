@@ -1,0 +1,172 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: cortex_alerts
+    folder: Cortex Alerts
+    interval: 1m
+    rules:
+      - uid: cortex-service-down
+        title: Service Down
+        condition: C
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "One of the Cortex app services stopped responding to /metrics"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: up{job=~"core-api|auth-service|notification-service|search-service"}
+              instant: false
+              range: true
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: lt, params: [1] }
+
+      - uid: cortex-notification-dlq
+        title: Notification DLQ Rate Above Zero
+        condition: C
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "notification-service is dead-lettering messages (see notification_dlq_total{reason})"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: "notification:dlq_rate5m"
+              instant: false
+              range: true
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+      - uid: cortex-search-dlq
+        title: Search DLQ Rate Above Zero
+        condition: C
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "search-service is dead-lettering messages — RAG indexing pipeline is dropping events"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: "search:dlq_rate5m"
+              instant: false
+              range: true
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+      - uid: cortex-kafka-lag-stuck
+        title: Kafka Consumer Lag Stuck High
+        condition: C
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Consumer group {{ $labels.consumergroup }} is falling behind on topic {{ $labels.topic }}"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: "kafka:consumergroup_lag_by_group"
+              instant: false
+              range: true
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [50] }
+
+      - uid: cortex-elasticsearch-unreachable
+        title: Elasticsearch Unreachable
+        condition: C
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "elasticsearch-exporter cannot reach the Elasticsearch cluster — search-service hybrid search will degrade"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: elasticsearch_clusterinfo_up
+              instant: false
+              range: true
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: lt, params: [1] }

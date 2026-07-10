@@ -168,6 +168,7 @@ services:
     profiles: ["monitoring"]
     volumes:
       - ./docker-init/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./docker-init/prometheus/rules.yml:/etc/prometheus/rules.yml
       - prometheus_data:/prometheus
     restart: always
 
