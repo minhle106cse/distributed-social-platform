@@ -1,6 +1,5 @@
 # 📋 KỊCH BẢN SỬ DỤNG (SYSTEM USE CASES)
 
-> 📖 **[English Version](./en/02_use_cases.md)**
 
 Tài liệu mô tả các luồng tương tác **User ↔ System** của **Cortex**. Mỗi use case ghi rõ: Actor, Tiền điều kiện, Luồng chính, Luồng thay thế/lỗi, và **Pattern liên quan** (để truy vết tới kiến trúc).
 

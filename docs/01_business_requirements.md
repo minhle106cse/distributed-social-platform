@@ -1,6 +1,5 @@
 # 💼 YÊU CẦU NGHIỆP VỤ (BUSINESS REQUIREMENTS)
 
-> 📖 **[English Version](./en/01_business_requirements.md)**
 
 Tài liệu này định nghĩa "Phần Hồn" của **Cortex** — nền tảng tri thức nội bộ có AI cho team/công ty. Hệ thống được xây dựng trên 5 Trụ Cột kinh doanh, mỗi trụ cột đều sinh ra các bài toán System Design nâng cao một cách **tự nhiên**.
 

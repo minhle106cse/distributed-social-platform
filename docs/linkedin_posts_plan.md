@@ -299,9 +299,10 @@
 
 ### #37 · AI Agent Workflow — cách tôi dùng Claude Code để code cùng AI không mất kiểm soát
 **Góc:** AI-assisted development process
-- 3-layer architecture: Directive (SOP .md) → Agent (Claude) → Execution (Python scripts trong `execution/`)
-- Directives: SOP cho từng domain (CQRS, Event Sourcing, Multi-tenancy, RAG...) — AI đọc trước khi code
+- Ranh giới rạch ròi: `directives/` = luật code (HOW, AI đọc trước khi viết) vs `docs/` = thiết kế & spec (WHAT/WHY) — cùng 1 forcing-function giữ docs không lệch code
 - Memory buffer: `.ai/memory/*.jsonl` lưu gotchas, architecture decisions, lessons learned — persist qua sessions
+- Tự động hoá bằng 2 Claude Code hook: `UserPromptSubmit` (bản đồ task→doc) + `Stop` (`sync.cjs` tự regenerate `KNOWLEDGE_INDEX` + cảnh báo kỷ luật After-Task)
+- **Chất liệu thật đáng kể:** tôi từng over-engineer một "harness" 3-layer (Docker sandbox + Python tooling) rồi **xoá bỏ** khi nhận ra nó không khớp cách dự án chạy thật — bài học: đừng nhầm scaffolding với giá trị
 - Session Start Protocol: đọc `KNOWLEDGE_INDEX.md` → memory → directive → code — không bao giờ code mù
 
 ---

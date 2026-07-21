@@ -1,6 +1,5 @@
 # 🗄️ LƯỢC ĐỒ CƠ SỞ DỮ LIỆU (DATABASE SCHEMA)
 
-> 📖 **[English Version](./en/04_database_schema.md)**
 
 Tài liệu định nghĩa cấu trúc cơ sở dữ liệu cho **Cortex**. Lược đồ thiết kế bằng **Prisma v7**, áp dụng **Modular Monolith** + **Event Sourcing** (credit) + **CQRS Read Model** + **OCC** + **Idempotency** + **pgvector** (semantic search).
 
@@ -9,8 +8,8 @@ Tài liệu định nghĩa cấu trúc cơ sở dữ liệu cho **Cortex**. Lư�
 ## 1. Môi trường & Quy chuẩn
 
 - **Database Engine:** PostgreSQL 16 (image `pgvector/pgvector:pg16`) — port `15432`.
-- **2 logical DB:** `auth_db` (auth-service) và `core_db` (core-api), tạo qua `docker-init/init-dbs.sql`.
-- **Extension:** `CREATE EXTENSION IF NOT EXISTS vector;` trên `core_db`.
+- **4 logical DB, mỗi service sở hữu DB riêng** (own-data pattern, KHÔNG cross-DB join): `auth_db` (auth-service), `core_db` (core-api), `notification_db` (notification-service), `search_db` (search-service) — tạo qua `docker-init/init-dbs.sql`. `worker-service` KHÔNG có DB riêng — schema của nó là bản mirror type-gen **read-only** trỏ vào `core_db` (không `db:push`).
+- **Extension:** `CREATE EXTENSION IF NOT EXISTS vector;` bật trên cả `core_db` (hiện không có model dùng — vestigial) và `search_db` (nơi pgvector thực sự được dùng, xem §2.4).
 - **ORM:** Prisma v7 — KHÔNG `url` trong `schema.prisma`, dùng `prisma.config.ts` (xem `directives/database_standard.md`).
 - **Primary key:** UUID (`@default(uuid())`), KHÔNG dùng `autoincrement()`.
 - **Naming:** camelCase trong code, `@map("snake_case")` trong DB.
@@ -27,39 +26,94 @@ Tài liệu định nghĩa cấu trúc cơ sở dữ liệu cho **Cortex**. Lư�
 model User {
   id            String   @id @default(uuid())
   email         String   @unique
-  username      String?
-  avatarUrl     String?
   isActive      Boolean  @default(true)
   emailVerified Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+  deletedAt     DateTime? // Soft delete
 
-  authMethods   AuthMethod[]
+  authIdentities AuthIdentity[]
+  refreshTokens  RefreshToken[]
+  roles          UserRole[]
+  profile        UserProfile?
   @@map("users")
 }
 
-model AuthMethod {
-  id           String   @id @default(uuid())
+/// Hồ sơ hiển thị, tách khỏi User (identity) — 1-1.
+model UserProfile {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  firstName   String?
+  lastName    String?
+  displayName String?
+  avatarUrl   String?
+  phoneNumber String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@map("user_profiles")
+}
+
+enum AuthProvider { LOCAL GOOGLE APPLE }
+
+model AuthIdentity {
+  id           String       @id @default(uuid())
   userId       String
-  provider     String   // LOCAL, GOOGLE...
+  provider     AuthProvider @default(LOCAL)
   passwordHash String?
-  user         User     @relation(fields: [userId], references: [id])
+  providerId   String?      // Google/Apple external id
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, provider])
-  @@map("auth_methods")
+  @@unique([provider, providerId])
+  @@map("auth_identities")
 }
 
 model RefreshToken {
-  id        String   @id @default(uuid())
+  id        String    @id @default(uuid())
   userId    String
-  tokenHash String
-  expiresAt DateTime
+  tokenHash String    @unique
+  expiredAt DateTime
+  usedAt    DateTime? // rotation / reuse detection
   revokedAt DateTime?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   @@map("refresh_tokens")
 }
 ```
 
-> RBAC (Role, Permission) đã có trong auth-service; bổ sung khái niệm **org-scoped role** (token mang `orgId`) — xem `docs/10`.
+> **System RBAC (Role/UserRole) là model thật trong `auth_db`,** không chỉ khái niệm ở tầng code:
+> ```prisma
+> model Role {
+>   id          String   @id @default(uuid())
+>   code        String   @unique // "SUPER_ADMIN", "CONTENT_MODERATOR"... — xem SystemRole
+>   name        String
+>   description String?
+>   isActive    Boolean  @default(true)
+>   // Permission catalog đóng, định nghĩa ở code (SystemPermission, shared-kernel)
+>   // — cột string[] chứ KHÔNG có bảng Permission/RolePermission riêng.
+>   permissions String[] @default([])
+>   users       UserRole[]
+>   @@map("roles")
+> }
+> model UserRole {
+>   userId String
+>   roleId String
+>   user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+>   role   Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+>   @@id([userId, roleId])
+>   @@map("user_roles")
+> }
+> ```
+> Đây là **System RBAC** (platform-wide, KHÔNG org-scoped). Org-scoped role sống ở `core_db` (`Membership.role` + `OrgRolePermission`, xem §2.2). Token KHÔNG mang `orgId` — xem `docs/10`.
 
 ---
 
@@ -67,18 +121,22 @@ model RefreshToken {
 
 ```prisma
 model Organization {
-  id              String   @id @default(uuid())
-  name            String
-  slug            String   @unique
-  seatLimit       Int      @default(10)
-  aiRateLimitPerMin Int    @default(20)
-  createdAt       DateTime @default(now())
-  deletedAt       DateTime?
+  id          String    @id @default(uuid())
+  name        String
+  slug        String    // unique CHỈ trong org chưa xóa-mềm (partial index `WHERE deleted_at IS NULL`) — slug nhả lại khi org bị soft-delete
+  seatLimit   Int       @default(10)
+  createdAt   DateTime  @default(now())
+  deletedAt   DateTime?
 
   spaces          Space[]
   memberships     Membership[]
+  rolePermissions OrgRolePermission[]
+  invites         OrgInvite[]
   @@map("organizations")
 }
+```
+> **Lưu ý:** `aiRateLimitPerMin` từng được đặc tả ở đây nhưng KHÔNG có trong schema thật — rate-limiting AI hiện chưa implement (xem `docs/10` §4, đang aspirational). Nếu build tính năng này, field sẽ thêm vào `Organization` lúc đó.
+```prisma
 
 model Membership {
   id        String   @id @default(uuid())
@@ -160,6 +218,7 @@ model KnowledgeItem {
   title        String
   body         String   @db.Text
   parentId     String?  // ANSWER -> QUESTION
+  acceptedAnswerId String? // QUESTION -> answer đã accept
   status       KnowledgeStatus @default(DRAFT)
   isVerified   Boolean  @default(false)
   version      Int      @default(1)   // OCC
@@ -208,41 +267,48 @@ model Tag {
 
 ---
 
-### 🟪 2.4. Discovery Context (pgvector)
+### 🟪 2.4. Discovery Context (pgvector) — `search_db`, service riêng (`search-service`)
+
+> **KHÔNG còn ở `core_db`.** Model `Embedding` từng đặc tả trong `core_db` đã bị gỡ trong đợt rollback read-model (2026-06-30, trước Phase 4). Khi Phase 4 (RAG/AI Search) triển khai thật (2026-07-02), embedding được xây lại như **service riêng** (`search-service`, own `search_db`) — consume `KnowledgePublished` (Kafka), snapshot `body` vào chunk, KHÔNG cross-DB join vào `core_db`. Đơn vị lưu là **chunk**, không phải nguyên `KnowledgeItem`.
 
 ```prisma
-/// Cột vector dùng pgvector. Trong Prisma v7 khai báo qua Unsupported type
-/// và tạo index HNSW bằng raw migration.
-model Embedding {
-  id          String   @id @default(uuid())
-  itemId      String   @unique
-  orgId       String   // AI Data Boundary: retrieval luôn lọc theo org
-  embedding   Unsupported("vector(1024)")
-  contentHash String
-  createdAt   DateTime @default(now())
-  item        KnowledgeItem @relation(fields: [itemId], references: [id])
+// search_db — apps/search-service/prisma/schema.prisma
+model KnowledgeChunk {
+  id              String   @id @default(uuid())
+  knowledgeItemId String   // loose ref tới core_db.knowledge_items.id
+  orgId           String   // AI Data Boundary: retrieval luôn lọc theo org
+  spaceId         String
+  chunkIndex      Int
+  content         String
+  titleSnapshot   String   // snapshot, không join core_db lúc render
+  // pgvector dim 768 (self-hosted Ollama nomic-embed-text — Claude KHÔNG có
+  // embeddings API). Prisma không có type vector gốc → Unsupported, đọc/ghi
+  // qua raw SQL. Index HNSW tạo bằng raw migration.
+  embedding       Unsupported("vector(768)")?
+  createdAt       DateTime @default(now())
 
+  @@unique([knowledgeItemId, chunkIndex])
   @@index([orgId])
-  @@map("embeddings")
+  @@map("knowledge_chunks")
 }
 ```
 
 ```sql
 -- Raw migration: HNSW index cho cosine distance
-CREATE INDEX embeddings_vector_hnsw
-  ON embeddings USING hnsw (embedding vector_cosine_ops);
+CREATE INDEX knowledge_chunks_vector_hnsw
+  ON knowledge_chunks USING hnsw (embedding vector_cosine_ops);
 ```
 
 **Hybrid Retrieval query (minh hoạ):**
 ```sql
 -- Semantic: top-K theo cosine similarity, SCOPED theo org
-SELECT item_id, 1 - (embedding <=> $queryVec) AS score
-FROM embeddings
+SELECT knowledge_item_id, 1 - (embedding <=> $queryVec) AS score
+FROM knowledge_chunks
 WHERE org_id = $orgId
 ORDER BY embedding <=> $queryVec
 LIMIT 20;
 ```
-→ Hợp nhất với kết quả BM25 từ Elasticsearch bằng **Reciprocal Rank Fusion**.
+→ Hợp nhất với kết quả BM25 từ Elasticsearch (per-tenant index riêng) bằng **Reciprocal Rank Fusion** (k=60, item-level). Circuit Breaker bảo vệ bước RAG summary (Claude); ES down → degrade còn semantic-only, không 500.
 
 ---
 
@@ -250,23 +316,48 @@ LIMIT 20;
 
 ```prisma
 model Vote {
-  id      String @id @default(uuid())
-  itemId  String
-  userId  String
-  value   Int    // +1 / -1
-  item    KnowledgeItem @relation(fields: [itemId], references: [id])
+  id        String   @id @default(uuid())
+  orgId     String
+  itemId    String
+  userId    String
+  value     Int      // +1 upvote / -1 downvote
+  createdAt DateTime @default(now())
+  item      KnowledgeItem @relation(fields: [itemId], references: [id])
 
   @@unique([itemId, userId])
+  @@index([orgId, itemId])
   @@map("votes")
 }
 
 model Bookmark {
-  id      String @id @default(uuid())
-  userId  String
-  itemId  String
+  id        String   @id @default(uuid())
+  orgId     String
+  userId    String
+  itemId    String
+  createdAt DateTime @default(now())
   @@unique([userId, itemId])
+  @@index([orgId, userId])
   @@map("bookmarks")
 }
+
+/// Follow — DOCUMENT hoặc SPACE. Nguồn cho fan-out (feed §2.7 cũ đã rollback,
+/// notification-service fan-out qua SpaceFollower projection riêng của nó) +
+/// GET /feed (fan-out-on-read, query trực tiếp source-of-truth, không có bảng
+/// riêng cho feed — xem §2.7).
+model Follow {
+  id         String           @id @default(uuid())
+  orgId      String
+  userId     String
+  targetType FollowTargetType
+  targetId   String
+  createdAt  DateTime         @default(now())
+
+  @@unique([userId, targetType, targetId])
+  @@index([orgId, userId])
+  @@map("follows")
+}
+
+enum FollowTargetType { DOCUMENT SPACE }
 ```
 
 ---
@@ -316,51 +407,17 @@ model ReputationEvent {
 
 ---
 
-### 🟫 2.7. Read Models (CQRS — Projection)
+### 🟫 2.7. Read Models (CQRS — Projection) — ⛔ ROLLED BACK, hiện KHÔNG tồn tại trong schema
 
-```prisma
-model CreditBalanceSummary {
-  orgId     String   @id
-  balance   Int      @default(0)
-  reserved  Int      @default(0) // locked bởi saga đang chạy
-  updatedAt DateTime @updatedAt
-  @@map("credit_balance_summary")
-}
-
-model FeedTimeline {
-  id        String   @id @default(uuid())
-  orgId     String
-  userId    String   // người nhận feed
-  itemId    String
-  reason    String   // "new_in_space", "followed_author"
-  createdAt DateTime @default(now())
-  @@index([orgId, userId, createdAt])
-  @@map("feed_timeline")
-}
-
-model ReputationSummary {
-  userId    String   @id
-  orgId     String
-  points    Int      @default(0)
-  badges    Json     @default("[]")
-  updatedAt DateTime @updatedAt
-  @@map("reputation_summary")
-}
-
-/// User Identity Projection: bản sao tối giản danh tính từ auth_db để hiển thị
-/// tác giả/avatar mà không gọi auth-service mỗi lần render. Đồng bộ qua event
-/// (UserRegistered / UserProfileUpdated) ở Phase 2. userId là loose ref — no FK.
-model UserProfile {
-  userId      String   @id
-  displayName String
-  avatarUrl   String?
-  email       String
-  updatedAt   DateTime @updatedAt
-  @@map("user_profiles")
-}
-```
-
-> Read Models có thể **rebuild** bất cứ lúc nào bằng replay Event Store + projection từ Kafka.
+> **Quyết định 2026-06-30 (`.ai/CHANGELOG.md`):** `CreditBalanceSummary`, `FeedTimeline`, `ReputationSummary`, và `UserProfile`-as-projection (bản sao tối giản danh tính trong `core_db`) từng được đặc tả ở đây đã bị **gỡ khỏi schema thật** trước khi bất kỳ đường đọc nào dùng tới — quy tắc mới: *schema chỉ chứa source-of-truth; read model/projection để dành tới read phase (Phase 3, hiện chưa bắt đầu)*. Các model này **không tồn tại** trong `core_db` hiện tại — đây KHÔNG phải thiếu sót của tài liệu, mà là trạng thái thật, cố ý.
+>
+> **Query hiện tại đi thẳng source-of-truth (fold-on-read), không qua projection:**
+> - **Credit balance:** `GET /credits/wallet` fold trực tiếp từ `credit_events` (§2.6) lúc request tới, KHÔNG có bảng `credit_balance_summary`.
+> - **Feed:** `GET /feed` là fan-out-on-read — query thẳng `follows` (targetType=SPACE) × `knowledge_items` (status=PUBLISHED), KHÔNG có bảng `feed_timeline`.
+> - **Reputation:** ledger `reputation_events` (§2.6) đã có, nhưng Phase 5c (bounty + reputation, kể cả mọi HTTP endpoint đọc điểm) **chưa triển khai** — không có bảng `reputation_summary` lẫn endpoint `GET /reputation/*`.
+> - **Danh tính tác giả (User Identity Projection):** core_db vẫn chỉ giữ `userId` (loose ref, không FK). Chưa có đồng bộ `user_profiles` qua event trong `core_db` — nếu cần hiển thị tên/avatar, phải gọi chéo sang auth-service hoặc chấp nhận chỉ hiển thị `userId` ở thời điểm hiện tại. (Lưu ý: `auth_db` CÓ bảng `user_profiles` riêng — xem §2.1 — nhưng đó là **profile của chính user**, không phải projection phục vụ core-api.)
+>
+> Nếu build read phase (Phase 3) sau này, các model trên là điểm khởi đầu hợp lý — nhưng phải thêm lại có chủ đích, kèm cơ chế rebuild từ Event Store/Kafka, không phục hồi nguyên trạng cũ.
 
 ---
 
@@ -368,25 +425,42 @@ model UserProfile {
 
 ```prisma
 model OutboxEvent {
-  id            String   @id @default(uuid())
+  id            String       @id @default(uuid())
   aggregateType String
   aggregateId   String
   eventType     String
+  // Denormalized từ tenant context của command sinh event (mirror CreditEvent/
+  // ReputationEvent) — CloudEvents `orgid` extension build TỪ cột này lúc
+  // publish, không đào từ payload nữa (single source of truth, fix 2026-07-03).
+  orgId         String
   payload       Json
   status        OutboxStatus @default(PENDING)
-  createdAt     DateTime @default(now())
+  attempts      Int          @default(0)
+  lastError     String?
+  createdAt     DateTime     @default(now())
   processedAt   DateTime?
+  // Set khi poller claim row (PENDING → INFLIGHT, FOR UPDATE SKIP LOCKED) —
+  // Reaper reset row bị orphan (claim rồi crash trước khi publish xong).
+  claimedAt     DateTime?
+
   @@index([status, createdAt])
+  @@index([orgId])
   @@map("outbox_events")
 }
 
-enum OutboxStatus { PENDING PROCESSED FAILED_DLQ }
+enum OutboxStatus { PENDING INFLIGHT PROCESSED FAILED_DLQ }
 
 model IdempotencyRecord {
-  key       String   @id // X-Idempotency-Key
-  response  Json
-  createdAt DateTime @default(now())
-  expiresAt DateTime
+  key         String   @id // X-Idempotency-Key
+  // sha256(method+url+body) claim dưới key này — bắt hazard kiểu Stripe: client
+  // tái dùng cùng key cho request THỰC SỰ khác (bug/copy-paste key) → reject
+  // thay vì replay nhầm response cũ.
+  requestHash String
+  // NULL = key vừa claim, handler đang chạy (concurrent-request guard). Điền
+  // khi handler xong.
+  response    Json?
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime
   @@index([expiresAt])
   @@map("idempotency_records")
 }
@@ -396,25 +470,34 @@ model IdempotencyRecord {
 
 ## 3. Sơ đồ phụ thuộc Module ↔ Bảng
 
+**`core_db` (core-api):**
+
 | Module | Bảng chính | Vai trò |
 |--------|-----------|---------|
-| `tenant` | organizations, memberships, spaces, org_role_permissions | Multi-tenancy + Org RBAC động |
-| `identity` (projection) | user_profiles | Read-model danh tính (sync từ auth_db qua event) |
+| `tenant` | organizations, memberships, spaces, org_role_permissions, org_invites | Multi-tenancy + Org RBAC động |
 | `knowledge` | knowledge_items, revisions, tags | Write + OCC + versioning |
-| `discovery` | embeddings (pgvector) | Semantic search / RAG |
-| `engagement` | votes, bookmarks | Tương tác |
-| `credit` | credit_events, credit_balance_summary | Event Sourcing ledger |
-| `reputation` | reputation_events, reputation_summary | Event Sourcing + Read Model |
-| `feed` | feed_timeline | CQRS Read Model |
+| `engagement` | votes, bookmarks, follows | Tương tác + follow (nguồn cho feed/fan-out) |
+| `credit` | credit_events | Event Sourcing ledger — balance fold-on-read, KHÔNG có summary table (§2.7) |
+| `reputation` | reputation_events | Event Sourcing ledger — chưa có endpoint đọc (Phase 5c chưa làm) |
+| `feed` | (không có bảng riêng) | Query-side thuần: fan-out-on-read trên follows × knowledge_items |
 | (infra) | outbox_events, idempotency_records | Outbox + Idempotency |
+
+**Service khác, mỗi service 1 DB riêng, không cross-DB join:**
+
+| Service | DB | Bảng chính | Vai trò |
+|---|---|---|---|
+| auth-service | `auth_db` | users, user_profiles, auth_identities, refresh_tokens, roles, user_roles | Identity + System RBAC |
+| notification-service | `notification_db` | notifications, space_followers | Fan-out notify + local follow projection |
+| search-service | `search_db` | knowledge_chunks (pgvector) | Semantic + hybrid (RRF) search / RAG |
+| worker-service | (không có DB riêng) | mirror type-gen `follows` từ `core_db`, read-only | Scaffold — chưa có consumer thật |
 
 ---
 
 ## 4. Quy tắc Bất biến (Invariants)
 
-1. **Append-only Event Store:** không UPDATE/DELETE — chỉ INSERT event mới.
+1. **Append-only Event Store:** không UPDATE/DELETE — chỉ INSERT event mới (`credit_events`, `reputation_events`).
 2. **Tenant isolation:** mọi query nội dung BẮT BUỘC có `WHERE org_id = ?`.
-3. **AI Data Boundary:** retrieval embeddings luôn scope `orgId`.
+3. **AI Data Boundary:** retrieval `knowledge_chunks` (search_db) luôn scope `orgId`.
 4. **OCC:** mọi update wiki kiểm tra `version`.
 5. **Outbox atomicity:** domain write + outbox insert trong **cùng 1 transaction**.
-6. **Ledger Integrity:** `Sum(credit events) == CreditBalanceSummary.balance` (cron đêm verify).
+6. **Ledger Integrity:** `Sum(credit events theo aggregateId) == balance` — verify được bằng fold-on-read, không phải cron đối chiếu với summary table (không còn tồn tại, §2.7). Smoke test đã xác nhận sống trên DB thật (2026-07-03).

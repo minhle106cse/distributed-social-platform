@@ -1,6 +1,5 @@
 # ☁️ DEVOPS & HẠ TẦNG (INFRASTRUCTURE)
 
-> 📖 **[English Version](./en/09_devops_infrastructure.md)**
 
 Hướng dẫn setup môi trường Local và quy chuẩn quản lý Monorepo cho **Cortex**.
 
@@ -23,12 +22,12 @@ cortex-knowledge-hub/
 ├── packages/
 │   ├── shared-kernel/          # Abstractions, CQRS bus, logger, types
 │   └── event-contracts/        # Kafka event schemas (Phase 2+)
-├── directives/                 # AI Workflow SOPs (Layer 1)
-├── execution/                  # AI Workflow Python tools (Layer 3)
-├── .ai/                        # KNOWLEDGE_INDEX + memory buffer
+├── directives/                 # AI Workflow SOPs (the coding rulebook)
+├── docs/                       # Design & spec (business, schema, API, security)
+├── .ai/                        # KNOWLEDGE_INDEX (generated) + memory buffer + status
+├── .claude/                    # settings.json (2 hooks) + hooks/doc-select.cjs
 ├── docker-init/                # init-dbs.sql, nginx.conf, prometheus/, grafana/
-├── docker-compose.yml          # Local infrastructure
-└── docker-compose.agent.yml    # AI Agent sandbox (Layer 0)
+└── docker-compose.yml          # Local infrastructure
 ```
 
 ---
@@ -39,18 +38,19 @@ cortex-knowledge-hub/
 
 | Service | Image | Container | Port (host:container) | Vai trò |
 |---------|-------|-----------|------------------------|---------|
-| **postgres** | `pgvector/pgvector:pg16` | `dsp-postgres` | `${DB_PORT}:5432` (15432) | **1 instance**, 2 logical DB: `core_db` + `auth_db`. Có **pgvector** cho embeddings |
+| **postgres** | `pgvector/pgvector:pg16` | `dsp-postgres` | `${DB_PORT}:5432` (15432) | **1 instance**, **4 logical DB**: `core_db` (mặc định qua `POSTGRES_DB`) + `auth_db` + `notification_db` + `search_db` (3 DB sau tạo qua `docker-init/init-dbs.sql`). **pgvector** bật trên `core_db` (hiện vestigial — schema không còn model nào dùng, xem `docs/04` §1) và `search_db` (nơi thực sự dùng — `knowledge_chunks`) |
 | **redis** | `redis:7-alpine` | `dsp-redis` | `${REDIS_PORT}:6379` | Cache, Pub/Sub, rate-limit (AOF on) |
 | **kafka** | `confluentinc/cp-kafka:7.5.0` | `dsp-kafka` | `9092` + `9093` | Event backbone, **KRaft mode (KHÔNG Zookeeper)** |
-| **elasticsearch** | `elasticsearch:8.10.2` | `dsp-elasticsearch` | `${ELASTIC_PORT}:9200` | Full-text search (xpack security on) |
+| **elasticsearch** | `elasticsearch:8.10.2` | `dsp-elasticsearch` | `${ELASTIC_PORT}:9200` | Full-text search (xpack security on) — per-tenant index, hợp nhất với pgvector bằng RRF |
+| **embedding (Ollama)** | `ollama/ollama` | `dsp-embedding` | `${EMBEDDING_SERVICE_PORT}:11434` (11434) | Self-hosted embeddings (`nomic-embed-text`, dim 768) cho search-service — Claude KHÔNG có embeddings API |
 
-> ⚠️ **Đính chính so với tài liệu cũ:** KHÔNG có 2 Postgres (5432/5433) và KHÔNG có Zookeeper. Chỉ **1 Postgres** (port `15432`) tạo 2 DB qua `docker-init/init-dbs.sql`, và Kafka chạy **KRaft**.
+> ⚠️ **Đính chính so với tài liệu cũ:** KHÔNG có 2 Postgres (5432/5433) và KHÔNG có Zookeeper. Chỉ **1 Postgres** (port `15432`), giờ tạo **4 DB** (không phải 2 — notification-service và search-service đã lên own-DB kể từ Phase 4/6), và Kafka chạy **KRaft**.
 
 ### 2.2. Gateway & Tools
 
 | Service | Container | Port | Vai trò |
 |---------|-----------|------|---------|
-| **api-gateway** (nginx) | `dsp-api-gateway` | `${API_GATEWAY_PORT}:80`, `:8001`, `:9090` | Reverse proxy → auth-service (4001) / core-api (4002); proxy RedisInsight & Prometheus (basic auth) |
+| **api-gateway** (nginx) | `dsp-api-gateway` | `${API_GATEWAY_PORT}:80`, `:8001`, `:9090` | Reverse proxy → auth-service (4001) / core-api (4002) / **notification-service (4003)** / **search-service (4004)**; proxy RedisInsight & Prometheus (basic auth) |
 | **kafka-ui** | `dsp-kafka-ui` | `${KAFKA_UI_PORT}:8080` | Inspect topic/consumer |
 | **kibana** | `dsp-kibana` | `${KIBANA_PORT}:5601` | UI Elasticsearch |
 | **redisinsight** | `dsp-redisinsight` | qua nginx `:8001` | UI Redis |
@@ -81,40 +81,44 @@ cortex-knowledge-hub/
 | **Kafka** | Outbox, re-index/re-embed events, DLQ | Phase 2 |
 | **Elasticsearch** | Full-text search (Hybrid với pgvector) | Phase 4 |
 | **Redis** | Cache feed/balance, rate-limit AI, Pub/Sub realtime, stampede lock | Phase 3 (cache) → Phase 5/6 |
-| **notification/chat service** | Realtime, AI Assistant | Phase 6 |
-| **Prometheus/Grafana** | Observability | Phase 0 (nền) → Phase 8 (đầy đủ) |
+| **notification-service** | Realtime notify (REST, không phải WebSocket — xem `docs/06`) | Phase 6 (early, B1+B2 done) |
+| **search-service** | Semantic + hybrid search, RAG summary | Phase 4 (code-complete, smoke-tested) |
+| **Prometheus/Grafana** | Observability | Phase 0 (nền) → 2026-07-08 monitoring-as-code (recording rules + dashboard/alerting provisioned) |
 
-> Redis/Kafka/ES/pgvector hiện **đã khai báo trong compose nhưng chưa được code dùng** — đúng theo lộ trình phased. Đây là chủ ý để "tiếp cận công nghệ", không phải thừa.
+> Redis/ES hiện **đã khai báo trong compose nhưng chưa được code dùng cho mọi mục đích liệt kê** (vd rate-limit AI, cache feed/balance — chưa implement, xem `docs/10` §4); Kafka + pgvector **đã dùng thật** (outbox/event backbone từ Phase 2, embeddings/hybrid search từ Phase 4). Phần chưa dùng là chủ ý theo lộ trình phased ("tiếp cận công nghệ trước khi cần"), không phải thừa.
 
 ---
 
 ## 4. Cấu hình Khởi tạo (`docker-init/`)
 
-- **`init-dbs.sql`** — tạo `auth_db` (core_db auto-tạo qua `POSTGRES_DB`). ✅ **Đã bật pgvector**: `\c core_db; CREATE EXTENSION IF NOT EXISTS vector;` (phục vụ embeddings — Phase 4).
-- **`nginx.conf`** — định tuyến gateway. ✅ **Đã cập nhật** route core-api sang domain Cortex (`orgs|spaces|knowledge|search|ai|credits|reputation|feed|notifications`). Giữ `/stub_status` cho nginx-exporter.
-- **`prometheus/prometheus.yml`** — scrape targets (đã cấu hình cho các exporter + auth-service `:4001`); thêm `core-api :4002/metrics` khi core-api expose metrics.
-- **`grafana/provisioning/`** — datasource Prometheus.
+- **`init-dbs.sql`** — tạo `auth_db` + `notification_db` + `search_db` (core_db auto-tạo qua `POSTGRES_DB`). ✅ Bật pgvector trên **cả `core_db`** (`\c core_db; CREATE EXTENSION IF NOT EXISTS vector;` — vestigial, không model nào dùng nữa) **và `search_db`** (`\c search_db; CREATE EXTENSION IF NOT EXISTS vector;` — nơi dùng thật, `knowledge_chunks`).
+- **`nginx.conf`** — định tuyến gateway theo 3 upstream + regex path: `auth_service` (`auth|users|roles|permissions` → :4001), `search_service` (`search` → :4004), `notification_service` (`notifications` → :4003), `core_api` (`orgs|spaces|invites|knowledge|follows|bookmarks|ai|credits|reputation|feed|admin` → :4002 — `admin` = endpoint system-admin platform-wide, `SystemPermissionGuard` chứ không phải `OrgGuard`). Giữ `/stub_status` cho nginx-exporter.
+- **`prometheus/prometheus.yml`** — scrape targets cho các exporter; recording rules + alerting rules provisioned as code (thêm 2026-07-08).
+- **`grafana/provisioning/`** — datasource Prometheus + dashboard "cortex-overview" + alerting rules (provisioned as code).
 
 ---
 
 ## 5. Biến môi trường (`.env`)
 
 Nhóm chính (xem `.env.example`):
-- **DB:** `DB_HOST/PORT/USER/PASSWORD`, `CORE_DB_NAME`, `AUTH_DB_NAME`, `CORE_DATABASE_URL`, `AUTH_DATABASE_URL`.
-- **Redis/Kafka/Elastic:** `REDIS_*`, `KAFKA_*`, `ELASTIC_*`.
-- **App ports:** `AUTH_SERVICE_PORT=4001`, `CORE_API_PORT=4002`, `API_GATEWAY_PORT=8000`.
-- **JWT:** `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`.
-- **AI (Phase 4+):** `ANTHROPIC_API_KEY` (Claude embedding + RAG) — qua Circuit Breaker.
+- **DB:** `DB_HOST/PORT/USER/PASSWORD`, `CORE_DB_NAME`, `AUTH_DB_NAME`, `NOTIFICATION_DB_NAME`, `SEARCH_DB_NAME`, và `*_DATABASE_URL` tương ứng cho từng service.
+- **Redis/Kafka/Elastic/Embedding:** `REDIS_*`, `KAFKA_*` (per-service `clientId`/consumer-group), `ELASTIC_*`, `EMBEDDING_SERVICE_PORT` (Ollama).
+- **App ports:** `AUTH_SERVICE_PORT=4001`, `CORE_API_PORT=4002`, `NOTIFICATION_SERVICE_PORT=4003`, `SEARCH_SERVICE_PORT=4004`, `API_GATEWAY_PORT=8000`.
+- **gRPC (org-provisioning saga, 2026-07-07):** `AUTH_GRPC_PORT=50051`, `CORE_GRPC_PORT=50052`, `INTERNAL_GRPC_SHARED_SECRET` (M2M auth, không phải JWT).
+- **JWT:** `JWT_PUBLIC_KEY` (dùng chung, giữ ở root `.env`) + `JWT_PRIVATE_KEY`/`JWT_REFRESH_SECRET` (chỉ auth-service, tách vào `apps/auth-service/.env.secrets`, gitignored).
+- **AI:** `ANTHROPIC_API_KEY`/`GEMINI_API_KEY` (RAG summary + FE, tách vào `apps/search-service/.env.secrets`) — qua Circuit Breaker. Embeddings **không** dùng Claude (self-hosted Ollama, xem §2.1).
+- **Naming debt đã biết:** `CORS_ORIGINS` (auth-service) vs `CORS_ALLOWED_ORIGINS` (3 service NestJS) — chưa hợp nhất (xem `.ai/PROJECT_STATUS.md` → Live debts).
 - **Monitoring & exporter ports:** `GRAFANA_*`, `KAFKA_UI_*`, `KIBANA_PORT`, `PROMETHEUS_PORT`, `*_EXPORTER_PORT`.
 
 ---
 
-## 6. AI Agent Sandbox (`docker-compose.agent.yml`)
+## 6. AI Workflow Automation (Claude Code hooks)
 
-- Service `agent-sandbox` (build `docker-init/Dockerfile.agent`), giới hạn 0.5 CPU / 512M.
-- Mount **read-only**: `execution/`, `apps/`, `packages/`, `directives/`, `docs/`, `readme.md`, `.env`.
-- Mount **read-write**: `.tmp/`, `.ai/`.
-- **Circuit Breaker pattern:** script chạy Read-Only, xuất report `.tmp/`; Agent review rồi mới apply (xem `directives/tool_builder_sop.md`).
+Không có container sandbox — automation chạy bằng 2 hook trong `.claude/settings.json`:
+- **`UserPromptSubmit`** → `.claude/hooks/doc-select.cjs`: in nhắc ngắn mỗi lượt, trỏ tới index `directives/README.md` (không tự liệt kê lại).
+- **`Stop`** → `scripts/sync.cjs`: sau mỗi lượt agent, detect git change → regenerate `.ai/KNOWLEDGE_INDEX.md`
+  (host `python .ai/knowledge_builder.py`), rebuild shared-kernel / `prisma generate` khi cần, + cảnh báo
+  warn-only nếu code đổi mà chưa log `.ai/memory` / `PROJECT_STATUS`.
 
 ---
 
@@ -129,6 +133,4 @@ Nhóm chính (xem `.env.example`):
 docker-compose up -d           # Postgres+pgvector, Redis, Kafka, ES, Monitoring
 npx turbo run db:push          # Prisma db push (mỗi service push DB riêng của mình)
 npx turbo run dev              # Chạy tất cả apps
-# Agent sandbox (khi cần chạy tool AI workflow):
-docker-compose -f docker-compose.agent.yml up -d
 ```

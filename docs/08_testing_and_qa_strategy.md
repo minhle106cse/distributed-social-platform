@@ -1,6 +1,5 @@
 # 🧪 CHIẾN LƯỢC TESTING (TESTING & QA STRATEGY)
 
-> 📖 **[English Version](./en/08_testing_and_qa_strategy.md)**
 
 Kiến trúc **Cortex** dùng Event Sourcing (credit), CQRS, Saga, Idempotency, Hybrid Retrieval và Multi-tenancy. Chiến lược testing tập trung vào **tính toàn vẹn sổ cái credit (Ledger Integrity)**, **cô lập tenant (Tenant Isolation)**, **chất lượng tìm kiếm (Search Relevance)**, và **sức bền hệ thống phân tán (Distributed Resiliency)**.
 

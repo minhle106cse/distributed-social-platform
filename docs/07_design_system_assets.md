@@ -1,6 +1,5 @@
 # 🧩 DESIGN SYSTEM & TOKENS
 
-> 📖 **[English Version](./en/07_design_system_assets.md)**
 
 Design Tokens, Typography Scale, Spacing System, và Component Specs cho **Cortex** — search-first knowledge workspace (light + dark mode).
 

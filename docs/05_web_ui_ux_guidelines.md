@@ -1,6 +1,5 @@
 # 🎨 TIÊU CHUẨN UI/UX (WEB UI/UX GUIDELINES)
 
-> 📖 **[English Version](./en/05_web_ui_ux_guidelines.md)**
 
 Tài liệu định nghĩa tiêu chuẩn thiết kế giao diện và trải nghiệm cho **Cortex** — một **search-first knowledge workspace** chạy trên trình duyệt, phong cách Premium (light + dark mode).
 
