@@ -23,6 +23,11 @@ groups:
       - record: kafka:consumergroup_lag_by_group
         expr: sum by (consumergroup, topic) (kafka_consumergroup_lag)
 
+      # circuit_breaker_state is a Gauge (0/1/2) — queried raw in the dashboard/alert,
+      # no recording rule needed (same treatment as elasticsearch_clusterinfo_up).
+      - record: circuit_breaker:transitions_rate5m
+        expr: rate(circuit_breaker_transitions_total[5m])
+
   - name: cortex_infra
     interval: 15s
     rules:

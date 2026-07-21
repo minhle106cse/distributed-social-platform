@@ -138,6 +138,39 @@ groups:
               conditions:
                 - evaluator: { type: gt, params: [50] }
 
+      - uid: cortex-circuit-breaker-open
+        title: Circuit Breaker Open
+        condition: C
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Circuit breaker {{ $labels.name }} is OPEN — the underlying dependency is failing and calls are being fast-failed"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: circuit_breaker_state
+              instant: false
+              range: true
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [1] }
+
       - uid: cortex-elasticsearch-unreachable
         title: Elasticsearch Unreachable
         condition: C
