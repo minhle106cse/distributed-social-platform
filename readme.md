@@ -5,7 +5,6 @@
 [![Progress](https://img.shields.io/badge/Progress-Phase%204%20(RAG%20Live)%20·%20~83%25-brightgreen)](#-tiến-độ-dự-án)
 [![License](https://img.shields.io/badge/License-MIT-green)](#)
 
-> 📖 **[English Version](./docs/en/README.md)**
 
 ## 📖 MỤC LỤC TÀI LIỆU
 
@@ -243,19 +242,15 @@ RAG: nạp top-N đoạn + câu hỏi vào Claude ──► câu trả lời kè
 
 ## 🤖 AI-DRIVEN DEVELOPMENT WORKFLOW
 
-Dự án áp dụng hệ thống **Multi-Agent Orchestration (Level 4/5)** để chính AI xây dựng dự án:
+Dự án được AI xây theo một workflow **gọn, tự-duy-trì** — không framework, chỉ Markdown + 2 hook + 1 generator:
 
-### Layered AI Architecture
-- **Layer 0 (Harness Sandbox):** Container Docker chạy cách ly (`docker-compose.agent.yml`). Script chỉ chạy trong sandbox, Read-Only.
-- **Layer 1 (Directives):** SOPs định nghĩa luật kiến trúc (Hexagonal, CQRS, Event Sourcing rules) trong `directives/`.
-- **Layer 2 (Orchestration):** Agent điều phối, lập kế hoạch động, dùng sub-agent cho task lớn.
-- **Layer 3 (Execution):** Python scripts trong `execution/`, Memory Buffer trong `.ai/memory/*.jsonl`, Knowledge Index trong `.ai/KNOWLEDGE_INDEX.md`.
+### Cách hoạt động
+- **`directives/`** — luật code bất biến (Hexagonal, CQRS, Event Sourcing…). Agent đọc TRƯỚC khi code.
+- **`docs/`** — thiết kế & spec (business, schema, API, security). Ranh giới `docs`↔`directives` + forcing-function giữ docs không lệch code (bản đồ: `.ai/KNOWLEDGE_ARCHITECTURE.md`).
+- **`.ai/`** — `KNOWLEDGE_INDEX.md` (đọc đầu mỗi phiên, **tự sinh**) + `memory/*.jsonl` (experience buffer) + `PROJECT_STATUS.md` (trạng thái sống).
+- **2 Claude Code hook** (`.claude/settings.json`): `UserPromptSubmit` → in bản đồ task→doc; `Stop` → `scripts/sync.cjs` tự regenerate index + build + cảnh báo kỷ luật After-Task.
 
-### Security Pattern
-- **Sandbox Read-Only:** Tools chạy validator với quyền Read-Only, xuất report ra `.tmp/`.
-- **Report → Execute:** Tool sinh report trước, Agent review rồi mới apply (Circuit Breaker pattern cho AI).
-
-> 📎 Lưu ý: RAG/MCP/Vector vừa là **công nghệ sản phẩm** (Cortex), vừa là **công cụ của AI workflow** — dự án này dùng chính những pattern nó xây để tự phát triển.
+> 📎 Lưu ý: RAG/pgvector/hybrid-search vừa là **công nghệ sản phẩm** (Cortex), vừa là cảm hứng cho AI workflow — dự án dùng chính pattern nó xây để tự phát triển.
 
 ---
 

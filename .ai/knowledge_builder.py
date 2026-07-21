@@ -35,7 +35,6 @@ AI_DIR = WORKSPACE_ROOT / ".ai"
 MEMORY_DIR = AI_DIR / "memory"
 OUTPUT_FILE = AI_DIR / "KNOWLEDGE_INDEX.md"
 STATUS_FILE = AI_DIR / "PROJECT_STATUS.md"
-QUICKREF_FILE = AI_DIR / "QUICK_REFERENCE.md"
 OLD_MEMORY_FILE = WORKSPACE_ROOT / ".tmp" / "agent_memory.json"
 
 DIRECTIVE_DIR = WORKSPACE_ROOT / "directives"
@@ -289,16 +288,16 @@ def build_index() -> str:
 - **Product**: B2B internal Knowledge Hub — AI Discovery (RAG + Hybrid Search), virtual credit economy, multi-tenancy. (Legacy "TeamFin" finance concept is RETIRED — do not reintroduce expense/settlement framing.)
 - **Type**: Monorepo (Turborepo) + TypeScript
 - **Architecture**: Hexagonal Architecture + CQRS + Event Sourcing + RAG/Hybrid Search + Multi-tenancy
-- **Phase**: Phase 0 (Foundation) ✅ — Phase 1 (Multi-tenant Knowledge Monolith) IN PROGRESS (see §2 for live status)
+- **Phase**: see §2 (Implementation Status) for live phase % and current focus — no phase is hardcoded here
 - **Services** (`apps/`):
 {chr(10).join(service_lines)}
 - **Shared Packages** (`packages/`):
 {chr(10).join(package_lines)}
-- **Database**: PostgreSQL + pgvector via Prisma v7, port `15432` (Event Store + Read Model + Embeddings)
+- **Database**: PostgreSQL + pgvector via Prisma v7, port `15432` (source-of-truth store + event ledgers + embeddings; read models deferred until a read path needs them)
 - **Cache**: Redis (cache, rate-limit, pub/sub)
 - **Message Broker**: Kafka (Event Backbone, KRaft mode)
 - **Search**: Elasticsearch (full-text) + pgvector (semantic) → Hybrid Retrieval (RRF)
-- **AI**: Claude (embedding + RAG summarization) via Circuit Breaker
+- **AI**: self-hosted embeddings (Ollama `nomic-embed-text`, 768-dim — Claude has no embeddings API) + Claude RAG summarization behind a Circuit Breaker
 - **Frontend**: Vite + React 18 + Zustand + TanStack Query + TailwindCSS v3""")
 
     # ── 2. Implementation Status ──
@@ -352,19 +351,11 @@ def build_index() -> str:
 > When in doubt, the directive file is the authority.
 {"".join(rules_lines)}""")
 
-    # ── 4. Critical Rules Quick-Reference (injected from .ai/QUICK_REFERENCE.md) ──
-    # Previously hardcoded here as a frozen string — duplicated directive content and
-    # silently went stale when directives changed. Now read from a curated markdown
-    # file (same pattern as PROJECT_STATUS.md) so it's editable + diffable.
-    quickref = read_text(QUICKREF_FILE).strip()
-    quickref_block = quickref if quickref else (
-        "_No `.ai/QUICK_REFERENCE.md` found — create it and re-run this builder._"
-    )
-    sections.append(f"""## 4. Critical Rules Quick-Reference
-
-{quickref_block}""")
-
     # ── 4. Known Gotchas & Lessons ──
+    # (There used to be a separate "Critical Rules Quick-Reference" section here, injected
+    # from a hand-maintained .ai/QUICK_REFERENCE.md digest. Removed 2026-07-21: it duplicated
+    # directive content in a second place that could drift from the source. §3's directive
+    # headings already navigate to the real rules — one source of truth.)
     all_memory = []
     if MEMORY_DIR.exists():
         for jsonl_file in sorted(MEMORY_DIR.glob("*.jsonl")):
@@ -390,14 +381,14 @@ def build_index() -> str:
             ctx_tag = f" `[{context}]`" if context else ""
             gotcha_lines.append(f"- **{error}**{ctx_tag}\n  → {solution}")
 
-    sections.append(f"""## 5. Known Gotchas & Lessons Learned (from memory)
+    sections.append(f"""## 4. Known Gotchas & Lessons Learned (from memory)
 
 > These are real problems encountered during development.
 > Search this section BEFORE debugging to avoid repeating mistakes.
 
 {chr(10).join(gotcha_lines) if gotcha_lines else "_No memory entries yet._"}""")
 
-    # ── 5. Business Domain ──
+    # ── 5. Business Domain ── (docs/README.md classifies each doc; edit sources there, not here)
     doc_entries = []
     if DOCS_DIR.exists():
         for md_file in sorted(DOCS_DIR.glob("*.md")):
@@ -407,14 +398,14 @@ def build_index() -> str:
 
     doc_lines = [f"- `docs/{fname}` — {title}" for fname, title in doc_entries]
 
-    sections.append(f"""## 6. Business Domain Documentation (from `docs/`)
+    sections.append(f"""## 5. Business Domain Documentation (from `docs/`)
 
 > Read these files when you need business context for a feature.
 
 {chr(10).join(doc_lines) if doc_lines else "_No docs found._"}""")
 
     # ── 6. Agent Operating Protocol ──
-    sections.append("""## 7. Agent Operating Protocol
+    sections.append("""## 6. Agent Operating Protocol
 
 ### Session Start (MANDATORY)
 1. ✅ Read this file (`KNOWLEDGE_INDEX.md`) — you are doing this now
@@ -422,11 +413,13 @@ def build_index() -> str:
 3. ✅ Read the relevant `directives/*.md` file before creating/modifying code
 
 ### After Completing Work
-1. Log new lessons: append to `.ai/memory/<category>.jsonl`
-2. If a new convention/pattern was established: update the relevant `directives/*.md`
-3. If a change resolves/contradicts a `docs/*.md` file (review finding, API contract, schema): update that doc too
-4. If a module/phase changed state: update `.ai/PROJECT_STATUS.md` (drives §2)
-5. Re-run `knowledge_builder.py` (via `docker exec agent-sandbox python .ai/knowledge_builder.py`) so §2 + memory refresh
+1. Log the lesson: append to `.ai/memory/<category>.jsonl`
+2. If a convention/pattern was established or refined: update the relevant `directives/*.md`
+3. If the change touches schema / API contract / security-RBAC / ops: reconcile the matching living-spec
+   `docs/NN_*.md` in the SAME task (don't leave a design doc contradicting the code)
+4. If a module/phase changed state: update `.ai/PROJECT_STATUS.md` (drives §2); durable narrative → `.ai/CHANGELOG.md`
+5. The `Stop` hook (`scripts/sync.cjs`) regenerates this index automatically. To see it now, run
+   `python .ai/knowledge_builder.py` (host python — there is no agent sandbox)
 
 ### Memory Categories
 | File | Purpose |
@@ -437,12 +430,10 @@ def build_index() -> str:
 | `.ai/memory/gotchas.jsonl` | Framework/library gotchas |
 
 ### Forbidden Actions
-- ❌ Never run `python` or `node` directly on host — use `docker exec agent-sandbox`
-- ❌ Never use `-it` flag in automated docker exec commands
-- ❌ Never put infrastructure code in `common/`
-- ❌ Never use `console.log` — use structured logger
-- ❌ Never use `autoincrement()` for primary keys
-- ❌ Never use CORS wildcard `['*']`""")
+- ❌ Never put infrastructure code in `common/` (abstractions only — layer boundaries are lint-enforced)
+- ❌ Never use `console.log` — use the structured logger (`createLogger`)
+- ❌ Never use `autoincrement()` for primary keys — UUID
+- ❌ Never use CORS wildcard `['*']` — origins from env""")
 
     return "\n\n".join(sections) + "\n"
 

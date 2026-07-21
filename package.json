@@ -17,8 +17,6 @@
     "infra:up": "docker-compose up -d",
     "monitor:up": "docker-compose --profile monitoring up -d",
     "infra:down": "docker-compose --profile monitoring down",
-    "agent:up": "docker-compose -f docker-compose.agent.yml up -d",
-    "agent:down": "docker-compose -f docker-compose.agent.yml down",
     "lint": "turbo run lint",
     "lint:fix": "turbo run lint:fix",
     "test": "turbo run test",

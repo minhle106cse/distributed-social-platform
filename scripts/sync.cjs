@@ -5,7 +5,7 @@
  * Detects what changed (via git status) and only runs what's needed:
  *   shared-kernel/src/** → turbo build (shared-kernel)
  *   apps/*\/prisma/**    → turbo db:generate
- *   directives/** | docs/** | .ai/memory/** | .ai/PROJECT_STATUS.md | .ai/QUICK_REFERENCE.md → knowledge_builder.py
+ *   directives/** | docs/** | .ai/memory/** | .ai/PROJECT_STATUS.md → knowledge_builder.py
  *
  * Also emits warn-only checks (never blocks):
  *   - After-Task discipline: code changed but no newer .ai/memory or PROJECT_STATUS entry
@@ -74,8 +74,7 @@ if (
   touched('directives/') ||
   touched('.ai/memory/') ||
   touched('docs/') ||
-  touched('.ai/PROJECT_STATUS') ||
-  touched('.ai/QUICK_REFERENCE')
+  touched('.ai/PROJECT_STATUS')
 ) {
   const pythonCmd = (() => {
     for (const py of ['python', 'python3', 'py']) {

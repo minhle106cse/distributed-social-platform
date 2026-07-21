@@ -1,6 +1,5 @@
 # 🚀 LỘ TRÌNH THỰC THI: TỪ MONOLITH ĐẾN MICROSERVICES
 
-> 📖 **[English Version](./docs/en/README_PHASES.md)**
 
 ---
 
@@ -55,10 +54,10 @@ Tạo môi trường phát triển local hoàn chỉnh và chuẩn hóa kiến t
    - `packages/event-contracts` — Kafka Event Schema definitions (Phase X - Future)
 
 4. **AI Agent Workflow**
-   - `directives/` — SOPs cho kiến trúc, CQRS rules, Event Sourcing rules
-   - `execution/` — Python scripts (Layer 3)
-   - `.ai/` — KNOWLEDGE_INDEX + memory buffer
-   - `docker-compose.agent.yml` — Sandbox environment (Layer 0)
+   - `directives/` — SOPs cho kiến trúc, CQRS rules, Event Sourcing rules (the coding rulebook)
+   - `docs/` — thiết kế & spec (business, schema, API, security)
+   - `.ai/` — KNOWLEDGE_INDEX (tự sinh) + memory buffer + PROJECT_STATUS
+   - `.claude/` + `scripts/sync.cjs` — 2 hook tự regenerate index + build
 
 ### ✅ Acceptance Criteria
 - `docker-compose up -d` khởi động toàn bộ infra không lỗi.

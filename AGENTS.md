@@ -1,173 +1,125 @@
-# Advanced Agent Instructions (Level 4/5)
+# Agent Instructions — Cortex
 
-> **AGENTS.md is the canonical agent instruction file.** `CLAUDE.md` is a thin pointer to this file so the same instructions load in any AI environment. Edit instructions here.
+> **AGENTS.md is the canonical agent instruction file.** `CLAUDE.md` is a thin pointer so the same
+> instructions load in any AI environment. Edit instructions here.
+>
+> For the full picture of how this project's knowledge is organized — what goes in `docs/` vs
+> `directives/` vs `.ai/` vs agent memory, and the rules that keep them from rotting — read
+> **`.ai/KNOWLEDGE_ARCHITECTURE.md`** (the meta-doc). This file is the operating summary.
 
 ## 📦 Project Context — Cortex (AI-Powered Team Knowledge Hub)
 
-> The product is **Cortex**: a B2B **internal knowledge hub** for teams/companies, with **AI Discovery (RAG + Hybrid Search)**, an **event-sourced virtual credit economy**, reputation/gamification, and **multi-tenancy**. (This replaces the legacy "TeamFin" finance concept — do NOT reintroduce expense/settlement/Splitwise framing.)
->
-> Business → infrastructure mapping is intentional: **pgvector** (semantic search), **Elasticsearch** (full-text → hybrid), **Kafka** (Outbox + re-index/re-embed events), **Redis** (cache, rate-limit, pub/sub), **chat/notification services** (realtime + AI assistant). Patterns showcased: Event Sourcing (credit ledger), CQRS, Saga (AI-query/bounty), Outbox, Idempotency, OCC, Circuit Breaker (around Claude), Rate Limiting, Tenant Isolation.
->
-> Source of truth for product/business: read `.ai/KNOWLEDGE_INDEX.md` first, then `docs/01_business_requirements.md` … `docs/10_security_rbac.md`, `readme.md`, `readme.phases.md`.
->
-> `SETUP.md` records **how this codebase was built** (init method, manifest, AI-workflow) so a NEW source with the same init but **empty business** can be scaffolded later. Cortex itself is a real project, not a template.
+**Cortex** is a B2B **internal knowledge hub** for teams/companies: **AI Discovery (RAG + Hybrid
+Search)**, an **event-sourced virtual credit economy**, reputation/gamification, realtime
+(chat/notification), and **multi-tenancy**. (This replaces the legacy "TeamFin" finance concept — do
+NOT reintroduce expense/settlement/Splitwise framing.)
 
-You operate within an advanced **Layered Architecture** that separates concerns to maximize reliability, safety, and self-evolution. LLMs are probabilistic, whereas business logic requires consistency. This system solves that mismatch and introduces advanced autonomy patterns.
+Business → infrastructure mapping is intentional: **pgvector** (semantic search), **Elasticsearch**
+(full-text → hybrid), **Kafka** (Outbox + re-index/re-embed events), **Redis** (cache, rate-limit,
+pub/sub), **chat/notification services** (realtime + AI assistant). Patterns showcased: Event Sourcing
+(credit ledger), CQRS, Saga (AI-query/bounty), Outbox, Idempotency, OCC, Circuit Breaker (around
+Claude), Rate Limiting, Tenant Isolation.
 
-## 🧠 Session Start Protocol (MANDATORY — DO THIS FIRST)
+- **Stack**: Turborepo monorepo, TypeScript. NestJS services (core-api, notification, search, worker)
+  + Fastify (auth-service) + Vite/React 18 web. PostgreSQL+pgvector (Prisma v7, port `15432`), Kafka
+  (KRaft), Redis, Elasticsearch. Embeddings **self-hosted** (Ollama `nomic-embed-text`, 768-dim —
+  Claude has no embeddings API); RAG summarization via **Claude** behind a Circuit Breaker.
+- **Source of truth for product/business**: `.ai/KNOWLEDGE_INDEX.md` → then the specific
+  `docs/NN_*.md` → `readme.md` / `readme.phases.md`.
+- `SETUP.md` records **how this codebase was built** so a new project with the same scaffolding but
+  empty business can be bootstrapped later. Cortex itself is a real project, not a template.
 
-> [!IMPORTANT]
-> **Every new conversation MUST begin by reading the project knowledge file.**
-> This is the single most important rule in this document.
+## 🧠 Session Start Protocol (do this first)
 
-```
-Step 1: Read `.ai/KNOWLEDGE_INDEX.md`
-       → This gives you the ENTIRE project context instantly
-       → Architecture, conventions, gotchas, folder structure, tech stack
+1. **Read `.ai/KNOWLEDGE_INDEX.md`** — the whole project context (overview, live status, rules
+   digest, gotchas). One read (~a few k tokens) instead of grepping the codebase blind.
+2. **For complex tasks**, search `.ai/memory/*.jsonl` (errors / architecture / conventions / gotchas)
+   for prior experience in the area.
+3. **Before creating/modifying code**, read the relevant `directives/*.md` for that area.
 
-Step 2: For complex tasks, search memory:
-       → Read `.ai/memory/errors.jsonl` (error/solution pairs)
-       → Read `.ai/memory/gotchas.jsonl` (framework gotchas)
-       → Read `.ai/memory/architecture.jsonl` (design decisions)
-       → Read `.ai/memory/conventions.jsonl` (coding conventions)
+> The `UserPromptSubmit` hook (`.claude/hooks/doc-select.cjs`) prints a short reminder each prompt
+> pointing at `directives/README.md`'s routing table — it is a nudge, not a substitute for step 3.
 
-Step 3: Read relevant `directives/*.md` for the specific area you're working on
-```
+## 🗂️ How this project's knowledge is organized (the boundary that matters)
 
-**Why**: Without this, you will violate architecture rules, repeat solved bugs, and waste the user's time.
+Two families of Markdown, split by **purpose**, not by "who reads it" (agents and humans read both):
 
----
+| | `docs/` — **Design & Spec** (the WHAT & WHY) | `directives/` — **SOP & Rules** (the HOW) |
+|---|---|---|
+| Answers | "What is the system, why does it exist, what must it do, how is it run/secured?" | "When I write code, what rule must I not violate?" |
+| Reader intent | Understand / operate / deploy / audit the system | Execute — write code that complies |
+| Style | Complete, narrative, diagrams, tables, rationale, audit trail | Terse, imperative, litmus-driven, lists 'known exceptions' |
+| Changes when | Requirements / architecture intent / API contract / schema / ops posture changes | A convention or pattern is established or refined |
+| Litmus | *"Would a new engineer need this to understand or run the system?"* → `docs/` | *"Would an agent about to write a file violate something without this?"* → `directives/` |
 
-## The Architecture (Including Harness & Memory)
+`.ai/` is the **machine-maintained knowledge layer** (generated index + curated status + experience
+buffer). Agent **memory** (`~/.claude/.../memory/`) holds **who the user is + how they want me to
+work** — never project facts that belong in the repo. Full routing rules: `.ai/KNOWLEDGE_ARCHITECTURE.md`.
 
-**Layer 0: Execution Harness (Safety & Evaluation)**
-- Infrastructure wrapper. We use `docker-compose.agent.yml` to run tools securely.
-- Never test arbitrary new generated scripts directly on the host machine. Run them in the Harness Sandbox.
-- **CRITICAL NEGATIVE CONSTRAINT**: You have the `run_command` tool, but you are **ABSOLUTELY FORBIDDEN** from running `python` or `node` directly on the host machine for any execution scripts. Whenever you need to execute a `.py` script, you **MUST** prefix the command exactly with `docker exec agent-sandbox python`. ANY direct use of `python script.py` via `run_command` on the host will be considered a severe violation of user safety.
+## ⚙️ How the AI workflow actually runs (no Python sandbox — that was removed)
 
-**Layer 1: Directive (SOPs & Standards)**
-- Markdown files in `directives/` dictating rules (e.g. `qa_standard.md`, `tool_builder_sop.md`).
-- Define the exact process for self-evaluation and multi-agent coordination.
-- **Knowledge Index:** `.ai/KNOWLEDGE_INDEX.md` is the auto-generated summary of ALL directives, docs, and memory.
-- **Future Evolution:** Refer to `directives/ai_workflow_roadmap.md` for plans to elevate this repo to Level 5 (MCP/RAG) and Level 6 (Subagents/Memory).
+Two Claude Code hooks (`.claude/settings.json`) automate the loop:
 
-**Layer 2: Orchestration (Dynamic Planning & Multi-Agent)**
-- You are the Orchestrator. 
-- **Dynamic Planning:** Don't just blindly follow a script. Formulate a hypothesis, run the tool, and reflect (Active Reflection).
-- **Sub-agents:** For massive context (like reading 10 files at once), break down the task and instruct sub-agents (`directives/multi_agent_sop.md`).
+- **`UserPromptSubmit` → `.claude/hooks/doc-select.cjs`** — prints a short reminder each turn pointing
+  at `directives/README.md`'s routing table (the table itself lives in exactly one place).
+- **`Stop` → `scripts/sync.cjs`** — after every response, detects what changed and runs only what's
+  needed: rebuild `shared-kernel` (if its `src/` changed), `prisma generate` (if a schema changed),
+  and **regenerate `.ai/KNOWLEDGE_INDEX.md`** (if `directives/`, `docs/`, `.ai/memory/`, or
+  `PROJECT_STATUS.md` changed). It also emits **warn-only** discipline checks
+  (code changed but no new memory/status entry) and worktree-topology warnings.
 
-**Layer 3: Execution (Tools & Experience Buffer)**
-- Python scripts in `execution/`.
-- **Knowledge System:** Project knowledge lives in `.ai/`:
-  - `KNOWLEDGE_INDEX.md` — Auto-generated project knowledge summary (READ THIS FIRST)
-  - `knowledge_builder.py` — Regenerates the index from all sources
-  - `memory/*.jsonl` — Categorized experience entries (errors, architecture, conventions, gotchas)
-- **Auto-Tool Generation:** If a tool doesn't exist, don't give up. Write it, test it via the Harness, and save it to `execution/` (`directives/tool_builder_sop.md`).
+`.ai/knowledge_builder.py` is the generator; `sync.cjs` runs it with **host `python`** (it probes
+`python`/`python3`/`py`). Run TypeScript via **`turbo`** (`npm run check` = `typecheck lint
+format:check`). Use `docker exec <container>` only to reach **infra containers** (Postgres, nginx,
+Kafka) during smoke tests — there is no agent sandbox and nothing here needs one.
 
-## Operating Principles
+## ⛔ Hard Rules (real, enforced)
 
-**1. Read Knowledge First**
-At the start of every session, read `.ai/KNOWLEDGE_INDEX.md`. For debugging tasks, also check `.ai/memory/errors.jsonl` and `.ai/memory/gotchas.jsonl`.
+- **Never** `console.log` — use the structured logger (`createLogger` from shared-kernel).
+- **Never** `autoincrement()` primary keys — UUID (`@default(uuid())`).
+- **Never** CORS wildcard `['*']` — origins from env.
+- **Never** put infrastructure code in `common/` — `common/` is abstractions only (see
+  `directives/folder_structure_sop.md`; layer boundaries are lint-enforced in core-api).
+- Entities: UUID PK, `camelCase` in code / `@map("snake_case")` in DB, soft delete via `deletedAt`.
+- Zod is the **only** input-validation library, only at the boundary (`presentation/schemas/`).
 
-**2. Check for tools, then Generate if Missing**
-Check `execution/` per your directive. If you need a scraper or a log parser and none exists, generate the Python script, test it, and register it.
+## 🧭 Task Classification
 
-**3. Self-anneal & Actively Reflect**
-- When something breaks: Read error, fix it, test it.
-- **QA Standard:** Never report a task as "Done" without writing and running an automated verification step.
-- Log your learning into `.ai/memory/`.
-
-## ⛔ Task Classification & Mandatory Protocol
-
-**Rule #0 — Tuyệt đối không ngoại lệ (Hard Boundary):**
-> Running `node` or `python` directly on the host is **ALWAYS FORBIDDEN**, regardless of task size or urgency.
-> Every `.py` script MUST run via `docker exec agent-sandbox python ...`.
-> **NEVER use `-it` flag** in docker exec commands (causes TTY errors in automation).
-> Violation = severe breach of user safety.
-
-**Rule #1 — Phân loại task trước khi hành động:**
-
-| Loại Task | Knowledge Read | Memory Search | Sandbox Required |
+| Task | Read KNOWLEDGE_INDEX | Search memory | Read directive |
 |---|---|---|---|
-| Câu hỏi, giải thích, review code | ✅ KNOWLEDGE_INDEX | ❌ Không cần | ❌ Không cần |
-| Sửa lỗi nhỏ, format, thêm comment | ✅ KNOWLEDGE_INDEX | ❌ Không cần | ❌ Không cần |
-| Debug lỗi build/test/runtime | ✅ KNOWLEDGE_INDEX | ✅ **errors.jsonl + gotchas.jsonl** | ✅ Khi cần chạy script |
-| Thiết kế pattern / Refactor kiến trúc | ✅ KNOWLEDGE_INDEX | ✅ **architecture.jsonl** | ✅ Khi cần validate |
-| Implement tính năng mới phức tạp | ✅ KNOWLEDGE_INDEX | ✅ **Toàn bộ memory** | ✅ Khi cần validate |
-| Chạy bất kỳ script `.py` nào | — | — | ✅ **Tuyệt đối** |
+| Question / explain / review code | ✅ | — | if area-specific |
+| Small fix / format / comment | ✅ | — | — |
+| Debug build/test/runtime error | ✅ | ✅ `errors` + `gotchas` | — |
+| Design a pattern / refactor architecture | ✅ | ✅ `architecture` | ✅ |
+| Implement a complex new feature | ✅ | ✅ all | ✅ |
 
-**Rule #2 — Pre-Task Protocol cho task phức tạp:**
-```
-1. Read .ai/KNOWLEDGE_INDEX.md (instant project context)
-2. Read .ai/memory/*.jsonl for related experience
-3. Read relevant directives/*.md for area-specific rules
-4. Nếu cần script mới → viết vào execution/, test trong Sandbox TRƯỚC khi dùng
-5. Thực thi → Chạy npm run test để xác nhận
-6. Log bài học: append to .ai/memory/<category>.jsonl
-```
+## 📎 Citation Protocol (plans must cite their sources)
 
-**Rule #3 — Mandatory Citation Protocol (Bắt buộc Trích dẫn):**
-> Để loại bỏ hoàn toàn việc AI tự biên tự diễn (hallucinate) và đảm bảo sự tuân thủ tuyệt đối với các tài liệu dự án: 
-> 1. Mọi bản kế hoạch (`implementation_plan.md`) được sinh ra ĐỀU PHẢI chứa một section tên là **"References & Compliance"**.
-> 2. Trong section này, Agent BẮT BUỘC phải liệt kê rõ: Đã dùng tool đọc file SOP nào trong `directives/` và file nghiệp vụ nào trong `docs/`, trích dẫn chính xác lấy logic từ đâu.
-> 3. Nếu thiếu phần này, User có quyền tự động Reject (Hủy) Plan ngay lập tức mà không cần giải thích.
+Any implementation plan you generate MUST contain a **"References & Compliance"** section listing
+exactly which `directives/*.md` SOP files and which `docs/NN_*.md` business files you read, and where
+each decision's logic came from. A plan missing this section may be rejected outright. This exists to
+keep plans grounded in the project's actual rules instead of improvised ones.
 
-## 📝 After-Task Protocol (Ghi nhớ bài học)
+## 📝 After-Task Protocol (run every non-trivial task — don't wait to be asked)
 
-After completing any non-trivial task, you **MUST**:
+1. **Log the lesson** — append one JSON line to the right `.ai/memory/<category>.jsonl`:
+   - `errors.jsonl` — build/test/runtime error → solution
+   - `architecture.jsonl` — design decisions (reactive **and** proactive "chose A over B")
+   - `conventions.jsonl` — new coding conventions
+   - `gotchas.jsonl` — framework/library gotchas
+   - Formats: `{"id","timestamp","error","solution","context"}` or
+     `{"id","timestamp","decision","rationale","alternatives","context"}`.
+2. **Update the rule** — if a convention/pattern was established or refined, edit the relevant
+   `directives/*.md` **now**, not later.
+3. **Reconcile the spec (the docs forcing-function)** — if the change touches **schema, API contract,
+   security/RBAC, or ops/devops posture**, update the matching living-spec doc *in the same task*:
+   `docs/04_database_schema.md`, `docs/06_api_contracts.md`, `docs/10_security_rbac.md`,
+   `docs/09_devops_infrastructure.md`, `docs/03_system_architecture_diagrams.md`. **Do not leave a
+   design doc contradicting the code.** (Stable-intent docs — 01 business, 02 use-cases, 05 UI/UX, 07
+   design-system — only change when the intent itself changes.)
+4. **Update live status** — if a module/phase changed, edit `.ai/PROJECT_STATUS.md` (short
+   current-state only; the long history lives in `.ai/CHANGELOG.md`).
+5. The `Stop` hook then regenerates `.ai/KNOWLEDGE_INDEX.md` automatically. Only run
+   `python .ai/knowledge_builder.py` by hand if you need to see the regenerated index immediately.
 
-1. **Log lessons learned** — Append a JSON line to the appropriate `.ai/memory/*.jsonl` file.
-
-   **Two entry formats:**
-
-   For errors/bugs (reactive):
-   ```json
-   {"id": <next_id>, "timestamp": "<ISO8601>", "error": "Mô tả vấn đề", "solution": "Cách giải quyết", "context": "File/module liên quan"}
-   ```
-   For design decisions (proactive — dùng khi chọn một approach thay vì approach khác):
-   ```json
-   {"id": <next_id>, "timestamp": "<ISO8601>", "decision": "Mô tả quyết định", "rationale": "Lý do chọn", "alternatives": "Các lựa chọn đã bỏ qua", "context": "File/module liên quan"}
-   ```
-
-   Categories:
-   - `errors.jsonl` — Build/test/runtime errors and their solutions
-   - `architecture.jsonl` — Architecture decisions (cả error-driven lẫn proactive design choices)
-   - `conventions.jsonl` — New coding conventions established
-   - `gotchas.jsonl` — Framework/library gotchas discovered
-
-2. **Update docs & directives** — If a new convention, pattern, or design decision was established:
-   - Update the relevant `directives/*.md` file immediately.
-   - If the change **resolves or contradicts** anything in `docs/*.md` (e.g. a review finding, API contract, schema), update that `docs/` file too. Do NOT leave stale "open findings" in docs when the code has already addressed them.
-   - Do NOT postpone either step.
-
-3. **Surgically edit `.ai/KNOWLEDGE_INDEX.md`** — Directly update the affected sections (architecture, conventions, service list, folder structure, etc.) for any area that changed. **Do NOT wait for full regeneration.** The index is plain Markdown — edit it inline as part of every non-trivial task, the same way you update source code.
-
-4. **Full regeneration** — Only run after major structural changes (new service, new module layer, architecture shift):
-   ```bash
-   docker exec agent-sandbox python .ai/knowledge_builder.py
-   ```
-
-## Self-annealing & Evolution Loop
-
-1. Run Tool -> Fails.
-2. Search Memory (`.ai/memory/`) for similar failures.
-3. Fix the tool logic or create a new one.
-4. Auto-evaluate via test script.
-5. Log the learning into `.ai/memory/`.
-6. System is now smarter.
-
-## File Organization
-
-**Directory structure:**
-- `.ai/` - **Knowledge System Hub**
-  - `KNOWLEDGE_INDEX.md` - Auto-generated project knowledge summary (READ FIRST)
-  - `knowledge_builder.py` - Index generator script
-  - `memory/` - Categorized experience entries (JSONL format)
-- `.tmp/` - Intermediates, scratch files. Always regenerated.
-- `execution/` - Python tools for the Agent sandbox.
-- `directives/` - SOPs in Markdown (the instruction set).
-- `docker-init/` & `docker-compose.agent.yml` - The Layer 0 Sandbox.
-
-**Key principle:** Complexity belongs in deterministic code (Layer 3) and is secured by the Sandbox (Layer 0). You (Layer 2) just orchestrate the intelligent routing.
-
-Be pragmatic. Be reliable. Self-anneal. Evolve.
+*Be pragmatic. Be reliable. Keep the docs honest.*

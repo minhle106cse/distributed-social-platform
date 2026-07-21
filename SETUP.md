@@ -22,8 +22,8 @@
 |---|---|---|
 | Node.js | ≥ 20 | Turborepo, services, hooks (`sync.cjs`, `doc-select.cjs`) |
 | npm | ≥ 10 | Workspaces (`apps/*`, `packages/*`) |
-| Docker + Compose | mới | Infra (Postgres+pgvector, Redis, Kafka, ES, Prometheus/Grafana) + agent-sandbox |
-| Python | 3.10+ | `.ai/knowledge_builder.py` + `execution/*.py` (chạy trong `agent-sandbox`, KHÔNG host) |
+| Docker + Compose | mới | Infra (Postgres+pgvector, Redis, Kafka, ES, Prometheus/Grafana) |
+| Python | 3.10+ | `.ai/knowledge_builder.py` (host python — chạy tự động bởi Stop hook) |
 | Git | — | Submodules cho service repos |
 
 ---
@@ -34,21 +34,19 @@
 
 | Path | Loại | Vai trò |
 |---|---|---|
-| `package.json` (root) | skeleton | Workspaces `apps/*`,`packages/*` + scripts (`build/dev/db:*/infra:*/agent:*/sync*`) |
+| `package.json` (root) | skeleton | Workspaces `apps/*`,`packages/*` + scripts (`build/dev/db:*/infra:*/sync*`) |
 | `turbo.json` | skeleton | Turborepo pipeline (build/lint/test/dev/db:generate) |
 | `tsconfig.base.json` / `tsconfig.json` | skeleton | TS base + path alias `@/` |
-| `apps/` | content | Services. Hiện: `auth-service` (Fastify), `core-api` (NestJS) — **git submodules**; `notification/chat/worker-service` scaffold |
+| `apps/` | content | Services. Hiện: `auth-service` (Fastify), `core-api` (NestJS) — **git submodules**; `notification/search/worker-service` |
 | `packages/shared-kernel` | skeleton+ | Abstractions: CQRS bus, logger (Pino), HTTP response utils, errors |
-| `directives/` | skeleton | SOP "luật bất biến" (CQRS, multi-tenancy, DB, logging, testing, zod…) |
-| `docs/` | content | `01..11` business/design docs (VN + `docs/en`); `archive/` = script lịch sử |
+| `directives/` | skeleton | SOP "luật code bất biến" (CQRS, multi-tenancy, DB, logging, testing, zod…) — xem §5 |
+| `docs/` | content | `01..11` business/design docs (tiếng Việt); `archive/` = script lịch sử |
 | `.ai/` | skeleton | **Hệ tri thức** — xem §5 |
-| `.claude/` | skeleton | `settings.json` (hooks) + `hooks/doc-select.cjs` |
+| `.claude/` | skeleton | `settings.json` (2 hook) + `hooks/doc-select.cjs` |
 | `scripts/sync.cjs` | skeleton | Smart-sync (Stop hook) — xem §5 |
-| `execution/` | skeleton | Python tools cho agent-sandbox (memory, validate-architecture…) |
 | `docker-compose.yml` | skeleton | Infra prod-like |
-| `docker-compose.agent.yml` + `docker-init/Dockerfile.agent` | skeleton | **agent-sandbox** (Layer 0) chạy python an toàn |
 | `docker-init/` | content | `init-dbs.sql` (pgvector), `nginx.conf`, `prometheus/`, `grafana/` |
-| `AGENTS.md` | skeleton | Instruction agent canonical; `CLAUDE.md` = thin pointer |
+| `AGENTS.md` | skeleton | Instruction agent canonical; `CLAUDE.md` = thin pointer; `.ai/KNOWLEDGE_ARCHITECTURE.md` = bản đồ tri thức |
 | `readme.md` / `readme.phases.md` | content | Overview + roadmap 8 phase |
 
 ---
@@ -70,10 +68,9 @@ npm run build            # turbo build shared-kernel trước
 
 # 4. Infra
 npm run infra:up         # docker-compose up -d (Postgres:15432, Redis, Kafka, ES, Prom/Grafana)
-npm run agent:up         # agent-sandbox cho python
 
 # 5. AI Workflow (§5) — copy directives/, .ai/, .claude/, scripts/, AGENTS.md
-docker exec agent-sandbox python .ai/knowledge_builder.py   # sinh KNOWLEDGE_INDEX lần đầu
+python .ai/knowledge_builder.py   # sinh KNOWLEDGE_INDEX lần đầu (host python; sau đó Stop hook tự chạy)
 
 # 6. Per-service: prisma
 npm run db:generate
@@ -94,36 +91,41 @@ npm run db:generate
 
 ## 5. Hệ AI Agent Workflow (phần khác biệt — đây là "sản phẩm")
 
-Đây là thứ làm repo này không chỉ là monorepo. 4 mảnh:
+Đây là thứ làm repo này không chỉ là monorepo. **Bản đồ đầy đủ: `.ai/KNOWLEDGE_ARCHITECTURE.md`.** 4 mảnh:
 
-### 5a. `directives/` — luật bất biến (Layer 1)
-SOP markdown. Agent đọc trước khi code. Builder trích heading vào `KNOWLEDGE_INDEX §3`.
+### 5a. `directives/` — luật code bất biến (the rulebook / HOW)
+SOP markdown terse. Agent đọc trước khi code. Builder trích heading vào `KNOWLEDGE_INDEX §3`.
 
-### 5b. `.ai/` — hệ tri thức (Layer 3)
+### 5b. `docs/` — thiết kế & spec (the WHAT & WHY)
+Business requirement, system design, API contract, schema, security. Docs "sống" (schema/API/security/ops)
+phải được reconcile trong CÙNG task khi code đổi (forcing-function trong After-Task Protocol).
+
+### 5c. `.ai/` — hệ tri thức máy tự dựng
 | File | Cơ chế |
 |---|---|
 | `knowledge_builder.py` | Generator: scan directives+docs+memory+`apps/*/src/modules`+curated → sinh `KNOWLEDGE_INDEX.md` |
-| `KNOWLEDGE_INDEX.md` | **Auto-generated. ĐỪNG sửa tay** (sẽ bị ghi đè). 7 section |
-| `PROJECT_STATUS.md` | **Curated** — inject thành §2 (phase %, next task). Cập nhật sau mỗi task |
-| `QUICK_REFERENCE.md` | **Curated** — inject thành §4 (rule tra nhanh) |
-| `memory/*.jsonl` | Experience buffer (errors/architecture/conventions/gotchas). Gitignored |
+| `KNOWLEDGE_INDEX.md` | **Auto-generated. ĐỪNG sửa tay** (Stop hook ghi đè). 6 section |
+| `PROJECT_STATUS.md` | **Curated, current-state-only** — inject thành §2. Lịch sử dài → `CHANGELOG.md` (không scan) |
+| `memory/*.jsonl` | Experience buffer (errors/architecture/conventions/gotchas). Gitignored, local — surfaced làm §4, không có bản digest riêng nào khác |
+| `KNOWLEDGE_ARCHITECTURE.md` | Meta-doc: ranh giới docs↔directives, luật định tuyến tri thức, entry points |
 
 > **Self-check chống stale:** §2 auto-detect module-map đọc `apps/*/src/modules` mỗi lần regenerate → nếu
 > curated nói dối, lệch hiện ngay trong index. (Bài học rút từ vụ `docs/11` stale.)
 
-### 5c. `.claude/` + `scripts/sync.cjs` — automation (Layer 0 trigger)
+### 5d. `.claude/` + `scripts/sync.cjs` — automation (2 hook)
 - `settings.json` → 2 hook:
-  - **UserPromptSubmit** `hooks/doc-select.cjs` — ép đọc doc liên quan trước khi làm.
+  - **UserPromptSubmit** `hooks/doc-select.cjs` — in nhắc ngắn mỗi lượt, trỏ tới index `directives/README.md` (không tự liệt kê lại bảng — tránh 2 nguồn sự thật).
   - **Stop** `scripts/sync.cjs` — sau mỗi lượt agent: detect git change → chạy đúng pipeline cần:
-    `shared-kernel/src` → turbo build · `prisma/` → db:generate · `directives|docs|.ai/memory|.ai/PROJECT_STATUS|.ai/QUICK_REFERENCE` → regenerate index.
-  - Không đổi gì relevant → trả về <100ms.
+    `shared-kernel/src` → turbo build · `prisma/` → db:generate · `directives|docs|.ai/memory|.ai/PROJECT_STATUS` → regenerate index (host `python`).
+  - Không đổi gì relevant → trả về nhanh.
   - **Warn-only checks** (machine-detected, không block): (A) sửa code `apps|packages/*/src/*.ts`
     nhưng không có entry `.ai/memory` / `PROJECT_STATUS` mới hơn → nhắc After-Task (so sánh mtime vì
     memory bị gitignore); (B) đang chạy trong **linked worktree** → cảnh báo sync có thể không khớp
     nơi làm việc thật. Muốn enforce cứng → đổi check (A) sang `exit 2`.
 
-### 5d. `AGENTS.md` (+ `CLAUDE.md` pointer)
-Instruction canonical: Session-Start Protocol, Rules #0–#3, After-Task Protocol (log memory + sync docs + update PROJECT_STATUS).
+### 5e. `AGENTS.md` (+ `CLAUDE.md` pointer)
+Instruction canonical: Session-Start Protocol, ranh giới docs↔directives, cách AI-workflow chạy thật,
+After-Task Protocol (log memory + reconcile docs + update PROJECT_STATUS).
 
 ---
 
@@ -131,7 +133,7 @@ Instruction canonical: Session-Start Protocol, Rules #0–#3, After-Task Protoco
 
 - `docker-compose.yml`: Postgres+**pgvector** (`15432`), Redis (`6379`), Kafka KRaft (`9092`), Elasticsearch (`9200`), Prometheus+Grafana.
 - `docker-init/init-dbs.sql`: tạo DB + enable `vector` extension.
-- `docker-compose.agent.yml` + `Dockerfile.agent`: **agent-sandbox** read-only chạy python (Rule #0: không host python).
+- `docker exec <container>` chỉ để chạm infra (Postgres, nginx, Kafka) lúc smoke-test — **không có agent sandbox**, python chạy thẳng trên host.
 
 ---
 
