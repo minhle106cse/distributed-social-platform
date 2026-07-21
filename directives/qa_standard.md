@@ -1,34 +1,44 @@
 # QA Standard & Active Reflection
 
-**Mục đích:** Hướng dẫn các Agent không bao giờ báo cáo "hoàn thành" một nhiệm vụ nếu chưa có bước kiểm định độc lập (Auto-Evaluation). 
+> Read before reporting any task "done". **Never** claim completion without an independent
+> verification step whose output you actually read.
 
-Đây là quá trình nâng cấp Agent từ Cấp độ 3 (Reactive) lên Cấp độ 4/5 (Reflective).
+## Principle 1 — Assume the code is wrong until proven otherwise (Zero Trust)
 
-## Nguyên tắc 1: Luôn giả định Code có lỗi (Zero Trust)
-Bất kể bạn viết một file Python script trong `execution/` hay sửa code trong dự án (`apps/`), bạn không bao giờ được phép cho rằng code đó sẽ chạy đúng ngay lần đầu. 
-- Mọi logic thêm mới phải đi kèm với Unit Test.
-- Mọi sửa đổi vào luồng nghiệp vụ hiện tại phải chạy lại toàn bộ Unit Tests hiện có (`npm run test` hoặc `pytest`).
+Whether you added logic in `apps/` or `packages/`, never assume it runs correctly on the first try.
 
-## Nguyên tắc 2: Active Reflection (Tự phản biện)
-Trước khi đưa ra kết luận hoàn tất, hãy trải qua chu trình sau:
-1. **Lập giả thuyết (Hypothesis):** Chức năng này làm gì? Đầu vào là gì? Đầu ra mong đợi là gì?
-2. **Kích hoạt chạy thử (Test run):** Cố ý đưa một tham số sai để xem hàm có handle error tốt không. Đưa tham số đúng để xem dữ liệu output.
-3. **Phân tích (Reflection):** Output có thực sự khớp với giả thuyết không? Có warning nào in ra terminal không? (Nếu có warning TS hoặc linter, phải fix ngay, không bỏ qua).
+- New logic ships with a unit test.
+- A change to an existing business flow re-runs the existing tests (`npm run test`, or the
+  per-service test script) — and you read the output, not just the exit code.
 
-## Nguyên tắc 3: Auto-Evaluation (Chấm điểm tự động)
-Nếu bạn được giao một Task phức tạp (vd: Xây dựng Module X), hãy thiết lập một file `verification_script.py` hoặc `.ts` để tự động:
-- Gọi API endpoint vừa tạo.
-- Query lại Database xem dữ liệu đã được lưu đúng chưa.
-- Kiểm tra các liên kết (relationships) xem có hợp lệ không.
-Nếu `verification_script` pass, bạn mới được báo cáo Done.
+## Principle 2 — Active Reflection
 
-## Workflow Cụ thể khi hoàn thành 1 Task:
-1. Code feature / Fix bug.
-2. Viết / Cập nhật Test case.
-3. Chạy `npm run test` hoặc lệnh test tương ứng. Đọc log cẩn thận.
-4. Nếu FAIL → Quay lại bước 1.
-5. Nếu PASS → Nếu cấu trúc phức tạp, chạy verification script trên môi trường Harness.
-6. Khi hoàn toàn yên tâm:
-   - Append lessons vào `.ai/memory/<category>.jsonl` (bắt buộc nếu có gotcha mới)
-   - Cập nhật directive liên quan nếu có pattern mới được thiết lập
-   - Báo cáo Done với user
+Before concluding, run this loop:
+
+1. **Hypothesis** — what does this do? Inputs? Expected output?
+2. **Test run** — feed a wrong input to check error handling, then a correct input to see real output.
+3. **Reflect** — does the output match the hypothesis? Any warning in the terminal? A **TypeScript or
+   lint warning must be fixed now**, not ignored (`npm run check` = `typecheck lint format:check`).
+
+## Principle 3 — Auto-Evaluation for complex work
+
+For a non-trivial task (e.g. building a module), don't stop at unit tests — exercise it end-to-end:
+
+- Call the new endpoint against a live stack (the browser preview, or `curl` through the gateway).
+- Query the database to confirm the data was actually written correctly.
+- Check relationships/invariants hold.
+- For infra containers (Postgres, nginx, Kafka), reach them with `docker exec <container> …`.
+
+Only report Done once this passes. Match the project's existing smoke-test style (craft an RS256 JWT,
+seed the DB, inject a byte-faithful CloudEvent, confirm consumer lag = 0 — see `.ai/memory/*.jsonl`).
+
+## Completion workflow
+
+1. Code the feature / fix the bug.
+2. Write / update the test case.
+3. Run `npm run test` (or the relevant test command). Read the log carefully.
+4. FAIL → back to step 1.
+5. PASS → if the change is structurally complex, run a live end-to-end verification (Principle 3).
+6. When fully confident, run the **After-Task Protocol** (see `AGENTS.md`): log the lesson to
+   `.ai/memory/<category>.jsonl`, update the relevant `directives/*.md`, reconcile any affected
+   `docs/NN_*.md`, update `.ai/PROJECT_STATUS.md` if a phase/module changed — then report Done.

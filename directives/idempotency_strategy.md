@@ -16,6 +16,27 @@ Lý do: mọi side effect hiện thời là *ghi DB, cùng database với hiệu
 
 ---
 
+## 0. Tầng Producer (client/gửi) — lớp riêng, KHÔNG giải quyết được bài toán ở tầng Consumer (2026-07-14)
+
+Toàn bộ file này (từ đây trở xuống) nói về **consumer**. Nhưng có 1 lớp idempotency khác, hẹp hơn nhiều, nằm ở phía **producer**:
+
+```typescript
+// kafka-producer.service.ts, dead-letter.producer.ts — cả 2
+this.producer = kafkaClient.client.producer({ idempotent: true })
+```
+
+`idempotent: true` là tính năng gốc của Kafka (producer ID + sequence number per-partition) — chặn **broker-level duplicate do chính giao thức gửi gây ra**: producer gửi message, broker nhận thành công nhưng ACK bị mất trên đường về, producer (không biết ACK đã mất) tự động retry gửi lại → 2 bản y hệt trong Kafka nếu không bật cờ này. Bật lên, broker tự nhận ra "message tôi đã có rồi" nhờ sequence number, loại bỏ bản trùng — code app không cần biết gì thêm.
+
+**Giới hạn — comment tại `kafka-producer.service.ts` ghi rõ:**
+```typescript
+// acks=all + maxInFlightRequests≤5). Note delivery is still at-least-once overall
+// (the outbox poll loop can re-publish after a crash), so any future consumer
+// must be idempotent — the dedup guard lives on the consumer side, not here.
+```
+`idempotent: true` **không** chặn được trường hợp `PollingPublisherService` crash giữa chừng, restart, rồi publish lại **đúng row outbox đó** (là 1 lần publish "mới" hoàn toàn dưới góc nhìn producer, không phải network-retry) — trùng lặp này nằm ở tầng ứng dụng, producer-flag không biết gì về nó. Toàn hệ thống vẫn là **at-least-once**, không phải exactly-once — đây chính là lý do phần dưới (tầng consumer) tồn tại và bắt buộc.
+
+---
+
 ## Hai pattern được phê duyệt (đừng tưởng là thiếu nhất quán)
 
 Handler khai báo pattern của mình qua field `idempotency` (bắt buộc, xem Enforcement):
@@ -26,7 +47,48 @@ Handler khai báo pattern của mình qua field `idempotency` (bắt buộc, xem
 | `dedup-constraint` | Hiệu ứng là **append** (không tự idempotent) | Unique key trên `event.id` (`sourceEventId`) + `ON CONFLICT DO NOTHING` → re-apply chèn 0 row. |
 | `none` | Chỉ cho handler thật sự read-only/no-op | **Bị `EventRouter.register` từ chối** nếu handler có side effect. |
 
-Ví dụ hiện có: `FollowCreated/Removed` = `natural-key` (upsert/delete `space_followers` theo `[spaceId,userId]`); `ItemPublished` fan-out = `dedup-constraint` (`@@unique([recipientUserId, sourceEventId])`).
+Ví dụ hiện có: `FollowCreated/Removed` = `natural-key` (upsert/delete `space_followers` theo `[spaceId,userId]`); `ItemPublished` fan-out = `dedup-constraint` (`@@unique([recipientUserId, sourceEventId])`); `IndexKnowledge` (search-service) = `natural-key` (pgvector `replaceForItem(itemId,...)` + ES `indexItem` upsert theo `id`, cả 2 đều theo khoá nghiệp vụ).
+
+### Quy tắc quyết định — khi nào bảng cần thêm cột `sourceEventId`
+
+Audit toàn bộ 4 handler hiện có (2026-07-14): **chỉ đúng 1 bảng** (`notifications`) có cột `sourceEventId`. 3 nơi ghi còn lại (`space_followers` ×2, pgvector+Elasticsearch) **không cần**.
+
+Câu hỏi quyết định: **"1 lần event xảy ra có tạo ra dòng MỚI (append) hay không, và nếu có, dữ liệu nghiệp vụ tự nó có đủ để phân biệt 'lần đầu' với 'redeliver của đúng lần đó' không?"**
+
+- Hiệu ứng là **upsert/set/delete theo khoá nghiệp vụ có sẵn** (follow theo `[spaceId,userId]`, chunk theo `itemId`) → khoá đó đã tự nhiên idempotent, redeliver ghi đè/replace đúng chỗ cũ → **KHÔNG cần** `sourceEventId`.
+- Hiệu ứng là **append** (tạo N dòng mới, như fan-out notification cho N follower) và **không có** tổ hợp field nghiệp vụ nào phân biệt được "dòng này từ lần xử lý đầu" với "dòng này từ redeliver" → **PHẢI mượn `event.id`** (thứ duy nhất khác nhau giữa 2 event thật, giống nhau giữa 2 lần redeliver cùng 1 event) làm 1 phần `@@unique`.
+
+Thêm `sourceEventId` "cho chắc" vào bảng không cần (như `space_followers`) là dư thừa — PK tự nhiên đã giải quyết xong, thêm cột chỉ tăng surface không tăng an toàn.
+
+### `dedup-constraint` dễ nhầm với `unique-constraint` (CQRS, `resilience_patterns.md` §1.4) — cùng cơ chế DB, khác câu hỏi
+
+Cả 2 đều là `@@unique` + chặn insert trùng — nhưng khoá mang ý nghĩa khác hẳn:
+
+```prisma
+// dedup-constraint (Kafka) — khoá gồm sourceEventId, định danh 1 LẦN EVENT XẢY RA
+@@unique([recipientUserId, sourceEventId])
+
+// unique-constraint (CQRS, vd Organization.slug) — khoá là 1 THỰC THỂ NGHIỆP VỤ,
+// không liên quan gì tới "request/event nào"
+@@unique([slug])
+```
+
+Phép test phân biệt: khoá đó định danh **1 lần xảy ra cụ thể** (event/request instance — 2 event khác nhau thật KHÔNG BAO GIỜ trùng được khoá này, vì `event.id` luôn khác nhau) hay định danh **1 danh tính nghiệp vụ** (2 hành động độc lập hoàn toàn có thể tình cờ chọn trùng giá trị, như 2 admin cùng chọn `slug: "acme"`)? Loại đầu → idempotency (trả lời "chạy lại có sao không"). Loại sau → concurrency (trả lời "2 cái khác nhau đụng nhau có sao không").
+
+### Vì sao Kafka không có trục "concurrency" song song như CQRS
+
+`CommandSafety` (CQRS) có 2 trục vì HTTP request đến từ bất kỳ đâu, có thể chạm cùng dữ liệu **thật sự đồng thời** — phải tự dựng OCC/unique-constraint để chặn. Kafka thì khác — do cách chọn **partition key**:
+
+```typescript
+// follow.entity.ts
+static streamKey(userId: string, targetType: FollowTargetType, targetId: string): string {
+  return `${userId}:${targetType}:${targetId}`
+}
+// follow-target.handler.ts — dùng làm aggregateId/partition key của outbox event
+aggregateId: Follow.streamKey(command.userId, command.targetType, command.targetId)
+```
+
+Mọi event về **cùng 1 quan hệ nghiệp vụ** luôn route vào **cùng 1 partition**; trong 1 consumer group, 1 partition chỉ do đúng 1 consumer xử lý tại 1 thời điểm — Kafka **tự động serialize** việc xử lý các event cùng khoá, miễn phí, nhờ đúng cách chọn partition key. Đây là lý do `IIntegrationEventHandler` chỉ cần khai `idempotency`, không có field concurrency song song nào — cái CQRS phải tự dựng bằng tay thì transport Kafka đã cho sẵn, với điều kiện partition key được chọn đúng theo khoá nghiệp vụ (xem `eventing_patterns.md §4.1` — checklist chọn `aggregateId`).
 
 ---
 
@@ -83,6 +145,6 @@ Chưa có side effect ngoài DB nào. Dựng inbox lúc này = thêm bảng (ph�
 ---
 
 ## 🔗 Liên quan
-- `eventing_patterns.md` §4 — outbox, dispatch, retry→DLQ
-- `resilience_patterns.md` §1 — Idempotency (bản gốc, HTTP layer)
+- `eventing_patterns.md` §4 — outbox, dispatch, retry→DLQ; §4.1 checklist chọn `aggregateId`/partition key (quyết định luôn cả việc có bị "đụng độ đồng thời" ở tầng consumer hay không)
+- `resilience_patterns.md` §1 — bảng tổng 5 kỹ thuật idempotency (HTTP + Kafka) và khi nào chọn cái nào; `natural-key`/`dedup-constraint` ở đây là 2 trong số đó, HTTP idempotency-key (§1.1 bên đó) là kỹ thuật riêng cho tầng HTTP. §1.4 có `CommandConcurrency` (`occ`/`unique-constraint`/`none`) — trục KHÔNG tồn tại song song ở file này (xem "Vì sao Kafka không có trục concurrency" ở trên) vì lý do khác hẳn CQRS, đừng nhầm `dedup-constraint` với `unique-constraint` dù cùng cơ chế `@@unique`
 - `domain_modeling.md` — triết lý "type over runtime guard"

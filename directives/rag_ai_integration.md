@@ -93,54 +93,20 @@ WITH (m = 16, ef_construction = 64);
 
 ### 3. Circuit Breaker — Bắt Buộc cho mọi AI call
 
-Mọi call đến Claude API phải đi qua Circuit Breaker để tránh cascade failure khi AI service down.
+Mọi call đến Claude/Gemini API phải đi qua Circuit Breaker để tránh cascade failure khi AI service down.
+
+> **Cập nhật (2026-07-12):** `CircuitBreaker` không còn là class riêng của search-service — đã chuyển vào `@distributed-social-platform/shared-kernel` (`src/resilience/circuit-breaker.ts`) vì giờ được dùng chung bởi cả AI call (search-service) lẫn Elasticsearch/Ollama/gRPC (core-api). Import từ shared-kernel, không viết lại cục bộ. Chi tiết đầy đủ + audit + rules: `resilience_patterns.md §3.1`.
 
 ```typescript
-// infrastructure/ai/circuit-breaker.ts
-export class CircuitBreaker {
-  private state: 'closed' | 'open' | 'half-open' = 'closed'
-  private failureCount = 0
-  private lastFailureTime?: Date
+import { CircuitBreaker } from '@distributed-social-platform/shared-kernel'
 
-  constructor(
-    private readonly threshold = 5,           // failures before open
-    private readonly timeoutMs = 60_000,      // 60s before half-open
-    private readonly logger: ILogger,
-  ) {}
+// ClaudeSummarizer/GeminiSummarizer — mỗi adapter giữ 1 instance riêng
+this.breaker = new CircuitBreaker(logger) // threshold=5, timeoutMs=60_000 (default)
 
-  async execute<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.state === 'open') {
-      if (Date.now() - this.lastFailureTime!.getTime() > this.timeoutMs) {
-        this.state = 'half-open'
-      } else {
-        throw new ServiceUnavailableError('AI service circuit open')
-      }
-    }
-
-    try {
-      const result = await fn()
-      this.onSuccess()
-      return result
-    } catch (err) {
-      this.onFailure(err)
-      throw err
-    }
-  }
-
-  private onSuccess() {
-    this.failureCount = 0
-    this.state = 'closed'
-  }
-
-  private onFailure(err: unknown) {
-    this.failureCount++
-    this.lastFailureTime = new Date()
-    this.logger.warn({ err, failureCount: this.failureCount }, 'AI call failed')
-    if (this.failureCount >= this.threshold) {
-      this.state = 'open'
-      this.logger.error('Circuit breaker OPEN — AI service unavailable')
-    }
-  }
+async summarize(query: string, context: SummaryContext[]): Promise<RagSummary> {
+  return this.breaker.execute(async () => {
+    // gọi Claude/Gemini thật ở đây
+  })
 }
 ```
 

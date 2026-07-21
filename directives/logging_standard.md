@@ -63,7 +63,7 @@ Do not pollute the console with unstructured strings.
 
 Mỗi log line nên có `context` để filter Kibana cùng với `serviceContext` (= tên service từ root).
 
-- **Cross-service shared contexts** (pattern tồn tại ở CẢ auth-service + core-api): khai báo MỘT lần trong `shared-kernel/src/logger/log-context.ts` (`LogContext`), dùng y hệt ở mọi service → query `context: "CommandBus"` trải mọi service. Hiện có: `CommandBus`, `QueryBus`, `RetryMiddleware`, `TransactionMiddleware`, `EventBus` (CQRS in-process), `HttpLayer` (interceptor/hook), `ExceptionFilter` (global error).
+- **Cross-service shared contexts** (pattern tồn tại ở CẢ auth-service + core-api): khai báo MỘT lần trong `shared-kernel/src/logger/log-context.ts` (`LogContext`), dùng y hệt ở mọi service → query `context: "CommandBus"` trải mọi service. Hiện có: `CommandBus`, `QueryBus`, `RetryMiddleware`, `TransactionMiddleware`, `EventBus` (CQRS in-process), `EventRouter` (cross-service integration-event dispatch), `HttpLayer` (interceptor/hook), `ExceptionFilter` (global error).
 - **Cách gắn:**
   - CQRS middleware (shared-kernel): tự đính `this.logger.info({ context: LogContext.X }, msg)` → object-first. Nhờ vậy **không cần** set context ở composition root; core-api vẫn giữ `requestId` (PinoLogger lấy per-request logger lúc log), auth-service nhận field qua root.
   - NestJS service app-local: `@InjectPinoLogger(XxxService.name)` (vd KafkaProducerService, PollingPublisherService) → context = tên class, self-maintaining, KHÔNG cho vào `LogContext`.
@@ -80,6 +80,41 @@ Mỗi log line nên có `context` để filter Kibana cùng với `serviceContex
 - **Payload command:** `LoggingMiddleware` log `input: command` ở **`debug`** (im prod, tránh body-volume), KHÔNG ở info. An toàn vì redaction đã mask secret → đọc log debug vẫn biết command chạy với input gì (password đã thành `[REDACTED]`).
 - ⚠️ Khi thêm secret field mới (vd `apiKey`), thêm path vào `LOG_REDACT_PATHS` — KHÔNG dựa vào "nhớ đừng log".
 - Muốn input ở prod cho 1 command cụ thể → log domain identifier an toàn trong HANDLER (vd `{itemId, spaceId}`), KHÔNG hạ debug→info ở middleware chung.
+
+### Audit toàn repo (2026-07-21) — xác nhận invariant "1 logger/process", đủ 8 context
+
+Verify lại bằng cách đọc code thật (không suy đoán) cho câu hỏi: *"mỗi app có đúng 1 logger instance, chỉ khác nhau ở `context` không?"* — **đúng 100%, không có ngoại lệ.**
+
+**`createLogger()` — số lần gọi mỗi process:**
+
+| Service | Composition root | Ghi chú |
+|---|---|---|
+| core-api | `app.module.ts:53`, trong `LoggerModule.forRootAsync` | 1 lần |
+| notification-service | `app.module.ts:29` | 1 lần |
+| search-service | `app.module.ts:27` | 1 lần |
+| worker-service | `app.module.ts:18` | 1 lần — worker là NestJS (Kafka consumer, không HTTP) nên vẫn qua `LoggerModule.forRootAsync`, chỉ khác `autoLogging`/`customAttributeKeys` không áp dụng (không có HTTP request nào để gắn) |
+| auth-service | `main.ts:26` VÀ `main.lambda.ts:15` | 2 lệnh gọi nhưng ở **2 process khác nhau** (Fastify server vs AWS Lambda handler, không bao giờ chạy chung) — không vi phạm |
+
+**`LoggerModule.forRootAsync({ pinoHttp: { logger: createLogger(name) } })`** (4 service NestJS) — `pinoHttp.logger` nhận **thẳng instance** `createLogger()` trả về, không tự tạo logger riêng. nestjs-pino chỉ decorate thêm request-lifecycle (gắn `req.log`, `autoLogging.ignore` bỏ qua `/health`/`/metrics`, đổi tên field `req/res/err`→`request/response/error` qua `customAttributeKeys`) — không phải nguồn logger thứ 2.
+
+**`@InjectPinoLogger(ClassName.name)`** — không tạo instance mới. nestjs-pino gọi `rootLogger.logger.child({ context: ClassName })` nội bộ, cache theo DI token — mọi child logger cùng 1 pino instance/transport/redact gốc, chỉ field `context` đổi.
+
+**Bảng đầy đủ 8 cross-service context** (`LogContext`, `packages/shared-kernel/src/logger/log-context.ts:15-29`):
+
+| `LogContext` | String | Tầng | Ví dụ nơi log (file:line) |
+|---|---|---|---|
+| `COMMAND_BUS` | `CommandBus` | CQRS middleware | `shared-kernel/src/cqrs/middleware/logging.middleware.ts:10,15,23,30` |
+| `QUERY_BUS` | `QueryBus` | CQRS bus | `shared-kernel/src/cqrs/query-bus.ts:26,29` |
+| `RETRY` | `RetryMiddleware` | CQRS middleware | `shared-kernel/src/cqrs/middleware/retry.middleware.ts:67` |
+| `TRANSACTION` | `TransactionMiddleware` | CQRS middleware | `shared-kernel/src/cqrs/middleware/transaction.middleware.ts:18,26,32` |
+| `EVENT_BUS` | `EventBus` | CQRS in-process event | `shared-kernel/src/cqrs/event-bus.ts:14,16,21` |
+| `EVENT_ROUTER` | `EventRouter` | Kafka integration-event | `shared-kernel/src/messaging/event-router.ts:81`; `resilient-consumer.ts:124,144,163,184`; dùng cả ở `notification-service`/`search-service` `dead-letter.producer.ts:62` |
+| `HTTP` | `HttpLayer` | HTTP transport | `core-api`/`notification-service`/`search-service` `http-logging.interceptor.ts:27`; `auth-service` `http-logging.hook.ts:12` |
+| `EXCEPTION` | `ExceptionFilter` | Unhandled exception | `core-api`/`notification-service`/`search-service` `global-exception.filter.ts:66`; `auth-service` `global-error.handler.ts:33` |
+
+**Logger app-local** (KHÔNG vào `LogContext`, tự dùng tên class qua `@InjectPinoLogger(Xxx.name)`) — 18 file trong core-api/notification-service/search-service, ví dụ `KafkaProducerService`, `PollingPublisherService`, `IdempotencyCleanupService`, `MembershipVerificationGrpcService`, `GrpcServerBootstrap`, mọi `*Caller` class (circuit breaker wrapper).
+
+**"Logger lạc đàn" — không tìm thấy.** Grep `new PinoLogger(`, `pino(`, `console.*`, `new Logger(` toàn repo: `pino(...)` chỉ xuất hiện đúng 1 nơi (`shared-kernel/src/logger/index.ts:125`, bên trong `createLogger`). `console.*` chỉ xuất hiện ở catch-block bao ngoài `bootstrap()` trong `main.ts` mỗi service (khi chính logger chưa kịp khởi tạo hoặc bootstrap fail — fallback hợp lý, không phải logger song song) và trong script độc lập (`auth-service/prisma/seed.ts`, không chạy trong runtime process).
 
 ### Buses & logger — verbosity theo bản chất từng bus
 
