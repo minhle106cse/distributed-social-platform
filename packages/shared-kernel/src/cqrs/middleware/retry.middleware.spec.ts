@@ -6,9 +6,10 @@ describe('RetryMiddleware', () => {
   let logger: jest.Mocked<ILogger>
   let delays: number[]
 
-  // Command mẫu; options.retryable quyết định middleware có vào vòng lặp retry hay không.
-  const makeCommand = (retryable: boolean): ICommand =>
-    ({ name: 'TestCommand', options: { retryable } }) as unknown as ICommand
+  // Command mẫu; options.transactional quyết định middleware có vào vòng lặp retry hay không
+  // (không còn field retryable riêng — xem RetryMiddleware's doc comment, 2026-07-14).
+  const makeCommand = (transactional: boolean): ICommand =>
+    ({ name: 'TestCommand', options: { transactional } }) as unknown as ICommand
 
   beforeEach(() => {
     logger = {
@@ -32,7 +33,7 @@ describe('RetryMiddleware', () => {
     jest.restoreAllMocks()
   })
 
-  it('không retryable → chỉ gọi next() đúng 1 lần, không retry', async () => {
+  it('không transactional → chỉ gọi next() đúng 1 lần, không retry', async () => {
     const mw = new RetryMiddleware(logger, () => true)
     const next = jest.fn().mockResolvedValue('ok')
 
@@ -43,7 +44,7 @@ describe('RetryMiddleware', () => {
     expect(delays).toHaveLength(0)
   })
 
-  it('retryable + thành công ngay lần đầu → next() 1 lần, không delay', async () => {
+  it('transactional + thành công ngay lần đầu → next() 1 lần, không delay', async () => {
     const mw = new RetryMiddleware(logger, () => true)
     const next = jest.fn().mockResolvedValue('ok')
 
@@ -97,6 +98,52 @@ describe('RetryMiddleware', () => {
 
     await expect(mw.execute(makeCommand(true), next)).rejects.toBe(err)
     expect(isTransient).toHaveBeenCalledWith(err)
+  })
+
+  describe('onError observability hook', () => {
+    it('gọi onError(error, willRetry=true) khi còn attempt và predicate transient', async () => {
+      const onError = jest.fn()
+      const mw = new RetryMiddleware(logger, () => true, 3, 100, 2000, onError)
+      const err = new Error('t')
+      const next = jest.fn().mockRejectedValueOnce(err).mockResolvedValue('ok')
+
+      await mw.execute(makeCommand(true), next)
+
+      expect(onError).toHaveBeenCalledTimes(1)
+      expect(onError).toHaveBeenCalledWith(err, true)
+    })
+
+    it('gọi onError(error, willRetry=false) khi predicate không transient', async () => {
+      const onError = jest.fn()
+      const mw = new RetryMiddleware(logger, () => false, 3, 100, 2000, onError)
+      const err = new Error('not transient')
+      const next = jest.fn().mockRejectedValue(err)
+
+      await expect(mw.execute(makeCommand(true), next)).rejects.toBe(err)
+
+      expect(onError).toHaveBeenCalledTimes(1)
+      expect(onError).toHaveBeenCalledWith(err, false)
+    })
+
+    it('gọi onError(error, willRetry=false) ở lần thử cuối dù predicate transient (hết budget)', async () => {
+      const onError = jest.fn()
+      const mw = new RetryMiddleware(logger, () => true, 1, 100, 2000, onError)
+      const err = new Error('always transient')
+      const next = jest.fn().mockRejectedValue(err)
+
+      await expect(mw.execute(makeCommand(true), next)).rejects.toBe(err)
+
+      expect(onError).toHaveBeenCalledTimes(2) // attempt 1 (retry) + attempt 2 (budget hết)
+      expect(onError).toHaveBeenNthCalledWith(1, err, true)
+      expect(onError).toHaveBeenNthCalledWith(2, err, false)
+    })
+
+    it('không truyền onError vẫn hoạt động bình thường (optional, backward-compatible)', async () => {
+      const mw = new RetryMiddleware(logger, () => true)
+      const next = jest.fn().mockResolvedValue('ok')
+
+      await expect(mw.execute(makeCommand(true), next)).resolves.toBe('ok')
+    })
   })
 
   describe('full jitter backoff', () => {
