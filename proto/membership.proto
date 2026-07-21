@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package cortex.tenant;
+
+// Internal service-to-service contract, NOT public API. Called by services
+// that hold no Membership table of their own (e.g. search-service) to verify
+// a caller-supplied X-Org-Id actually corresponds to real org membership
+// before trusting it — mirrors core-api's OrgGuard check, just over the wire.
+// Secured by shared-secret metadata (x-internal-secret), same convention as
+// org-provisioning.proto.
+service MembershipVerification {
+  rpc CheckMembership(CheckMembershipRequest) returns (CheckMembershipResponse);
+}
+
+message CheckMembershipRequest {
+  string org_id = 1;
+  string user_id = 2;
+}
+
+message CheckMembershipResponse {
+  bool is_member = 1;
+  // Resolved org permissions for this (org_id, user_id) — empty if not a
+  // member. Same resolution rule as core-api's OrgGuard (OWNER implicit-all,
+  // other roles read from org_role_permissions), computed server-side so
+  // callers never need to know role names, only permission codes.
+  repeated string permissions = 2;
+}

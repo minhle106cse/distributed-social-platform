@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from 'crypto'
 import type * as grpc from '@grpc/grpc-js'
 
 // M2M auth for internal-only gRPC contracts (service-to-service traffic, not
@@ -20,5 +21,12 @@ export function verifyInternalGrpcSecret(
   expectedSecret: string,
 ): boolean {
   const provided = call.metadata.get(INTERNAL_GRPC_SECRET_METADATA_KEY)[0]
-  return provided === expectedSecret
+  if (typeof provided !== 'string') return false
+
+  // timingSafeEqual throws on length mismatch instead of returning false, and
+  // requires equal-length buffers — hash both sides first so length itself
+  // (and therefore the comparison outcome) never leaks via response timing.
+  const providedHash = createHash('sha256').update(provided).digest()
+  const expectedHash = createHash('sha256').update(expectedSecret).digest()
+  return timingSafeEqual(providedHash, expectedHash)
 }

@@ -41,5 +41,11 @@ describe('internal gRPC auth (M2M shared-secret)', () => {
 
       expect(verifyInternalGrpcSecret(call, 'correct-secret')).toBe(false)
     })
+
+    it('nên trả false khi secret khác độ dài (constant-time compare không throw)', () => {
+      const call = buildCall('short')
+
+      expect(verifyInternalGrpcSecret(call, 'a-much-longer-expected-secret')).toBe(false)
+    })
   })
 })
