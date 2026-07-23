@@ -13,6 +13,9 @@
  *      orgid        — multi-tenant owner
  *      partitionkey — CloudEvents Partitioning extension; used as the Kafka message
  *                     key so all events of one aggregate keep partition ordering
+ *      traceparent  — CloudEvents Distributed Tracing extension (W3C Trace Context);
+ *                     lets a consumer's log lines correlate back to the HTTP/gRPC
+ *                     request that produced this event. See tracing/trace-context.ts.
  *
  * The producer's outbox table keeps its own column names; this envelope is built
  * from an outbox row at publish time — internal storage schema ≠ public contract.
@@ -30,4 +33,5 @@ export interface CloudEvent<TData = unknown> {
   // ── extension attributes (lowercase per spec) ──
   orgid: string
   partitionkey: string
+  traceparent?: string
 }

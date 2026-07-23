@@ -1,5 +1,6 @@
 import { Counter, Gauge } from 'prom-client'
 import type { ILogger } from '../logger/index.js'
+import { LogContext } from '../logger/log-context.js'
 
 type State = 'closed' | 'open' | 'half-open'
 
@@ -84,7 +85,10 @@ export class CircuitBreaker {
 
   private onSuccess(): void {
     if (this.state !== 'closed') {
-      this.logger.info({ state: 'closed' }, 'Circuit recovered — closing')
+      this.logger.info(
+        { context: LogContext.CIRCUIT_BREAKER, name: this.name, state: 'closed' },
+        'Circuit recovered — closing',
+      )
     }
     this.failureCount = 0
     this.setState('closed')
@@ -93,10 +97,16 @@ export class CircuitBreaker {
   private onFailure(err: unknown): void {
     this.failureCount++
     this.lastFailureTime = Date.now()
-    this.logger.warn({ err, failureCount: this.failureCount }, 'Call failed')
+    this.logger.warn(
+      { context: LogContext.CIRCUIT_BREAKER, name: this.name, err, failureCount: this.failureCount },
+      'Call failed',
+    )
     if (this.failureCount >= this.threshold && this.state !== 'open') {
       this.setState('open')
-      this.logger.error({ state: 'open' }, 'Circuit breaker OPEN')
+      this.logger.error(
+        { context: LogContext.CIRCUIT_BREAKER, name: this.name, state: 'open' },
+        'Circuit breaker OPEN',
+      )
     }
   }
 }

@@ -96,6 +96,26 @@ services:
       start_period: 60s
 
   # --------------------------------------------------------
+  # 4b. ES log-routing + RBAC bootstrap (one-shot, idempotent)
+  # --------------------------------------------------------
+  elasticsearch-setup:
+    image: curlimages/curl:8.10.1
+    container_name: dsp-elasticsearch-setup
+    environment:
+      ELASTICSEARCH_URL: http://elasticsearch:9200
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD}
+      DSP_OPS_READER_PASSWORD: ${DSP_OPS_READER_PASSWORD}
+      DSP_AUDIT_READER_PASSWORD: ${DSP_AUDIT_READER_PASSWORD}
+      KIBANA_SYSTEM_PASSWORD: ${KIBANA_SYSTEM_PASSWORD}
+    volumes:
+      - ./docker-init/elasticsearch:/es-init:ro
+    entrypoint: ["/bin/sh", "/es-init/setup.sh"]
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    restart: "no"
+
+  # --------------------------------------------------------
   # 5. Kafka UI
   # --------------------------------------------------------
   kafka-ui:
@@ -136,8 +156,11 @@ services:
       - "${KIBANA_PORT}:5601"
     environment:
       - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
-      - ELASTICSEARCH_USERNAME=elastic
-      - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD}
+      # kibana_system, NOT elastic — ES 8.x refuses to boot Kibana against the
+      # superuser account (real crash-loop bug found + fixed 2026-07-25).
+      # Password set by docker-init/elasticsearch/setup.sh.
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${KIBANA_SYSTEM_PASSWORD}
     depends_on:
       elasticsearch:
         condition: service_healthy
@@ -274,6 +297,26 @@ services:
     depends_on:
       - api-gateway
     restart: always
+
+  # --------------------------------------------------------
+  # 18. FluentBit (production log collector) — BLUEPRINT, not started by
+  #     default (profile "prod-logging-blueprint"). apps/* have no
+  #     Dockerfile yet, so there's no real container log to tail — see
+  #     docker-init/fluent-bit/fluent-bit.conf header + logging_standard.md
+  #     "Production log shipping" section before wiring this for real.
+  # --------------------------------------------------------
+  fluent-bit:
+    image: fluent/fluent-bit:3.1
+    container_name: dsp-fluent-bit
+    profiles: ["prod-logging-blueprint"]
+    environment:
+      ELASTIC_PASSWORD: ${ELASTIC_PASSWORD}
+    volumes:
+      - ./docker-init/fluent-bit:/fluent-bit/etc:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
 
   # --------------------------------------------------------
   # 17. Embedding Service (self-hosted, Cortex Phase 4 RAG)

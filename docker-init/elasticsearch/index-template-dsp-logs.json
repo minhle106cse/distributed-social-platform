@@ -1,0 +1,15 @@
+{
+  "index_patterns": ["dsp-logs"],
+  "data_stream": {},
+  "composed_of": ["dsp-log-mappings"],
+  "priority": 200,
+  "template": {
+    "settings": {
+      "index.default_pipeline": "dsp-log-router",
+      "index.lifecycle.name": "dsp-logs-ilm"
+    }
+  },
+  "_meta": {
+    "description": "Operational log stream. default_pipeline runs the reroute processor that pulls audit-tagged docs out into dsp-audit-logs before they land here. index.lifecycle.name = 14-day retention (see ilm-policy-dsp-logs.json)."
+  }
+}

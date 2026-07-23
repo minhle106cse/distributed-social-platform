@@ -1,0 +1,19 @@
+{
+  "cluster": [],
+  "indices": [
+    {
+      "names": ["dsp-logs*"],
+      "privileges": ["read", "view_index_metadata"]
+    }
+  ],
+  "applications": [
+    {
+      "application": "kibana-.kibana",
+      "privileges": ["feature_discover.read"],
+      "resources": ["space:default"]
+    }
+  ],
+  "metadata": {
+    "description": "General operational log read access. Deliberately excludes dsp-audit-logs*. Kibana Discover access granted so this is actually usable in the Kibana UI, not just the ES REST API."
+  }
+}

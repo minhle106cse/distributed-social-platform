@@ -1,8 +1,10 @@
 import pino from 'pino'
+import { traceLogFields } from '../tracing/trace-context.js'
 
 export * from './log-context.js'
 
 const SENSITIVE_LOG_KEYS = [
+  // Secrets — masking these is non-negotiable.
   'password',
   'newPassword',
   'currentPassword',
@@ -12,6 +14,15 @@ const SENSITIVE_LOG_KEYS = [
   'secret',
   'authorization',
   'cookie',
+  // PII (added 2026-07-22) — masked at ALL levels/depths like secrets, so a
+  // full request body / command payload logged wholesale can't leak personal
+  // data. TRADE-OFF: email/username are now [REDACTED] in EVERY log, including
+  // intentional operational ones — identify a user by `userId` in logs, never
+  // by email. (Full mask, not partial like `j***@b.com`: the redact mechanism
+  // is all-or-nothing per key; partial masking would need a per-field censor,
+  // deferred until there's a real need to see a hint of the email in logs.)
+  'email',
+  'username',
 ] as const
 
 /**
@@ -45,7 +56,7 @@ const SENSITIVE_LOG_KEY_SET = new Set<string>(SENSITIVE_LOG_KEYS)
  * object is untouched even after logging. `seen` guards against circular
  * references re-entering the same object.
  */
-export function deepRedact(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
+function deepRedact(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
   if (value === null || typeof value !== 'object') return value
   if (seen.has(value as object)) return value
   seen.add(value as object)
@@ -77,6 +88,37 @@ export const redactLogMethodHook: NonNullable<pino.LoggerOptions['hooks']>['logM
   method.apply(this, inputArgs as Parameters<typeof method>)
 }
 
+/**
+ * pino `hooks.logMethod` — injects `trace_id`/`span_id`/`parent_span_id`
+ * (tracing/trace-context.ts) into EVERY log call automatically, then
+ * delegates to `redactLogMethodHook`. Exists because those fields used to be
+ * opt-in (`...traceLogFields()` spread manually into each log call) and it
+ * was already found un-applied in 3 real places (GlobalExceptionFilter,
+ * auth-service's globalErrorHandler, CQRS LoggingMiddleware) — the same
+ * "forgettable at every call site" problem `deepRedact` solved for secrets,
+ * fixed the same way: a hook that can't be forgotten because it isn't called
+ * per-site at all. No-op (adds nothing) when there's no active trace context
+ * (e.g. a log line from process startup, before any request/message arrives).
+ */
+const traceLogMethodHook: NonNullable<pino.LoggerOptions['hooks']>['logMethod'] = function (
+  inputArgs,
+  method,
+  level,
+) {
+  const fields = traceLogFields()
+  if (Object.keys(fields).length > 0) {
+    if (typeof inputArgs[0] === 'object' && inputArgs[0] !== null) {
+      Object.assign(inputArgs[0], fields)
+    } else {
+      // msg-only call (`logger.info('some message')`) — pino accepts a
+      // leading mergingObject before the message string, so prepend one
+      // instead of dropping the trace fields.
+      ;(inputArgs as unknown[]).unshift(fields)
+    }
+  }
+  redactLogMethodHook.call(this, inputArgs, method, level)
+}
+
 export interface ILogger {
   // Structured form (object first) — used to attach the `context` field and
   // other structured bindings. Mirrors pino / nestjs-pino LogFn overloads.
@@ -88,6 +130,22 @@ export interface ILogger {
   warn(msg: string, ...args: unknown[]): void
   debug(obj: object, msg?: string, ...args: unknown[]): void
   debug(msg: string, ...args: unknown[]): void
+  // ⚠️ Deliberately NO `child()` here. First reason (2026-07-22): nestjs-pino's
+  // `PinoLogger` class (what @InjectPinoLogger injects in core-api/
+  // notification-service/search-service) has no `.child()` method at all —
+  // adding it to this interface broke all 3 NestJS services' CQRS wiring.
+  // Second, stronger reason (2026-07-25): even where `.child()` DOES exist
+  // (auth-service's real `pino.Logger`), binding `context` via `.child({context})`
+  // and then ALSO passing `context` explicitly in a log call's payload (the
+  // required pattern — see log-context.ts) produces a JSON log line with the
+  // `context` KEY WRITTEN TWICE (`"context":"X","context":"Y"`) — pino's
+  // `child()` bindings and a same-named field in the per-call object are NOT
+  // merged, both get serialized. Verified with a real pino instance — this
+  // was in production code (auth-service's Login/Register/RefreshHandler),
+  // reverted the same day it was found. Every log call, everywhere, sets
+  // `context: LogContext.X` explicitly and ONLY that way — no binding
+  // mechanism (`child()`, `@InjectPinoLogger(name)`'s auto-context) may be
+  // relied on to supply it.
 }
 
 export const createLogger = (serviceName: string) => {
@@ -127,13 +185,20 @@ export const createLogger = (serviceName: string) => {
       name: serviceName,
       level: process.env.LOG_LEVEL || 'info',
       base: { serviceContext: serviceName },
+      // ES data streams (dsp-logs/dsp-audit-logs, see docker-init/elasticsearch)
+      // require a `@timestamp` field — pino's default `time` (epoch ms) doesn't
+      // satisfy that. This replaces the default `time` field entirely.
+      timestamp: () => `,"@timestamp":"${new Date().toISOString()}"`,
       // Defense-in-depth secret masking: applied in-process BEFORE any transport
       // (pretty/Elasticsearch), so a secret can never reach the log sink even if
       // a full payload/body/headers object is logged anywhere. `redact` is the
       // cheap fixed-depth pass; `hooks.logMethod` is the depth-agnostic pass
       // that actually catches secrets nested 2+ levels deep (see deepRedact).
       redact: { paths: LOG_REDACT_PATHS, censor: LOG_REDACT_CENSOR },
-      hooks: { logMethod: redactLogMethodHook },
+      // traceLogMethodHook injects trace_id/span_id/parent_span_id on EVERY
+      // log call, then chains into redactLogMethodHook — pino only accepts 1
+      // logMethod hook, so this is the single composed entry point.
+      hooks: { logMethod: traceLogMethodHook },
     },
     transport,
   )

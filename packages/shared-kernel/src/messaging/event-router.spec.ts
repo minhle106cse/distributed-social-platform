@@ -77,4 +77,30 @@ describe('EventRouter', () => {
 
     await expect(router.route(buildEvent('TYPE_A'))).rejects.toBe(err)
   })
+
+  it('route() nên tự log dispatch (executing + success/duration) — đồng bộ với CommandBus.LoggingMiddleware, không cần handler tự viết log', async () => {
+    const handler = buildHandler('TYPE_A')
+    router.register(handler)
+
+    await router.route(buildEvent('TYPE_A'))
+
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ context: 'EventRouter', type: 'TYPE_A' }),
+      'Routing TYPE_A...',
+    )
+    expect(logger.info).toHaveBeenCalledWith(
+      expect.objectContaining({ context: 'EventRouter', type: 'TYPE_A', durationMs: expect.any(Number) }),
+      'Routed TYPE_A',
+    )
+  })
+
+  it('route() KHÔNG tự log lỗi (ResilientEventConsumer đã log retry/DLQ ở tầng trên — tránh log trùng 1 lỗi 2 tầng)', async () => {
+    const err = new Error('handler failed')
+    const handler = buildHandler('TYPE_A')
+    handler.handle.mockRejectedValueOnce(err)
+    router.register(handler)
+
+    await expect(router.route(buildEvent('TYPE_A'))).rejects.toBe(err)
+    expect(logger.error).not.toHaveBeenCalled()
+  })
 })

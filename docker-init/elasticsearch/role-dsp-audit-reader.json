@@ -1,0 +1,19 @@
+{
+  "cluster": [],
+  "indices": [
+    {
+      "names": ["dsp-audit-logs*"],
+      "privileges": ["read", "view_index_metadata"]
+    }
+  ],
+  "applications": [
+    {
+      "application": "kibana-.kibana",
+      "privileges": ["feature_discover.read"],
+      "resources": ["space:default"]
+    }
+  ],
+  "metadata": {
+    "description": "Security/compliance audit-trail read access. Deliberately excludes dsp-logs* — this is the real access boundary that the reverted 2026-07-22 standalone-audit-logger design was missing. Kibana Discover access granted so this is actually usable in the Kibana UI, not just the ES REST API."
+  }
+}

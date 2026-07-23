@@ -33,9 +33,24 @@ describe('EventBus', () => {
     expect(handler.handle).toHaveBeenCalledTimes(1)
   })
 
-  it('publish một event không có handler đăng ký thì không ném lỗi (fire-and-forget)', async () => {
+  it('publish một event không có handler đăng ký thì không ném lỗi (fire-and-forget), nhưng PHẢI log warn (2026-07-25, trước đó im lặng hoàn toàn)', async () => {
     expect(() => bus.publish(makeEvent('NoHandlerEvent'))).not.toThrow()
     await flushPromises()
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ context: 'EventBus', eventName: 'NoHandlerEvent' }),
+      'No handler registered — event published with zero listeners',
+    )
+  })
+
+  it('publish một event CÓ handler thì KHÔNG log warn "no handler"', async () => {
+    const handler: jest.Mocked<IEventHandler<IEvent>> = { handle: jest.fn().mockResolvedValue(undefined) }
+    bus.register('TestEvent', handler)
+
+    bus.publish(makeEvent('TestEvent'))
+    await flushPromises()
+
+    expect(logger.warn).not.toHaveBeenCalled()
   })
 
   it('nên hỗ trợ nhiều handler cho cùng 1 event name', async () => {

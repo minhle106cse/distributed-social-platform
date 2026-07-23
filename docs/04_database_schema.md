@@ -442,6 +442,10 @@ model OutboxEvent {
   // Set khi poller claim row (PENDING → INFLIGHT, FOR UPDATE SKIP LOCKED) —
   // Reaper reset row bị orphan (claim rồi crash trước khi publish xong).
   claimedAt     DateTime?
+  // W3C traceparent của command sinh ra row này (capture từ trace-context ALS
+  // lúc append() — không cần sửa call site nào), copy sang CloudEvent
+  // `traceparent` extension lúc publish (resilience_patterns.md §7, 2026-07-21).
+  traceparent   String?
 
   @@index([status, createdAt])
   @@index([orgId])

@@ -26,6 +26,17 @@ export class EventBus {
   }
 
   publish(event: IEvent) {
-    this.eventEmitter.emit(event.name, event)
+    // emit() returns false when zero listeners were registered for this name —
+    // the EventEmitter equivalent of EventRouter's "no handler registered" case
+    // (route.ts, 2026-07-25). Without this check, a typo'd event name or a
+    // handler removed without updating the publish call site fails completely
+    // silently — found as a real gap during the 2026-07-25 gateway audit.
+    const hadListeners = this.eventEmitter.emit(event.name, event)
+    if (!hadListeners) {
+      this.logger.warn(
+        { context: LogContext.EVENT_BUS, eventName: event.name },
+        'No handler registered — event published with zero listeners',
+      )
+    }
   }
 }

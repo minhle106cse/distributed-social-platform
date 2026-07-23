@@ -114,6 +114,12 @@ async summarize(query: string, context: SummaryContext[]): Promise<RagSummary> {
 
 ### 4. Hybrid Search — RRF Merge
 
+**Vì sao search-service không có CommandBus/QueryBus — SỬA LẠI 2026-07-25, bản trước lý luận sai:** bản đầu viết ở đây lý luận "chỉ 1 query/1 write nên không đáng dựng bus" — **sai, đã bị chỉ ra và sửa.** CommandBus/QueryBus gắn với HTTP dispatch (command từ 1 route HTTP cụ thể), KHÔNG phải điều kiện để có consistency. Đúng bản chất: search-service **không có write nào là HTTP Command** — write duy nhất là 1 Kafka event (`IndexKnowledgeHandler implements IIntegrationEventHandler`), và dispatch cho event KHÔNG đi qua CommandBus mà qua `EventRouter` (shared-kernel) — cơ chế route theo `event.type`, transport-agnostic, dùng CHUNG với core-api/notification-service, không phải thứ riêng của search-service.
+
+**Vậy setup có đồng bộ không? CÓ — đúng yêu cầu "setup phải giống nhau bất kể dùng gì":** `EventRouter.route()` (2026-07-25) giờ tự log dispatch (`info` lúc bắt đầu route + `info`+`durationMs` lúc xong) — **đúng ngay tại điểm dùng chung này**, không phải viết tay riêng ở `IndexKnowledgeHandler`. Nghĩa là search-service, notification-service, và bất kỳ consumer nào dùng `EventRouter` sau này (kể cả worker-service khi có consumer đầu tiên) đều nhận log dispatch giống hệt nhau tự động — đúng tinh thần `LoggingMiddleware` của CommandBus, chỉ khác chỗ đặt (tại `EventRouter`, không phải tại 1 bus tách riêng cho search-service). Bug thật tìm ra khi sửa: `notification-service` có 3 event handler (`item-published`, `follow-removed`, `follow-created`) **hoàn toàn không có business-layer log** — không phải vì "không có bus" mà vì log trước đó bị viết tay per-handler (search-service) hoặc quên hẳn (notification-service), chưa từng có ở tầng dùng chung. Giờ đã có.
+
+**Cái search-service THẬT SỰ không có, và đúng là không cần:** CommandBus/QueryBus — vì không có route HTTP nào dispatch qua đó (search() gọi trực tiếp qua NestJS DI, đây là quyết định HTTP-layer, không phải logging-layer). Đây KHÔNG phải lý do để logging/dispatch setup khác đi — 2 việc tách biệt, bản trước gộp nhầm.
+
 ```typescript
 // search-service: modules/search/application/queries/search-knowledge.service.ts
 // (plain application service, not the CQRS QueryBus — search-service has no bus)

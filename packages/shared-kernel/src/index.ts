@@ -9,6 +9,7 @@ export * from './http/response.utils.js'
 export * from './schemas/common.schema.js'
 
 export * from './logger/index.js'
+export * from './logger/audit.js'
 
 // Resilience — generic Circuit Breaker for any unreliable external call
 export * from './resilience/circuit-breaker.js'
@@ -25,6 +26,19 @@ export * from './cqrs/index.js'
 // Database abstractions
 export * from './database/transaction-manager.interface.js'
 export * from './database/transaction.context.js'
+
+// Tracing — W3C traceparent propagation across HTTP/gRPC/Kafka boundaries.
+// Named (not `export *`) — `traceLogFields` is deliberately excluded: since
+// logger/index.ts's traceLogMethodHook applies it to every log call
+// automatically, no consumer outside shared-kernel has a real reason to call
+// it directly; keeping it off the public surface matches the audit already
+// done for the other internal-only helpers in this module.
+export {
+  type TraceContext,
+  runWithTraceContext,
+  startTraceContext,
+  getCurrentTraceparent,
+} from './tracing/trace-context.js'
 
 // Event vocabulary — WHAT happened (transport-agnostic contracts)
 export * from './events/index.js'
@@ -52,3 +66,5 @@ export {
 // gRPC — shared M2M auth convention (shared-secret metadata), reused by every
 // internal gRPC server/client so the wire format can't drift between them.
 export * from './grpc/internal-grpc-auth.js'
+// gRPC — W3C traceparent propagation over metadata (same convention as above)
+export * from './grpc/trace-propagation.js'

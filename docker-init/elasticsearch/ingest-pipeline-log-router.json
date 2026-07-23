@@ -1,0 +1,12 @@
+{
+  "description": "Routes audit-relevant log documents (context=AuditLog, see shared-kernel/src/logger/audit.ts) out of the dsp-logs data stream into the dsp-audit-logs data stream, purely at the ES layer. App code is unaware of this split — it always writes to dsp-logs. This is what backs the dsp_ops_reader/dsp_audit_reader role separation (roles.json) with a REAL index-level access boundary, unlike the standalone-pino-instance design tried and reverted on 2026-07-22 (see directives/logging_standard.md, 'Audit Log' section) which had no access control behind it.",
+  "processors": [
+    {
+      "reroute": {
+        "if": "ctx.context == 'AuditLog'",
+        "destination": "dsp-audit-logs",
+        "description": "Static redirect — not dataset/namespace-based, since dsp-logs/dsp-audit-logs don't follow the <type>-<dataset>-<namespace> convention."
+      }
+    }
+  ]
+}

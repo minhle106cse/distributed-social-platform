@@ -83,6 +83,28 @@ export class EventRouter {
       )
       return
     }
+    // Business-layer dispatch log — the EventRouter-level equivalent of
+    // CommandBus's LoggingMiddleware (same context/shape, same info-on-start +
+    // info-on-success semantics: routing is 1:1 per event type, same as a
+    // Command, not EventBus's N-handler fan-out where an info-per-handler
+    // would be spam). Lives HERE, not per-handler, so every consumer of
+    // EventRouter (search-service, notification-service, any future
+    // worker-service consumer) gets it automatically — no hand-written
+    // logger.info() per handler to forget (2026-07-25: found notification-
+    // service's 3 event handlers had ZERO business-layer log at all, and
+    // search-service's IndexKnowledgeHandler had one written by hand instead
+    // of inherited — this fixes both the same way, at the shared seam).
+    const startTime = Date.now()
+    this.logger.info({ context: LogContext.EVENT_ROUTER, type: event.type }, `Routing ${event.type}...`)
+    // Deliberately NO catch/error-log here, unlike LoggingMiddleware — a
+    // thrown error already gets logged by ResilientEventConsumer's own
+    // retry-warn/DLQ-error logging one layer up (resilient-consumer.ts). This
+    // is the CQRS EventBus asymmetry-with-CommandBus rule applied here too:
+    // don't log the same failure twice at two layers with the same meaning.
     await handler.handle(event)
+    this.logger.info(
+      { context: LogContext.EVENT_ROUTER, type: event.type, durationMs: Date.now() - startTime },
+      `Routed ${event.type}`,
+    )
   }
 }

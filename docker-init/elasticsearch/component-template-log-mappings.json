@@ -1,0 +1,19 @@
+{
+  "template": {
+    "mappings": {
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "serviceContext": { "type": "keyword" },
+        "context": { "type": "keyword" },
+        "level": { "type": "integer" },
+        "msg": { "type": "text" },
+        "trace_id": { "type": "keyword" },
+        "span_id": { "type": "keyword" },
+        "parent_span_id": { "type": "keyword" }
+      }
+    }
+  },
+  "_meta": {
+    "description": "Shared field mappings for dsp-logs and dsp-audit-logs data streams — kept minimal (only the fields we actually filter/sort on in Kibana); everything else stays dynamically mapped."
+  }
+}

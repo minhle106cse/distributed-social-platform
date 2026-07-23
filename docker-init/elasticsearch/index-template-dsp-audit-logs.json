@@ -1,0 +1,14 @@
+{
+  "index_patterns": ["dsp-audit-logs"],
+  "data_stream": {},
+  "composed_of": ["dsp-log-mappings"],
+  "priority": 200,
+  "template": {
+    "settings": {
+      "index.lifecycle.name": "dsp-audit-logs-ilm"
+    }
+  },
+  "_meta": {
+    "description": "Reroute destination for context=AuditLog documents. No default_pipeline of its own — receiving a reroute is enough for ES to create the data stream on first arrival. index.lifecycle.name = 90-day retention (see ilm-policy-dsp-audit-logs.json), longer than dsp-logs because audit trail keeps investigation value longer."
+  }
+}

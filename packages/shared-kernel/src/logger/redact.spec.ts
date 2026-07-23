@@ -18,7 +18,7 @@ describe('log redaction (root logger secret masking)', () => {
     return { logger, lines: () => chunks.map((c) => JSON.parse(c) as Record<string, any>) }
   }
 
-  it('masks nested secrets in a command payload but keeps non-secret fields', () => {
+  it('masks nested secrets AND PII (email) in a command payload but keeps non-sensitive fields', () => {
     const { logger, lines } = capture()
 
     logger.info(
@@ -31,8 +31,20 @@ describe('log redaction (root logger secret masking)', () => {
 
     const [line] = lines()
     expect(line.input.password).toBe('[REDACTED]')
-    expect(line.input.email).toBe('a@b.com')
+    // PII policy (2026-07-22): email is masked like a secret, not kept visible.
+    expect(line.input.email).toBe('[REDACTED]')
     expect(line.input.name).toBe('LoginCommand')
+  })
+
+  it('masks PII keys email + username at any depth', () => {
+    const { logger, lines } = capture()
+
+    logger.info({ input: { profile: { username: 'jdoe', email: 'a@b.com', bio: 'hi' } } }, 'x')
+
+    const [line] = lines()
+    expect(line.input.profile.username).toBe('[REDACTED]')
+    expect(line.input.profile.email).toBe('[REDACTED]')
+    expect(line.input.profile.bio).toBe('hi')
   })
 
   it('masks refreshToken (nested) and token (top level)', () => {
@@ -67,7 +79,7 @@ describe('log redaction (root logger secret masking)', () => {
 
     const [line] = lines()
     expect(line.input.user.password).toBe('[REDACTED]')
-    expect(line.input.user.email).toBe('a@b.com')
+    expect(line.input.user.email).toBe('[REDACTED]')
   })
 
   it('masks a secret nested 3+ levels deep, arbitrary depth', () => {
@@ -91,7 +103,7 @@ describe('log redaction (root logger secret masking)', () => {
     const [line] = lines()
     expect(line.users[0].password).toBe('[REDACTED]')
     expect(line.users[1].password).toBe('[REDACTED]')
-    expect(line.users[0].email).toBe('a@b.com')
+    expect(line.users[0].email).toBe('[REDACTED]')
   })
 
   it('không mutate object gốc của caller — deepRedact trả object MỚI, không sửa in-place', () => {

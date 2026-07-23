@@ -17,6 +17,7 @@
 | Viết route mới cần giới hạn theo org (không chỉ IP) | Rate Limiting §4.1 |
 | Gọi Claude API / embedding cho nhiều item | Throttle |
 | Viết `main.ts`/entrypoint mới cho 1 service | Graceful Shutdown |
+| Cần trace 1 request xuyên nhiều service (HTTP→gRPC→Kafka) trong log | Correlation-id §7 |
 
 ---
 
@@ -709,6 +710,67 @@ Không có 1 thư mục vật lý gom hết background job (cố ý — xem lý 
 
 ---
 
+## 7. Correlation-id — W3C Trace Context xuyên HTTP/gRPC/Kafka (2026-07-21)
+
+### Vấn đề
+`requestId` trước đây chỉ sống trong 1 service, 1 request HTTP (Fastify `req.id` / nestjs-pino per-request child logger). Request fan-out ra gRPC (core-api → auth-service) hoặc Kafka (outbox → consumer) mất hoàn toàn correlation — không cách nào nối log của 3 service lại thành 1 request logic khi debug.
+
+### Giải pháp — W3C Trace Context (`traceparent`), KHÔNG phải full OpenTelemetry SDK
+User chọn chuẩn thật (`00-{traceId}-{spanId}-{flags}`) thay vì tự chế field `requestId` riêng — lý do: nếu sau này cần OTel SDK/APM thật, chỉ cần đổi propagation layer, không phải đổi tên field log ở mọi nơi. **Cố ý KHÔNG** kéo theo `@opentelemetry/api`/SDK/exporter — chỉ lấy đúng format header + 1 ALS mang `{traceId, spanId}`, phục vụ mục đích duy nhất là nối log, chưa cần span timing/exporter thật.
+
+`packages/shared-kernel/src/tracing/trace-context.ts` — public API chỉ 4 hàm + 1 type (đã audit lại ai thực sự import gì trước khi quyết định export gì, 2026-07-21): `runWithTraceContext`/`startTraceContext(inbound?)`/`getCurrentTraceparent()`/`traceLogFields(ctx?)` + type `TraceContext`. Phần còn lại (`generateTraceId`/`generateSpanId`/`formatTraceparent`/`parseInboundTraceparent`/`getTraceContext`) là helper nội bộ, cố ý **không export** — không cho code ngoài gọi thẳng, ví dụ gọi `generateTraceId()` tại 1 SEND boundary sẽ phá vỡ invariant RECEIVE/SEND ở dưới.
+
+### ⚠️ Quy tắc cốt lõi — RECEIVE luôn tự sinh, SEND không bao giờ tự sinh
+
+Mọi boundary chỉ đóng đúng 1 trong 2 vai trò, không lẫn lộn trong cùng 1 lời gọi:
+
+| Vai trò | Hàm dùng | Khi thiếu/hỏng input |
+|---|---|---|
+| **RECEIVE** (HTTP middleware, gRPC server handler, Kafka consumer) | `startTraceContext(inbound)` | **Luôn tự sinh trace mới** — không bao giờ để downstream chạy mà thiếu `trace_id` |
+| **SEND** (gắn vào gRPC outbound, ghi vào outbox để publish Kafka sau) | `getCurrentTraceparent()` | Trả `undefined` — **không bịa ra trace mới**, để phía RECEIVE bên kia tự quyết định |
+
+**Điểm dễ hiểu lầm:** ranh giới KHÔNG phải "HTTP = entry point thật, gRPC/Kafka = giữa nên không cần fallback" — cả 4 điểm RECEIVE (kể cả gRPC server và Kafka consumer, vốn không phải entry point thật của hệ thống) đều dùng `startTraceContext` và **đều tự sinh trace mới nếu thiếu**. Đây là thiết kế phòng thủ có chủ đích: 1 request/event tới bất kỳ RECEIVE boundary nào cũng đảm bảo có `trace_id` dùng được, kể cả khi caller quên gắn (bug) hoặc row Kafka cũ (trước khi có cột `traceparent`) không có giá trị. Ngược lại, SEND-side không tự sinh vì bịa trace ngay lúc gửi không có ý nghĩa — chỉ nơi THẬT SỰ khởi tạo công việc mới có 1 trace đáng để propagate.
+
+4 điểm RECEIVE hiện có: `TraceContextMiddleware` (core-api HTTP), `onRequest` hook (auth-service HTTP), `auth-provisioning.grpc-service.ts` (auth-service gRPC server), `resilient-consumer.ts` (Kafka consumer, shared-kernel). 2 điểm SEND: `auth-provisioning.client.ts.metadata()` (gRPC client), `prisma-outbox.repository.ts.append()` (ghi cột DB).
+
+### ⚠️ `parentSpanId` — vì sao thêm lại sau khi từng cố ý bỏ
+
+Bản đầu `TraceContext` chỉ có `{traceId, spanId}` — field `spanId` parse được từ header inbound (tên gọi đúng chuẩn W3C là "parent-id", xem giải thích dưới) bị vứt bỏ hoàn toàn sau khi dùng xong `traceId`. Lý do lúc đó: hệ thống chỉ cần "các dòng log này có cùng thuộc 1 request không" (trả lời được bằng `trace_id`), chưa cần "span nào gọi span nào".
+
+**Câu hỏi buộc quay lại thêm:** nếu 1 request có core-api gọi CẢ auth-service LẪN search-service, cả 2 đều log cùng `trace_id` — nhưng không có cách nào từ log biết "cả 2 đều do đúng 1 lời gọi từ core-api sinh ra, độc lập với nhau" nếu không giữ lại quan hệ cha-con. Field `serviceContext` (đã có sẵn, `logging_standard.md`) trả lời được "dòng log này của service nào", nhưng KHÔNG trả lời được "theo thứ tự/quan hệ nào" — 2 câu hỏi khác nhau.
+
+**Giải pháp — `TraceContext` có thêm `parentSpanId?: string`:**
+```ts
+export interface TraceContext {
+  traceId: string
+  spanId: string          // span CỦA CHÍNH service này
+  parentSpanId?: string   // span của caller — cùng bit với "parent-id" trong header, đổi tên
+                           // theo góc nhìn nội bộ; undefined nếu là root span (không ai gọi)
+}
+```
+`startTraceContext` parse cả `traceId` lẫn `parentSpanId` từ header inbound (hàm nội bộ `parseInboundTraceparent`), tự sinh `spanId` MỚI cho chính nó như cũ (không đổi), gán `parentSpanId` = giá trị vừa parse được. `traceLogFields` thêm `parent_span_id` vào output khi có (bỏ qua nếu là root span, không log field rỗng).
+
+**Vì sao 1 vị trí bit lại có 2 tên ("parent-id" trong spec, `spanId`/`parentSpanId` trong code):** wire format `traceparent` chỉ có 1 ô 16-hex ở giữa. Lúc 1 service GỬI đi, nó nhét `spanId` CỦA CHÍNH NÓ vào đó — với người gửi, đây là "tôi tự giới thiệu mình". Lúc service kế tiếp NHẬN được đúng chuỗi đó, cùng giá trị ấy giờ có nghĩa "đây là id của thằng đã gọi tôi" — với người nhận, đây là "parent-id". Không phải 2 giá trị khác nhau, chỉ là tên gọi đổi theo góc nhìn gửi/nhận. Code đặt tên `spanId` (của chính mình) và `parentSpanId` (của caller) là 2 field RIÊNG BIỆT trong cùng object, phản ánh đúng 2 vai trò đó tồn tại đồng thời trong 1 `TraceContext`.
+
+**Vẫn KHÔNG phải OTel SDK thật:** không có object "span" với duration/start-end time, không export ra collector nào — chỉ thêm đúng 1 field vào log line để công cụ (Kibana/ES) hoặc script sau này có thể tự dựng lại cây quan hệ từ dữ liệu log thô, nếu cần. Nhược điểm đã chấp nhận: vẫn phải tự viết logic dựng cây đó, không có UI visualize sẵn như Jaeger.
+
+### 3 điểm chạm
+
+| Boundary | Cách propagate |
+|---|---|
+| **HTTP entry** | `TraceContextMiddleware` (core-api, đăng ký TRƯỚC `TenantContextMiddleware` trong `app.module.ts`) / `onRequest` hook đăng ký đầu tiên trong `auth-service/bootstrap/server.ts` (trước `setupFastify()`) — đọc header `traceparent` inbound (nếu có) hoặc tự sinh trace mới |
+| **gRPC** | `shared-kernel/grpc/trace-propagation.ts` (`attachTraceparent`/`readTraceparent`, cùng convention với `internal-grpc-auth.ts`) — client (`AuthProvisioningClient.metadata()`) gắn vào metadata, server (`auth-provisioning.grpc-service.ts`) đọc + `runWithTraceContext` bọc quanh handler |
+| **Kafka** | **Không** dùng kafkajs message headers — dùng CloudEvents extension attribute chính thức `traceparent` (CloudEvents Distributed Tracing Extension) ngay trên envelope, vì CloudEvent đã serialize structured-mode vào message value sẵn rồi, không cần đụng `MinimalKafkaMessage`/kafkajs headers. `OutboxEvent.traceparent` (cột nullable) capture từ ALS bên trong `PrismaOutboxRepository.append()` (không cần sửa call site nào gọi `append()`) → `PollingPublisherService` copy sang CloudEvent → `ResilientEventConsumer.eachMessage` đọc lại, `runWithTraceContext` bọc quanh `routeWithRetry()` mỗi message |
+
+### Rules
+- ⛔ KHÔNG dùng field tự chế (`requestId` string trần) cho cross-service correlation mới — dùng `traceparent` (format chuẩn W3C) qua các helper trên
+- Mỗi hop LUÔN mint `spanId` mới (`startTraceContext`), giữ nguyên `traceId` — không tái dùng `spanId` của caller
+- RECEIVE boundary mới (thêm gRPC server / consumer mới) → luôn dùng `startTraceContext(inbound)`, không tự viết logic "nếu thiếu thì bỏ qua trace" — phá vỡ guarantee "downstream luôn có trace_id"
+- SEND boundary mới (thêm outbound call mới) → dùng `getCurrentTraceparent()`, không tự sinh trace mới ở đây dù tiện — sinh sai chỗ sẽ làm mất liên kết với trace gốc thật
+- Không thêm OTel SDK thật (spans/exporter) trừ khi có nhu cầu APM thật — tripwire khi cần visualize distributed trace, không chỉ nối log
+
+---
+
 ## Tóm tắt — Pattern nào dùng khi nào
 
 ```
@@ -719,4 +781,5 @@ External service fail tạm thời → Retry (+ Circuit Breaker)
 Xử lý nhiều item AI cùng lúc → Throttle
 External service fail liên tục → Circuit Breaker (xem rag_ai_integration.md)
 Service chạy dài hạn cần dừng sạch (deploy/restart/scale-down) → Graceful Shutdown
+Cần nối log 1 request xuyên HTTP/gRPC/Kafka → Correlation-id (§7, W3C traceparent)
 ```

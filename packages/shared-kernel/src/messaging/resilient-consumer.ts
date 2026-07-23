@@ -1,5 +1,6 @@
 import { CloudEvent } from '../events/cloud-event.js'
 import { ILogger, LogContext } from '../logger/index.js'
+import { runWithTraceContext, startTraceContext } from '../tracing/trace-context.js'
 import { EventRouter } from './event-router.js'
 
 /**
@@ -105,9 +106,7 @@ export class ResilientEventConsumer {
       autoCommit: false,
       eachMessage: async ({ topic, partition, message }) => {
         const commit = () =>
-          consumer.commitOffsets([
-            { topic, partition, offset: String(Number(message.offset) + 1) },
-          ])
+          consumer.commitOffsets([{ topic, partition, offset: String(Number(message.offset) + 1) }])
 
         const raw = message.value?.toString()
         if (!raw) {
@@ -137,23 +136,32 @@ export class ResilientEventConsumer {
           return
         }
 
-        try {
-          await this.routeWithRetry(event)
-        } catch (err) {
-          logger.error(
-            { context: LogContext.EVENT_ROUTER, err, eventId: event.id, eventType: event.type },
-            'Handler failed after retries — dead-lettering message',
-          )
-          await this.opts.deadLetter.send({
-            topic,
-            key: message.key,
-            value: message.value,
-            reason: 'handler-error',
-            error: String(err),
-            partition,
-            offset: message.offset,
-          })
-        }
+        // Resumes the traceId of the request that produced this event (via the
+        // CloudEvent's `traceparent` extension), minting a new spanId for this
+        // consumer's own processing — every log call inside this scope (here
+        // and anywhere routeWithRetry/router.route logs) automatically picks
+        // up trace_id/span_id/parent_span_id via the logger's pino hook, no
+        // per-call-site wiring needed (logger/index.ts traceLogMethodHook).
+        const traceCtx = startTraceContext(event.traceparent)
+        await runWithTraceContext(traceCtx, async () => {
+          try {
+            await this.routeWithRetry(event)
+          } catch (err) {
+            logger.error(
+              { context: LogContext.EVENT_ROUTER, err, eventId: event.id, eventType: event.type },
+              'Handler failed after retries — dead-lettering message',
+            )
+            await this.opts.deadLetter.send({
+              topic,
+              key: message.key,
+              value: message.value,
+              reason: 'handler-error',
+              error: String(err),
+              partition,
+              offset: message.offset,
+            })
+          }
+        })
 
         await commit()
       },
