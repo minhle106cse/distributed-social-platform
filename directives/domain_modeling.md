@@ -32,6 +32,44 @@
 - **Lý do:** đây là DDD chính thống (Evans — entity mutable + identity/continuity; chỉ Value Object mới immutable) và đồng bộ với `event_sourcing.md` (`apply` mutate: `this.balance += amount`). Immutable + props-bag là **lựa chọn style gây tranh cãi, KHÔNG phải "best practice" mặc định** — đừng tự dán nhãn vậy.
 - Mapper `toPersistence` đọc qua **getter** (`org.id`, `org.name`), KHÔNG cần `toSnapshot()`/props-bag.
 
+## 0.1 `entities/` vs `aggregates/` — khi nào rẽ nhánh
+
+> **Không có folder `aggregates/` riêng — tất cả nằm chung `domain/entities/`.** Lý do (chốt sau khi
+> đối chiếu lại thuật ngữ DDD): "aggregate root" là một **vai trò** (consistency boundary + cửa duy
+> nhất để mutate), không phải một loại object khác biệt — `Organization`/`Membership` cũng là
+> aggregate root dù không event-sourced. Cái thật sự khác nhau giữa `CreditAccount` và phần còn lại
+> là **trục thứ 2, độc lập với trục "có phải aggregate root không"**: cơ chế lưu trữ — state được
+> lưu trực tiếp (1 row) hay được suy ra từ lịch sử (fold event). Đặt tên folder theo "aggregates" đã
+> gán nhầm trục 1 trong khi thứ cần đánh dấu là trục 2 → sửa: **đánh dấu trục 2 bằng hậu tố file**
+> (`.aggregate.ts`), không bằng folder. Ví dụ thật: `modules/credit/domain/entities/credit-account.aggregate.ts`.
+>
+> **2 trục, độc lập nhau — đừng gộp lại khi suy luận:**
+> | Trục | Câu hỏi | Giá trị |
+> |---|---|---|
+> | 1. Vai trò DDD | "Đây có phải aggregate root không?" | Luôn ĐÚNG cho mọi entity trong `entities/` — không phân biệt |
+> | 2. Cơ chế lưu trữ | "State lưu trực tiếp hay suy ra từ lịch sử?" | entity thường = trực tiếp; entity event-sourced (hậu tố `.aggregate.ts`) = suy ra từ event |
+>
+> Quy tắc áp dụng: **chỉ dùng hậu tố `.aggregate.ts`/pattern event-sourced khi module thật sự
+> event-sourced** theo scope đã chốt ở `event_sourcing.md` (hiện: Credit Economy; tương lai:
+> Reputation). Đừng chọn event-sourcing cho module CRUD chỉ vì nó "quan trọng"/"phức tạp" — độ quan
+> trọng nghiệp vụ không phải điều kiện, cần replay-lịch-sử-làm-nguồn-sự-thật mới là điều kiện.
+
+Khác biệt cụ thể ở trục 2 (đã verify khớp code thật, không phải lý thuyết):
+
+| | Entity thường (state-based) | Entity event-sourced (hậu tố `.aggregate.ts`) |
+|---|---|---|
+| State lưu thế nào | field hiện tại, ghi đè trực tiếp (`UPDATE`) | fold từ chuỗi event, không ghi đè (`INSERT`-only) |
+| `rehydrate()` nghĩa là gì | dựng entity từ **1 row DB** (nhận `props` đầy đủ) | **replay** — fold qua `apply(event)` cho từng event trong stream |
+| `version` dùng để làm gì | OCC row-level, tùy chọn (`UPDATE ... WHERE version = expectedVersion`) | **bắt buộc** — là sequence number của event, OCC qua `@@unique([aggregateId, version])` khi INSERT |
+| Method mutate | mutate field trực tiếp, `void` (`changeRole()`) | gọi nội bộ `raise()` → tạo event mới → `apply()` fold vào state, đồng thời đẩy vào `uncommitted[]` |
+| Cần thêm | không | `getUncommittedEvents()` (repository đọc để persist), factory `open()` thay vì `create()` (mở ví rỗng, không phải "tạo" theo nghĩa business) |
+
+Cái **giống nhau tuyệt đối** giữa 2 kiểu — trục 1 không đổi dù trục 2 thế nào (đây mới là phần
+"chuẩn chung" thật sự, áp dụng cho MỌI entity trong `domain/entities/` bất kể có hậu tố `.aggregate.ts`
+hay không): private constructor, khởi tạo qua static factory (không `new` trực tiếp từ ngoài),
+**không setter** (mutate qua method đặt tên rõ ý định), business logic nằm trong instance method,
+`id` do domain tự sinh (không nhận từ caller, không sentinel).
+
 ## 1. Factory enforce invariant lúc tạo (Intention-Revealing)
 
 - `create()` **KHÔNG** được là pass-through nhận discriminator tự do (role/type/status). Tách factory theo **biến thể**, baked rule vào:

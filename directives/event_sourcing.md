@@ -4,6 +4,16 @@
 > Directive này áp dụng cho các module dùng Event Sourcing trong Cortex: **Credit Economy** và **Reputation**.
 > Các module CRUD thông thường (KnowledgeItem, Tenant...) KHÔNG cần Event Sourcing.
 
+> [!IMPORTANT]
+> **Không có folder `domain/aggregates/` riêng.** Class event-sourced (vd `CreditAccount`) nằm
+> chung `domain/entities/` như mọi domain object khác, chỉ khác ở **hậu tố file** (`.aggregate.ts`).
+> Lý do: "aggregate root" là một **vai trò** (consistency boundary, cửa duy nhất để mutate) — mọi
+> entity ở đây đều là aggregate root theo nghĩa đó, kể cả `Organization`/`Membership` không
+> event-sourced. Event sourcing chỉ là **cơ chế lưu trữ** (state = fold từ event thay vì đọc trực
+> tiếp 1 row) — một trục hoàn toàn khác, không phải một "loại aggregate root" khác. Tách riêng
+> folder theo tên "aggregates" từng gán nhầm trục này; xem `domain_modeling.md §0.1` để đọc đầy đủ
+> 2 trục + bảng so sánh method-shape.
+
 ---
 
 ## 🎯 When to Use
@@ -78,7 +88,7 @@ model CreditBalanceSummary {
 ### 3. Aggregate Pattern
 
 ```typescript
-// modules/credit/domain/aggregates/credit-account.aggregate.ts
+// modules/credit/domain/entities/credit-account.aggregate.ts
 export class CreditAccount {
   private readonly uncommittedEvents: DomainEvent[] = []
 
@@ -184,6 +194,10 @@ export class PrismaCreditEventRepository implements CreditEventRepository {
 ---
 
 ### 5. Snapshot Pattern (khi event stream > 500 events)
+
+> ⚠️ **Trạng thái thật (2026-07-23): CHƯA implement.** `CreditAccount.loadOrOpen()` (`apps/core-api/src/modules/credit/infrastructure/repositories/prisma-credit-event.repository.ts`) hiện luôn replay **toàn bộ** event stream từ version 1, mỗi lần đọc. Không có bảng `creditSnapshot`, không có `fromSnapshot()`/`applyFromStore()` — code bên dưới là thiết kế tham khảo, không phải code đang chạy. Đừng đọc nhầm là "đã có sẵn".
+>
+> **Tripwire — chỉ làm khi có bằng chứng đo được, không đoán trước:** đây là việc của **bước 6 (Load test → tìm bottleneck → Optimize)** trong roadmap, không phải bây giờ. Điều kiện quay lại làm: load test 1 ví với số event tăng dần, đo `loadOrOpen()` latency thật — nếu vượt SLA (chưa định nghĩa số cụ thể, định nghĩa lúc load test) ở ngưỡng event/ví nào đó, quay lại section này chọn kỹ thuật. Lý do hoãn: chưa có traffic thật để biết ngưỡng, build trước là đoán mò — cùng loại lỗi đã tự sửa ở `Organization.aiRateLimitPerMin` (config/cơ chế không ai đọc/dùng thật).
 
 ```typescript
 // Thay vì load toàn bộ events từ đầu:
