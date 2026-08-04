@@ -1,62 +1,15 @@
-import { CloudEvent } from '../events/cloud-event.js'
+import { CloudEvent } from './events/cloud-event.js'
 import { ILogger, LogContext } from '../logger/index.js'
 import { runWithTraceContext, startTraceContext } from '../tracing/trace-context.js'
 import { EventRouter } from './event-router.js'
-
-/**
- * Structural subset of a kafkajs Consumer — just what the runner calls. Typing
- * it structurally keeps shared-kernel free of a kafkajs dependency (each service
- * owns its Kafka client); any kafkajs Consumer is assignable as-is.
- */
-export interface MinimalKafkaMessage {
-  key: Buffer | null
-  value: Buffer | null
-  offset: string
-}
-
-export interface MinimalEachMessagePayload {
-  topic: string
-  partition: number
-  message: MinimalKafkaMessage
-}
-
-export interface MinimalConsumer {
-  connect(): Promise<void>
-  subscribe(subscription: { topic: string; fromBeginning: boolean }): Promise<void>
-  run(config: {
-    autoCommit: boolean
-    eachMessage: (payload: MinimalEachMessagePayload) => Promise<void>
-  }): Promise<void>
-  commitOffsets(offsets: { topic: string; partition: number; offset: string }[]): Promise<void>
-  disconnect(): Promise<void>
-}
-
-/**
- * Everything a dead-letter producer needs to reconstruct the original message
- * and record why it died. Shared by the port below and every per-service
- * DeadLetterProducer implementation — declare it once here instead of each
- * service re-typing the same shape.
- */
-export interface DeadLetterInput {
-  topic: string
-  key: Buffer | string | null
-  value: Buffer | string | null
-  reason: 'poison-pill' | 'handler-error'
-  error: string
-  partition: number
-  offset: string
-}
-
-/** Outbound port to a per-service dead-letter producer (`<topic>.DLQ`). */
-export interface DeadLetterPort {
-  send(input: DeadLetterInput): Promise<void>
-}
+import { IDeadLetterProducer } from './interfaces/dead-letter.interface.js'
+import { MinimalConsumer } from './kafka-shapes/minimal-consumer.js'
 
 export interface ResilientConsumerOptions {
   consumer: MinimalConsumer
   topics: string[]
   router: EventRouter
-  deadLetter: DeadLetterPort
+  deadLetter: IDeadLetterProducer
   logger: ILogger
   /** Bounded in-process retry before dead-lettering (linear backoff). */
   maxRetries?: number
@@ -80,8 +33,10 @@ export interface ResilientConsumerOptions {
  *   commit. Transient failures recover, permanent ones are isolated for triage.
  * - Empty value (tombstone) → commit and move on.
  *
- * Handlers stay idempotent (enforced via IIntegrationEventHandler.idempotency),
- * so the redeliveries this policy allows are always safe to re-apply.
+ * Handlers must stay idempotent (documented per-handler via a comment on `handle()`
+ * — see directives/idempotency_strategy.md; no longer a typed field the compiler
+ * can check, since nothing could verify the DECLARED strategy matched the actual
+ * write), so the redeliveries this policy allows are always safe to re-apply.
  */
 export class ResilientEventConsumer {
   private readonly maxRetries: number

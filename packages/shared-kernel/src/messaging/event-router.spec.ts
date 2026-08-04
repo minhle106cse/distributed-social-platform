@@ -1,6 +1,6 @@
 import { EventRouter } from './event-router.js'
-import type { IIntegrationEventHandler } from './event-router.js'
-import type { CloudEvent } from '../events/cloud-event.js'
+import type { IIntegrationEventHandler } from './interfaces/event-handler.interface.js'
+import type { CloudEvent } from './events/cloud-event.js'
 import type { ILogger } from '../logger/index.js'
 
 function buildEvent(type: string): CloudEvent {
@@ -16,11 +16,8 @@ function buildEvent(type: string): CloudEvent {
   }
 }
 
-function buildHandler(
-  eventType: string,
-  idempotency: IIntegrationEventHandler['idempotency'] = 'natural-key',
-): jest.Mocked<IIntegrationEventHandler> {
-  return { eventType, idempotency, handle: jest.fn().mockResolvedValue(undefined) }
+function buildHandler(eventType: string): jest.Mocked<IIntegrationEventHandler> {
+  return { eventType, handle: jest.fn().mockResolvedValue(undefined) }
 }
 
 describe('EventRouter', () => {
@@ -41,10 +38,6 @@ describe('EventRouter', () => {
     router.register(buildHandler('TYPE_A'))
 
     expect(() => router.register(buildHandler('TYPE_A'))).toThrow(/Duplicate handler/)
-  })
-
-  it('register() nên ném lỗi ngay khi handler khai báo idempotency "none" (fail loud lúc boot, không đợi tới redelivery đầu tiên)', () => {
-    expect(() => router.register(buildHandler('TYPE_A', 'none'))).toThrow(/idempotency 'none'/)
   })
 
   it('register() nên trả về `this` để cho phép chain nhiều register liên tiếp', () => {
@@ -89,7 +82,11 @@ describe('EventRouter', () => {
       'Routing TYPE_A...',
     )
     expect(logger.info).toHaveBeenCalledWith(
-      expect.objectContaining({ context: 'EventRouter', type: 'TYPE_A', durationMs: expect.any(Number) }),
+      expect.objectContaining({
+        context: 'EventRouter',
+        type: 'TYPE_A',
+        durationMs: expect.any(Number),
+      }),
       'Routed TYPE_A',
     )
   })

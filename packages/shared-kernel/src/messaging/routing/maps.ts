@@ -1,4 +1,4 @@
-import { EventType, EventTypeValue } from '../../events/event-types.js'
+import { EventType, EventTypeValue } from '../events/event-types.js'
 import { Transport, TransportValue } from './transport.js'
 import { KafkaTopic, KafkaTopicValue } from './kafka-topic.js'
 

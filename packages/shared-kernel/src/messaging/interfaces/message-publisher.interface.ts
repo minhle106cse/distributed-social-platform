@@ -1,5 +1,5 @@
 import { CloudEvent } from '../events/cloud-event.js'
-import { TransportValue } from './routing/transport.js'
+import { TransportValue } from '../routing/transport.js'
 
 /**
  * Outbound port. The caller (e.g. the outbox PollingPublisher) depends on THIS,
@@ -8,6 +8,14 @@ import { TransportValue } from './routing/transport.js'
  *
  * Bind this token to a CompositeMessagePublisher that fans an event out to
  * every transport declared for its `type` in EVENT_TRANSPORT_MAP.
+ *
+ * Deliberately named "Publisher", not "Producer" — this port doesn't know or
+ * care which transport ends up handling `publish()` (could be Kafka, could be
+ * a queue, could be both via the composite), so it stays above any single
+ * transport's own vocabulary. Every CONCRETE adapter behind it uses each
+ * transport's real name instead: `KafkaProducerService`, `QueueProducerService`
+ * (apps/core-api/src/infrastructure/messaging/adapters/) — if you're looking
+ * for "the Kafka producer", that's where it actually is.
  */
 export const MESSAGE_PUBLISHER = Symbol('IMessagePublisher')
 

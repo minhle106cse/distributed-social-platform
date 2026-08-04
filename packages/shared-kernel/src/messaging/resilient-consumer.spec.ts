@@ -1,10 +1,7 @@
-import {
-  ResilientEventConsumer,
-  type MinimalConsumer,
-  type MinimalEachMessagePayload,
-  type DeadLetterPort,
-} from './resilient-consumer.js'
+import { ResilientEventConsumer } from './resilient-consumer.js'
 import { EventRouter } from './event-router.js'
+import type { IDeadLetterProducer } from './interfaces/dead-letter.interface.js'
+import type { MinimalConsumer, MinimalEachMessagePayload } from './kafka-shapes/minimal-consumer.js'
 import type { ILogger } from '../logger/index.js'
 
 function buildConsumer(): jest.Mocked<MinimalConsumer> & {
@@ -49,7 +46,7 @@ function validEventJson(overrides: Record<string, unknown> = {}) {
 
 describe('ResilientEventConsumer', () => {
   let logger: jest.Mocked<ILogger>
-  let deadLetter: jest.Mocked<DeadLetterPort>
+  let deadLetter: jest.Mocked<IDeadLetterProducer>
   let router: EventRouter
   let consumer: jest.Mocked<MinimalConsumer> & {
     eachMessage?: (payload: MinimalEachMessagePayload) => Promise<void>
