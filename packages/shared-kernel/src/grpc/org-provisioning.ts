@@ -5,7 +5,7 @@
 // source: org-provisioning.proto
 
 /* eslint-disable */
-import { BinaryReader, BinaryWriter } from "@bufbuild/protobuf/wire";
+import { BinaryReader, BinaryWriter } from '@bufbuild/protobuf/wire'
 import {
   type CallOptions,
   type ChannelCredentials,
@@ -17,130 +17,162 @@ import {
   type Metadata,
   type ServiceError,
   type UntypedServiceImplementation,
-} from "@grpc/grpc-js";
+} from '@grpc/grpc-js'
 
-export const protobufPackage = "cortex.auth";
+export const protobufPackage = 'cortex.auth'
 
 export interface ProvisionUserRequest {
-  email: string;
+  email: string
+  /**
+   * Threaded from core-api's own X-Idempotency-Key (review of ADR-0001,
+   * 2026-07-30) — lets a retried ProvisionOrg request recover the SAME user
+   * instead of orphaning a second one when the first response was lost in
+   * flight after auth-service had already committed. Empty string = caller
+   * supplied none (best-effort only, matches today's behavior).
+   */
+  idempotencyKey: string
 }
 
 export interface ProvisionUserResponse {
-  userId: string;
-  temporaryPassword: string;
+  userId: string
+  temporaryPassword: string
 }
 
 export interface CancelProvisionedUserRequest {
-  userId: string;
+  userId: string
 }
 
 export interface CancelProvisionedUserResponse {
-  cancelled: boolean;
+  cancelled: boolean
 }
 
 function createBaseProvisionUserRequest(): ProvisionUserRequest {
-  return { email: "" };
+  return { email: '', idempotencyKey: '' }
 }
 
 export const ProvisionUserRequest: MessageFns<ProvisionUserRequest> = {
   encode(message: ProvisionUserRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
-    if (message.email !== "") {
-      writer.uint32(10).string(message.email);
+    if (message.email !== '') {
+      writer.uint32(10).string(message.email)
     }
-    return writer;
+    if (message.idempotencyKey !== '') {
+      writer.uint32(18).string(message.idempotencyKey)
+    }
+    return writer
   },
 
   decode(input: BinaryReader | Uint8Array, length?: number): ProvisionUserRequest {
-    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
-    const end = length === undefined ? reader.len : reader.pos + length;
-    const message = createBaseProvisionUserRequest();
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input)
+    const end = length === undefined ? reader.len : reader.pos + length
+    const message = createBaseProvisionUserRequest()
     while (reader.pos < end) {
-      const tag = reader.uint32();
+      const tag = reader.uint32()
       switch (tag >>> 3) {
         case 1: {
           if (tag !== 10) {
-            break;
+            break
           }
 
-          message.email = reader.string();
-          continue;
+          message.email = reader.string()
+          continue
+        }
+        case 2: {
+          if (tag !== 18) {
+            break
+          }
+
+          message.idempotencyKey = reader.string()
+          continue
         }
       }
       if ((tag & 7) === 4 || tag === 0) {
-        break;
+        break
       }
-      reader.skip(tag & 7);
+      reader.skip(tag & 7)
     }
-    return message;
+    return message
   },
 
   fromJSON(object: any): ProvisionUserRequest {
-    return { email: isSet(object.email) ? globalThis.String(object.email) : "" };
+    return {
+      email: isSet(object.email) ? globalThis.String(object.email) : '',
+      idempotencyKey: isSet(object.idempotencyKey)
+        ? globalThis.String(object.idempotencyKey)
+        : isSet(object.idempotency_key)
+          ? globalThis.String(object.idempotency_key)
+          : '',
+    }
   },
 
   toJSON(message: ProvisionUserRequest): unknown {
-    const obj: any = {};
-    if (message.email !== "") {
-      obj.email = message.email;
+    const obj: any = {}
+    if (message.email !== '') {
+      obj.email = message.email
     }
-    return obj;
+    if (message.idempotencyKey !== '') {
+      obj.idempotencyKey = message.idempotencyKey
+    }
+    return obj
   },
 
   create<I extends Exact<DeepPartial<ProvisionUserRequest>, I>>(base?: I): ProvisionUserRequest {
-    return ProvisionUserRequest.fromPartial(base ?? ({} as any));
+    return ProvisionUserRequest.fromPartial(base ?? ({} as any))
   },
-  fromPartial<I extends Exact<DeepPartial<ProvisionUserRequest>, I>>(object: I): ProvisionUserRequest {
-    const message = createBaseProvisionUserRequest();
-    message.email = object.email ?? "";
-    return message;
+  fromPartial<I extends Exact<DeepPartial<ProvisionUserRequest>, I>>(
+    object: I,
+  ): ProvisionUserRequest {
+    const message = createBaseProvisionUserRequest()
+    message.email = object.email ?? ''
+    message.idempotencyKey = object.idempotencyKey ?? ''
+    return message
   },
-};
+}
 
 function createBaseProvisionUserResponse(): ProvisionUserResponse {
-  return { userId: "", temporaryPassword: "" };
+  return { userId: '', temporaryPassword: '' }
 }
 
 export const ProvisionUserResponse: MessageFns<ProvisionUserResponse> = {
   encode(message: ProvisionUserResponse, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
-    if (message.userId !== "") {
-      writer.uint32(10).string(message.userId);
+    if (message.userId !== '') {
+      writer.uint32(10).string(message.userId)
     }
-    if (message.temporaryPassword !== "") {
-      writer.uint32(18).string(message.temporaryPassword);
+    if (message.temporaryPassword !== '') {
+      writer.uint32(18).string(message.temporaryPassword)
     }
-    return writer;
+    return writer
   },
 
   decode(input: BinaryReader | Uint8Array, length?: number): ProvisionUserResponse {
-    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
-    const end = length === undefined ? reader.len : reader.pos + length;
-    const message = createBaseProvisionUserResponse();
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input)
+    const end = length === undefined ? reader.len : reader.pos + length
+    const message = createBaseProvisionUserResponse()
     while (reader.pos < end) {
-      const tag = reader.uint32();
+      const tag = reader.uint32()
       switch (tag >>> 3) {
         case 1: {
           if (tag !== 10) {
-            break;
+            break
           }
 
-          message.userId = reader.string();
-          continue;
+          message.userId = reader.string()
+          continue
         }
         case 2: {
           if (tag !== 18) {
-            break;
+            break
           }
 
-          message.temporaryPassword = reader.string();
-          continue;
+          message.temporaryPassword = reader.string()
+          continue
         }
       }
       if ((tag & 7) === 4 || tag === 0) {
-        break;
+        break
       }
-      reader.skip(tag & 7);
+      reader.skip(tag & 7)
     }
-    return message;
+    return message
   },
 
   fromJSON(object: any): ProvisionUserResponse {
@@ -148,72 +180,77 @@ export const ProvisionUserResponse: MessageFns<ProvisionUserResponse> = {
       userId: isSet(object.userId)
         ? globalThis.String(object.userId)
         : isSet(object.user_id)
-        ? globalThis.String(object.user_id)
-        : "",
+          ? globalThis.String(object.user_id)
+          : '',
       temporaryPassword: isSet(object.temporaryPassword)
         ? globalThis.String(object.temporaryPassword)
         : isSet(object.temporary_password)
-        ? globalThis.String(object.temporary_password)
-        : "",
-    };
+          ? globalThis.String(object.temporary_password)
+          : '',
+    }
   },
 
   toJSON(message: ProvisionUserResponse): unknown {
-    const obj: any = {};
-    if (message.userId !== "") {
-      obj.userId = message.userId;
+    const obj: any = {}
+    if (message.userId !== '') {
+      obj.userId = message.userId
     }
-    if (message.temporaryPassword !== "") {
-      obj.temporaryPassword = message.temporaryPassword;
+    if (message.temporaryPassword !== '') {
+      obj.temporaryPassword = message.temporaryPassword
     }
-    return obj;
+    return obj
   },
 
   create<I extends Exact<DeepPartial<ProvisionUserResponse>, I>>(base?: I): ProvisionUserResponse {
-    return ProvisionUserResponse.fromPartial(base ?? ({} as any));
+    return ProvisionUserResponse.fromPartial(base ?? ({} as any))
   },
-  fromPartial<I extends Exact<DeepPartial<ProvisionUserResponse>, I>>(object: I): ProvisionUserResponse {
-    const message = createBaseProvisionUserResponse();
-    message.userId = object.userId ?? "";
-    message.temporaryPassword = object.temporaryPassword ?? "";
-    return message;
+  fromPartial<I extends Exact<DeepPartial<ProvisionUserResponse>, I>>(
+    object: I,
+  ): ProvisionUserResponse {
+    const message = createBaseProvisionUserResponse()
+    message.userId = object.userId ?? ''
+    message.temporaryPassword = object.temporaryPassword ?? ''
+    return message
   },
-};
+}
 
 function createBaseCancelProvisionedUserRequest(): CancelProvisionedUserRequest {
-  return { userId: "" };
+  return { userId: '' }
 }
 
 export const CancelProvisionedUserRequest: MessageFns<CancelProvisionedUserRequest> = {
-  encode(message: CancelProvisionedUserRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
-    if (message.userId !== "") {
-      writer.uint32(10).string(message.userId);
+  encode(
+    message: CancelProvisionedUserRequest,
+    writer: BinaryWriter = new BinaryWriter(),
+  ): BinaryWriter {
+    if (message.userId !== '') {
+      writer.uint32(10).string(message.userId)
     }
-    return writer;
+    return writer
   },
 
   decode(input: BinaryReader | Uint8Array, length?: number): CancelProvisionedUserRequest {
-    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
-    const end = length === undefined ? reader.len : reader.pos + length;
-    const message = createBaseCancelProvisionedUserRequest();
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input)
+    const end = length === undefined ? reader.len : reader.pos + length
+    const message = createBaseCancelProvisionedUserRequest()
     while (reader.pos < end) {
-      const tag = reader.uint32();
+      const tag = reader.uint32()
       switch (tag >>> 3) {
         case 1: {
           if (tag !== 10) {
-            break;
+            break
           }
 
-          message.userId = reader.string();
-          continue;
+          message.userId = reader.string()
+          continue
         }
       }
       if ((tag & 7) === 4 || tag === 0) {
-        break;
+        break
       }
-      reader.skip(tag & 7);
+      reader.skip(tag & 7)
     }
-    return message;
+    return message
   },
 
   fromJSON(object: any): CancelProvisionedUserRequest {
@@ -221,88 +258,97 @@ export const CancelProvisionedUserRequest: MessageFns<CancelProvisionedUserReque
       userId: isSet(object.userId)
         ? globalThis.String(object.userId)
         : isSet(object.user_id)
-        ? globalThis.String(object.user_id)
-        : "",
-    };
+          ? globalThis.String(object.user_id)
+          : '',
+    }
   },
 
   toJSON(message: CancelProvisionedUserRequest): unknown {
-    const obj: any = {};
-    if (message.userId !== "") {
-      obj.userId = message.userId;
+    const obj: any = {}
+    if (message.userId !== '') {
+      obj.userId = message.userId
     }
-    return obj;
+    return obj
   },
 
-  create<I extends Exact<DeepPartial<CancelProvisionedUserRequest>, I>>(base?: I): CancelProvisionedUserRequest {
-    return CancelProvisionedUserRequest.fromPartial(base ?? ({} as any));
+  create<I extends Exact<DeepPartial<CancelProvisionedUserRequest>, I>>(
+    base?: I,
+  ): CancelProvisionedUserRequest {
+    return CancelProvisionedUserRequest.fromPartial(base ?? ({} as any))
   },
-  fromPartial<I extends Exact<DeepPartial<CancelProvisionedUserRequest>, I>>(object: I): CancelProvisionedUserRequest {
-    const message = createBaseCancelProvisionedUserRequest();
-    message.userId = object.userId ?? "";
-    return message;
+  fromPartial<I extends Exact<DeepPartial<CancelProvisionedUserRequest>, I>>(
+    object: I,
+  ): CancelProvisionedUserRequest {
+    const message = createBaseCancelProvisionedUserRequest()
+    message.userId = object.userId ?? ''
+    return message
   },
-};
+}
 
 function createBaseCancelProvisionedUserResponse(): CancelProvisionedUserResponse {
-  return { cancelled: false };
+  return { cancelled: false }
 }
 
 export const CancelProvisionedUserResponse: MessageFns<CancelProvisionedUserResponse> = {
-  encode(message: CancelProvisionedUserResponse, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+  encode(
+    message: CancelProvisionedUserResponse,
+    writer: BinaryWriter = new BinaryWriter(),
+  ): BinaryWriter {
     if (message.cancelled !== false) {
-      writer.uint32(8).bool(message.cancelled);
+      writer.uint32(8).bool(message.cancelled)
     }
-    return writer;
+    return writer
   },
 
   decode(input: BinaryReader | Uint8Array, length?: number): CancelProvisionedUserResponse {
-    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
-    const end = length === undefined ? reader.len : reader.pos + length;
-    const message = createBaseCancelProvisionedUserResponse();
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input)
+    const end = length === undefined ? reader.len : reader.pos + length
+    const message = createBaseCancelProvisionedUserResponse()
     while (reader.pos < end) {
-      const tag = reader.uint32();
+      const tag = reader.uint32()
       switch (tag >>> 3) {
         case 1: {
           if (tag !== 8) {
-            break;
+            break
           }
 
-          message.cancelled = reader.bool();
-          continue;
+          message.cancelled = reader.bool()
+          continue
         }
       }
       if ((tag & 7) === 4 || tag === 0) {
-        break;
+        break
       }
-      reader.skip(tag & 7);
+      reader.skip(tag & 7)
     }
-    return message;
+    return message
   },
 
   fromJSON(object: any): CancelProvisionedUserResponse {
-    return { cancelled: isSet(object.cancelled) ? globalThis.Boolean(object.cancelled) : false };
+    return { cancelled: isSet(object.cancelled) ? globalThis.Boolean(object.cancelled) : false }
   },
 
   toJSON(message: CancelProvisionedUserResponse): unknown {
-    const obj: any = {};
+    const obj: any = {}
     if (message.cancelled !== false) {
-      obj.cancelled = message.cancelled;
+      obj.cancelled = message.cancelled
     }
-    return obj;
+    return obj
   },
 
-  create<I extends Exact<DeepPartial<CancelProvisionedUserResponse>, I>>(base?: I): CancelProvisionedUserResponse {
-    return CancelProvisionedUserResponse.fromPartial(base ?? ({} as any));
+  create<I extends Exact<DeepPartial<CancelProvisionedUserResponse>, I>>(
+    base?: I,
+  ): CancelProvisionedUserResponse {
+    return CancelProvisionedUserResponse.fromPartial(base ?? ({} as any))
   },
   fromPartial<I extends Exact<DeepPartial<CancelProvisionedUserResponse>, I>>(
     object: I,
   ): CancelProvisionedUserResponse {
-    const message = createBaseCancelProvisionedUserResponse();
-    message.cancelled = object.cancelled ?? false;
-    return message;
+    const message = createBaseCancelProvisionedUserResponse()
+    message.cancelled = object.cancelled ?? false
+    return message
   },
-};
+}
 
 /**
  * Internal service-to-service contract, NOT public API. Called by core-api
@@ -310,21 +356,23 @@ export const CancelProvisionedUserResponse: MessageFns<CancelProvisionedUserResp
  * shared-secret in gRPC metadata (x-internal-secret), not end-user JWT — see
  * INTERNAL_GRPC_SHARED_SECRET in both services' env.
  */
-export type AuthProvisioningService = typeof AuthProvisioningService;
+export type AuthProvisioningService = typeof AuthProvisioningService
 export const AuthProvisioningService = {
   /**
    * Creates a new User + LOCAL AuthIdentity with a server-generated random
    * password. Fails with ALREADY_EXISTS if the email is taken.
    */
   provisionUser: {
-    path: "/cortex.auth.AuthProvisioning/ProvisionUser" as const,
+    path: '/cortex.auth.AuthProvisioning/ProvisionUser' as const,
     requestStream: false as const,
     responseStream: false as const,
-    requestSerialize: (value: ProvisionUserRequest): Buffer => Buffer.from(ProvisionUserRequest.encode(value).finish()),
+    requestSerialize: (value: ProvisionUserRequest): Buffer =>
+      Buffer.from(ProvisionUserRequest.encode(value).finish()),
     requestDeserialize: (value: Buffer): ProvisionUserRequest => ProvisionUserRequest.decode(value),
     responseSerialize: (value: ProvisionUserResponse): Buffer =>
       Buffer.from(ProvisionUserResponse.encode(value).finish()),
-    responseDeserialize: (value: Buffer): ProvisionUserResponse => ProvisionUserResponse.decode(value),
+    responseDeserialize: (value: Buffer): ProvisionUserResponse =>
+      ProvisionUserResponse.decode(value),
   },
   /**
    * Compensating action for a saga rollback: hard-deletes a user that was
@@ -332,30 +380,35 @@ export const AuthProvisioningService = {
    * (emailVerified still false). No-op (cancelled=false) otherwise.
    */
   cancelProvisionedUser: {
-    path: "/cortex.auth.AuthProvisioning/CancelProvisionedUser" as const,
+    path: '/cortex.auth.AuthProvisioning/CancelProvisionedUser' as const,
     requestStream: false as const,
     responseStream: false as const,
     requestSerialize: (value: CancelProvisionedUserRequest): Buffer =>
       Buffer.from(CancelProvisionedUserRequest.encode(value).finish()),
-    requestDeserialize: (value: Buffer): CancelProvisionedUserRequest => CancelProvisionedUserRequest.decode(value),
+    requestDeserialize: (value: Buffer): CancelProvisionedUserRequest =>
+      CancelProvisionedUserRequest.decode(value),
     responseSerialize: (value: CancelProvisionedUserResponse): Buffer =>
       Buffer.from(CancelProvisionedUserResponse.encode(value).finish()),
-    responseDeserialize: (value: Buffer): CancelProvisionedUserResponse => CancelProvisionedUserResponse.decode(value),
+    responseDeserialize: (value: Buffer): CancelProvisionedUserResponse =>
+      CancelProvisionedUserResponse.decode(value),
   },
-} as const;
+} as const
 
 export interface AuthProvisioningServer extends UntypedServiceImplementation {
   /**
    * Creates a new User + LOCAL AuthIdentity with a server-generated random
    * password. Fails with ALREADY_EXISTS if the email is taken.
    */
-  provisionUser: handleUnaryCall<ProvisionUserRequest, ProvisionUserResponse>;
+  provisionUser: handleUnaryCall<ProvisionUserRequest, ProvisionUserResponse>
   /**
    * Compensating action for a saga rollback: hard-deletes a user that was
    * just provisioned by ProvisionUser, if it hasn't been touched since
    * (emailVerified still false). No-op (cancelled=false) otherwise.
    */
-  cancelProvisionedUser: handleUnaryCall<CancelProvisionedUserRequest, CancelProvisionedUserResponse>;
+  cancelProvisionedUser: handleUnaryCall<
+    CancelProvisionedUserRequest,
+    CancelProvisionedUserResponse
+  >
 }
 
 export interface AuthProvisioningClient extends Client {
@@ -366,18 +419,18 @@ export interface AuthProvisioningClient extends Client {
   provisionUser(
     request: ProvisionUserRequest,
     callback: (error: ServiceError | null, response: ProvisionUserResponse) => void,
-  ): ClientUnaryCall;
+  ): ClientUnaryCall
   provisionUser(
     request: ProvisionUserRequest,
     metadata: Metadata,
     callback: (error: ServiceError | null, response: ProvisionUserResponse) => void,
-  ): ClientUnaryCall;
+  ): ClientUnaryCall
   provisionUser(
     request: ProvisionUserRequest,
     metadata: Metadata,
     options: Partial<CallOptions>,
     callback: (error: ServiceError | null, response: ProvisionUserResponse) => void,
-  ): ClientUnaryCall;
+  ): ClientUnaryCall
   /**
    * Compensating action for a saga rollback: hard-deletes a user that was
    * just provisioned by ProvisionUser, if it hasn't been touched since
@@ -386,50 +439,59 @@ export interface AuthProvisioningClient extends Client {
   cancelProvisionedUser(
     request: CancelProvisionedUserRequest,
     callback: (error: ServiceError | null, response: CancelProvisionedUserResponse) => void,
-  ): ClientUnaryCall;
+  ): ClientUnaryCall
   cancelProvisionedUser(
     request: CancelProvisionedUserRequest,
     metadata: Metadata,
     callback: (error: ServiceError | null, response: CancelProvisionedUserResponse) => void,
-  ): ClientUnaryCall;
+  ): ClientUnaryCall
   cancelProvisionedUser(
     request: CancelProvisionedUserRequest,
     metadata: Metadata,
     options: Partial<CallOptions>,
     callback: (error: ServiceError | null, response: CancelProvisionedUserResponse) => void,
-  ): ClientUnaryCall;
+  ): ClientUnaryCall
 }
 
 export const AuthProvisioningClient = makeGenericClientConstructor(
   AuthProvisioningService,
-  "cortex.auth.AuthProvisioning",
+  'cortex.auth.AuthProvisioning',
 ) as unknown as {
-  new (address: string, credentials: ChannelCredentials, options?: Partial<ClientOptions>): AuthProvisioningClient;
-  service: typeof AuthProvisioningService;
-  serviceName: string;
-};
+  new (
+    address: string,
+    credentials: ChannelCredentials,
+    options?: Partial<ClientOptions>,
+  ): AuthProvisioningClient
+  service: typeof AuthProvisioningService
+  serviceName: string
+}
 
-type Builtin = Date | Function | Uint8Array | string | number | boolean | undefined;
+type Builtin = Date | Function | Uint8Array | string | number | boolean | undefined
 
-export type DeepPartial<T> = T extends Builtin ? T
-  : T extends globalThis.Array<infer U> ? globalThis.Array<DeepPartial<U>>
-  : T extends ReadonlyArray<infer U> ? ReadonlyArray<DeepPartial<U>>
-  : T extends {} ? { [K in keyof T]?: DeepPartial<T[K]> }
-  : Partial<T>;
+export type DeepPartial<T> = T extends Builtin
+  ? T
+  : T extends globalThis.Array<infer U>
+    ? globalThis.Array<DeepPartial<U>>
+    : T extends ReadonlyArray<infer U>
+      ? ReadonlyArray<DeepPartial<U>>
+      : T extends {}
+        ? { [K in keyof T]?: DeepPartial<T[K]> }
+        : Partial<T>
 
-type KeysOfUnion<T> = T extends T ? keyof T : never;
-export type Exact<P, I extends P> = P extends Builtin ? P
-  : P & { [K in keyof P]: Exact<P[K], I[K]> } & { [K in Exclude<keyof I, KeysOfUnion<P>>]: never };
+type KeysOfUnion<T> = T extends T ? keyof T : never
+export type Exact<P, I extends P> = P extends Builtin
+  ? P
+  : P & { [K in keyof P]: Exact<P[K], I[K]> } & { [K in Exclude<keyof I, KeysOfUnion<P>>]: never }
 
 function isSet(value: any): boolean {
-  return value !== null && value !== undefined;
+  return value !== null && value !== undefined
 }
 
 export interface MessageFns<T> {
-  encode(message: T, writer?: BinaryWriter): BinaryWriter;
-  decode(input: BinaryReader | Uint8Array, length?: number): T;
-  fromJSON(object: any): T;
-  toJSON(message: T): unknown;
-  create<I extends Exact<DeepPartial<T>, I>>(base?: I): T;
-  fromPartial<I extends Exact<DeepPartial<T>, I>>(object: I): T;
+  encode(message: T, writer?: BinaryWriter): BinaryWriter
+  decode(input: BinaryReader | Uint8Array, length?: number): T
+  fromJSON(object: any): T
+  toJSON(message: T): unknown
+  create<I extends Exact<DeepPartial<T>, I>>(base?: I): T
+  fromPartial<I extends Exact<DeepPartial<T>, I>>(object: I): T
 }

@@ -19,6 +19,12 @@ service AuthProvisioning {
 
 message ProvisionUserRequest {
   string email = 1;
+  // Threaded from core-api's own X-Idempotency-Key (review of ADR-0001,
+  // 2026-07-30) — lets a retried ProvisionOrg request recover the SAME user
+  // instead of orphaning a second one when the first response was lost in
+  // flight after auth-service had already committed. Empty string = caller
+  // supplied none (best-effort only, matches today's behavior).
+  string idempotency_key = 2;
 }
 
 message ProvisionUserResponse {

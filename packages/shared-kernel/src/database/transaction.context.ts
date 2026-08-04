@@ -1,9 +1,11 @@
 import { AsyncLocalStorage } from 'async_hooks'
 
-// Implicitly carries the active transaction client through the call stack so
-// repositories never change their signatures. Paired with ITransactionManager:
-// the infra TransactionManager calls runInTransaction(tx, ...), repositories
-// read it via getTx(). See directives/cqrs_pattern.md.
+// Since ADR-0001 this is NO LONGER how repositories find their client — they are
+// handed one when their TxScope is built, so there is no `getTx() ?? client`
+// fallback left to forget. What survives is the narrower job it is actually good
+// at: telling a TxRunner whether a transaction is already open on this async
+// context, so nesting can fail loudly instead of silently opening a second one on
+// another pooled connection. Assertion mechanism, not wiring mechanism.
 const transactionContext = new AsyncLocalStorage<unknown>()
 
 export function getTx<T = unknown>(): T | undefined {
