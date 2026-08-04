@@ -20,6 +20,24 @@ groups:
       - record: search:chunks_indexed_rate5m
         expr: rate(search_chunks_indexed_total[5m])
 
+      - record: outbox:dead_letter_rate5m
+        expr: rate(core_api_outbox_dead_letter_total[5m])
+
+      # core_api_outbox_backlog is a Gauge — queried raw in the dashboard/alert,
+      # no recording rule needed (same treatment as circuit_breaker_state/
+      # elasticsearch_clusterinfo_up above).
+
+      - record: scheduled_job:failures_rate5m
+        expr: rate(core_api_scheduled_job_failures_total[5m])
+
+      # core_api_scheduled_job_last_success_timestamp_seconds is a Gauge — a
+      # job that never fires at all (misconfigured @Cron, wiring bug) would
+      # NOT show up in the failure-rate alert above (silence isn't a failure
+      # tick), only in this timestamp going stale. Deliberately no staleness
+      # alert yet — each job's expected interval differs by 3 orders of
+      # magnitude (2s poll vs daily cron), a single threshold can't cover
+      # both without per-job overrides; noted as a known gap, not solved here.
+
       - record: kafka:consumergroup_lag_by_group
         expr: sum by (consumergroup, topic) (kafka_consumergroup_lag)
 

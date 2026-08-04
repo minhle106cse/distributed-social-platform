@@ -159,7 +159,12 @@ Thiết lập ranh giới tuyệt đối giữa Logic Nghiệp vụ và Cơ sở
 Tự xây dựng hệ thống **CQRS Bus độc lập hoàn toàn khỏi Framework** (không dùng `@nestjs/cqrs`):
 
 - Chạy mượt mà trên cả **NestJS** (`core-api`) và **Fastify** (`auth-service`).
-- Middleware Chain: `LoggingMiddleware` → `RetryMiddleware` → `TransactionMiddleware` → Handler.
+- **[ADR-0001, 2026-07-29]** Pipeline cố định TRONG THÂN HÀM của `CommandBus` (logging → retry →
+  transaction → handler), không còn `commandBus.use(...)` với middleware rời — sai thứ tự trở thành
+  bất khả biểu diễn thay vì phụ thuộc thứ tự đăng ký. Transaction là Unit-of-Work suy từ chữ ký handler
+  (`kind: 'transactional'` nhận tham số repos), không còn cờ `options.transactional`. **[2026-07-30]**
+  Repos giờ là 1 shape cho CẢ service (trước là 1 TxScope riêng mỗi module) — xem
+  `docs/adr/0001-transaction-retry-boundary.md` và `directives/cqrs_pattern.md`.
 - `IdempotencyMiddleware` kiểm tra Idempotency Key trước khi execute Command.
 
 ### 3. Event Sourcing (Sổ cái Credit Bất biến)

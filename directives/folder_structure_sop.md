@@ -68,7 +68,7 @@ src/
 # † Mở rộng owner-approved 2026-07-02 cho service consumer/AI (notification, search):
 #   - application/events/     : handler cho integration event (IIntegrationEventHandler)
 #   - domain/services/        : domain service THUẦN (vd TextChunker — KHÔNG @Injectable/NestJS)
-#                               + PORT dịch vụ outbound (interface: IEmbeddingService, ISummarizer)
+#                               + PORT dịch vụ outbound (interface: IEmbeddingService, ISummarizerService)
 #   - infrastructure/services/: adapter cụ thể của port (HttpEmbedding, ClaudeSummarizer, GeminiSummarizer…)
 #   - infrastructure/consumers/: Kafka consumer (KnowledgeIndexerConsumer, NotificationEventsConsumer)
 #   Service projection/search KHÔNG có domain entity → domain/ chỉ có services/ (không entities/repositories).

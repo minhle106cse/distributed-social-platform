@@ -75,13 +75,15 @@ Caller ở mục 2, nơi `Grpc` CÓ xuất hiện — lý do: Client tên trùng
 - Implementation: `Prisma{Entity}Repository implements I{Entity}Repository`
 - Query-side riêng (CQRS, trả DTO thay vì Entity): hậu tố `.query-repository.ts` / `I{Entity}QueryRepository`
 
-⚠️ **Ngoại lệ đã biết, CHƯA sửa:** `auth-service` KHÔNG dùng tiền tố `I` cho interface — ví dụ
-`RefreshTokenRepository`, `UserRepository`, `RoleRepository` (không phải `IRefreshTokenRepository`),
-trong khi implementation vẫn đúng pattern `PrismaUserRepository implements UserRepository`. Đây là
-lệch chuẩn có thật giữa `auth-service` và 3 service NestJS còn lại — **không tự ý rename hàng loạt**
-khi gặp, vì đổi tên 1 interface được dùng ở nhiều composition-root file (`container/*.ts`) rủi ro cao
-hơn lợi ích. Khi có lý do khác để đụng vào 1 trong các interface này (không phải rename thuần), tiện
-thể đổi theo chuẩn `I{Entity}Repository`.
+✅ **Đã sửa (2026-07-31):** `auth-service` từng KHÔNG dùng tiền tố `I` cho interface — ví dụ
+`RefreshTokenRepository`, `UserRepository`, `RoleRepository` — trong khi implementation vẫn đúng
+pattern `PrismaUserRepository implements UserRepository`. Phát hiện khi quét toàn repo tìm interface
+lệch rule (2026-07-31); đã rename toàn bộ sang `IUserRepository`, `IRoleRepository`,
+`IRefreshTokenRepository`, `IUserQueryRepository`, `IRoleQueryRepository`, `IGrpcIdempotencyRepository`
+(và 2 domain-service port cùng họ: `TokenService`→`ITokenService`, `PasswordService`→`IPasswordService`
+— đây KHÔNG phải Repository nhưng cùng chung gốc "auth-service không dùng tiền tố I", nên sửa cùng lúc
+cho nhất quán). auth-service giờ khớp `core-api`/`search-service`/`notification-service` 100%. `tsc
+--noEmit` sạch + 123/123 test pass sau khi rename.
 
 ## 5. Command/Query Handler (CQRS)
 
@@ -136,11 +138,66 @@ split" trong `.ai/memory/conventions.jsonl`, chưa hợp nhất vì đụng tớ
 + risk phá config đang chạy — chỉ sửa khi có lý do khác đang đụng vào cấu hình CORS của cả 4 service
 cùng lúc, không tách riêng 1 PR chỉ để đổi tên biến môi trường.
 
+## 9. Domain Port (outbound service interface, gọi ra AI provider/external service)
+
+**Rule:** `I{Capability}Service` cho interface, file `{capability}.service.ts` — kể cả khi tên tự nhiên
+hơn là 1 danh từ tác nhân kiểu "-er" (`Summarizer`, `Chunker`). DI token đi kèm: `{CAPABILITY}_SERVICE`
+(SCREAMING_SNAKE, bỏ tiền tố `I`, thêm hậu tố `_SERVICE`).
+
+| Ví dụ | File | Token |
+|---|---|---|
+| `IEmbeddingService` | `embedding.service.ts` | `EMBEDDING_SERVICE` |
+| `ISummarizerService` | `summarizer.service.ts` | `SUMMARIZER_SERVICE` |
+
+⚠️ **Không áp dụng cho domain service THUẦN không có interface** (không gọi ra ngoài, không cần swap
+adapter) — ví dụ `TextChunker` (`text-chunker.ts`, `domain/services/`) không có `I` prefix và không
+suffix `Service`, vì nó không phải port. Câu hỏi quyết định: *"class này có > 1 cách hiện thực hoá có
+thể swap được không (adapter khác nhau sau cùng 1 interface)?"* — có → nhóm 9 (port); không → tên tự do
+theo ý nghĩa domain, không bắt buộc `.service.ts`.
+
+**Lịch sử:** phát hiện 2026-07-24 khi user (đang học RAG, đọc code lần đầu) hỏi tại sao
+`embedding.service.ts` (`IEmbeddingService`) và `summarizer.ts` (`ISummarizer`) đặt tên khác nhau dù
+cùng vai trò port — trước đó nhóm 9 này chưa từng được viết thành rule, dù `folder_structure_sop.md` đã
+liệt kê cả 2 tên làm ví dụ mà không tự nhận ra bất nhất. Đã thống nhất về `I{X}Service` và rename
+`summarizer.ts`→`summarizer.service.ts`, `ISummarizer`→`ISummarizerService`, `SUMMARIZER`→`SUMMARIZER_SERVICE`.
+
+## 10. Messaging Port (transport-agnostic port, `packages/shared-kernel/src/messaging/interfaces/`)
+
+**Rule:** `I{Noun}` cho interface, file `{noun}.interface.ts`. KHÔNG bắt buộc suffix `Service` như nhóm
+9 — đây không phải "gọi ra AI provider/external service", mà là contract messaging thuần (publish /
+nhận integration event / dead-letter), nên giữ đúng danh từ vai trò (`Publisher`, `Handler`, `Producer`)
+thay vì ép về `Service` là tự nhiên hơn.
+
+| Ví dụ | File |
+|---|---|
+| `IMessagePublisher`, `ITransportPublisher` | `message-publisher.interface.ts` |
+| `IIntegrationEventHandler` | `event-handler.interface.ts` |
+| `IDeadLetterProducer` | `dead-letter.interface.ts` |
+
+⚠️ **Không áp dụng cho 2 nhóm sau, dễ nhầm vì cũng "trông giống port":**
+- **Structural typing mô phỏng shape thư viện ngoài** (`packages/shared-kernel/src/messaging/kafka-shapes/`):
+  `MinimalConsumer`, `MinimalKafkaMessage`, `MinimalEachMessagePayload`, `MinimalProducer`,
+  `MinimalDlqConsumer` — KHÔNG có tiền tố `I` dù đóng vai trò kỹ thuật giống port, vì đây là bản rút gọn
+  (duck-typing subset) của type từ 1 thư viện cụ thể (kafkajs), không phải khái niệm do domain tự định
+  nghĩa. Có `I` sẽ ngụ ý sai rằng đây là 1 domain port có thể swap adapter tuỳ ý.
+- **DTO/data-shape thuần, không hành vi**: `CloudEvent`, `DeadLetterInput` — mô tả DỮ LIỆU đi kèm lời
+  gọi, không phải bản thân cái contract, nên không cần `I`.
+
+Câu hỏi quyết định: *"type này là khái niệm do domain tự định nghĩa (có method, có thể có nhiều adapter
+implement), hay chỉ là rút gọn từ API của 1 thư viện ngoài / thuần dữ liệu?"* — domain tự định nghĩa có
+hành vi → nhóm 10 (`I` prefix); rút gọn từ lib ngoài hoặc thuần dữ liệu → không `I`.
+
+**Lịch sử:** phát hiện 2026-07-31 khi user đọc lại luồng publisher/consumer/DLQ-replay, thấy
+`DeadLetterPort` là tên DUY NHẤT trong `messaging/interfaces/` không theo `I{Noun}` như 3 interface còn
+lại (không có tiền tố `I`, dùng suffix `Port` mà không interface nào khác trong cùng thư mục dùng) —
+rename thành `IDeadLetterProducer`, đồng thời viết rule này để nhóm 9 (AI-provider port) không bị áp
+nhầm lên messaging port và ngược lại.
+
 ## ⚠️ Nguyên tắc áp dụng file này
 
 - **Rule ở đây áp dụng cho code MỚI.** Các ngoại lệ liệt kê ở mỗi mục là nợ kỹ thuật đã biết — không
   tự ý rename hàng loạt khi chỉ đang đọc lướt qua; chỉ sửa khi đang có lý do chính đáng khác đụng vào
   đúng file đó (tránh 1 PR lẫn rename-thuần với thay đổi logic, gây khó review/khó revert).
-- Khi tạo 1 class thuộc 1 trong 8 nhóm trên mà chưa chắc nên đặt tên gì, tự hỏi đúng câu hỏi quyết
+- Khi tạo 1 class thuộc 1 trong 9 nhóm trên mà chưa chắc nên đặt tên gì, tự hỏi đúng câu hỏi quyết
   định của nhóm đó (mục 1 có ví dụ mẫu) — KHÔNG bắt chước tên gần giống nhất tìm được qua Ctrl+F, vì
   tên gần giống đó có thể chính là 1 trong các ngoại lệ liệt kê ở trên.

@@ -4,6 +4,11 @@
 > **Scope đã chốt (quyết định 2026-06-28):** học Kafka qua **Transactional Outbox** trong monolith, KHÔNG tách core modules thành service. Consumer thật đầu tiên = `worker-service` (pure consumer).
 > **Cắt gọn so với readme.phases.md Phase 2:** KHÔNG làm credit Event-Sourcing (để Phase 5), KHÔNG làm embedding/re-index (Phase 4), KHÔNG idempotency-cho-credit (Phase 5). Phase 2 chỉ = Outbox + Kafka publish + 1 consumer + 1 projection.
 > **Chia 2 nửa (đã chốt):** **2a** = Outbox + Polling Publisher → Kafka (chỉ core-api, verify bằng Kafka UI). **2b** = `worker-service` consume → FeedTimeline projection. Làm xong + verify 2a rồi mới sang 2b.
+>
+> **[ADR-0001, 2026-07-29]** Plan này mô tả kiến trúc TẠI THỜI ĐIỂM viết (giữ nguyên làm mốc lịch sử,
+> không sửa lén) — `TransactionMiddleware` + `getTx() ?? this.prisma.client` ở §0 dưới đây **đã bị
+> thay thế** bởi `TxScope` Unit-of-Work + `ITxRunner` (repository nhận client lúc construct, không còn
+> fallback). Xem `docs/adr/0001-transaction-retry-boundary.md` cho kiến trúc hiện hành.
 
 ---
 

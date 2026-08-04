@@ -72,6 +72,72 @@ groups:
               conditions:
                 - evaluator: { type: gt, params: [0] }
 
+      - uid: cortex-scheduled-job-failures
+        title: Scheduled Job Failure Rate Above Zero
+        condition: C
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A core-api background job (@Cron/@Interval) is failing — see core_api_scheduled_job_failures_total{job} and GET /jobs for what's registered"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: "scheduled_job:failures_rate5m"
+              instant: false
+              range: true
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+      - uid: cortex-outbox-dead-letter
+        title: Outbox Dead-Letter Rate Above Zero
+        condition: C
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "core-api outbox rows are exhausting retries and becoming permanently FAILED_DLQ (see core_api_outbox_dead_letter_total{eventType}, core_api_outbox_backlog{status=\"FAILED_DLQ\"})"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: "outbox:dead_letter_rate5m"
+              instant: false
+              range: true
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
       - uid: cortex-search-dlq
         title: Search DLQ Rate Above Zero
         condition: C

@@ -22,6 +22,11 @@ Not every doc changes at the same rate. Knowing the kind tells you when to touch
 | 🟦 **Product intent** | Business/UX intent — stable, rarely tracks code | The product decision itself changes |
 | 🟩 **Living spec** | Technical spec that MUST track the code | Every task that changes the thing it specifies |
 | 🟨 **Review artifact** | Point-in-time finding/audit — historical, not maintained | Never (it's a snapshot; supersede with a new one) |
+| 🟪 **Decision record** (`adr/`) | ONE architecture decision + what was rejected and why | Never edited — superseded by a new ADR |
+
+> 🟪 **`adr/` — why a decision was made**, as opposed to `directives/` (what the rule is) and the docs
+> below (what the system is). Without it, the next engineer — or agent — "fixes" a deliberate deviation
+> back to the mainstream default. See [`adr/README.md`](adr/README.md).
 
 | Doc | Kind | Sync-trigger (reconcile in the SAME task when…) |
 |---|---|---|
@@ -36,6 +41,7 @@ Not every doc changes at the same rate. Knowing the kind tells you when to touch
 | `09_devops_infrastructure.md` | 🟩 Living spec | **infra / compose / observability posture changes** |
 | `10_security_rbac.md` | 🟩 Living spec | **RBAC / auth / tenant-isolation / rate-limit posture changes** |
 | `11_auth_service_review.md` | 🟨 Review artifact | (snapshot — don't maintain; write a new review if needed) |
+| `adr/` | 🟪 Decision record | never edited — a reversal means a NEW ADR marking the old one `Superseded` |
 | `linkedin_posts_plan.md` | — Content plan | not a design doc — the LinkedIn narrative backlog |
 
 ## The forcing function (why these stopped rotting)

@@ -93,7 +93,13 @@ Nhãn tách riêng giữ được **manh mối audit** ("nghi vỡ thì tìm ở
 
 **Không phải idempotency dù hay bị nhầm:** OCC/versioning (`@@unique([aggregateId, version])`) giải quyết **lost update khi ghi đồng thời**, khác hẳn "đã làm việc này chưa". Hai cơ chế thường phối hợp trên cùng 1 endpoint (xem 1.3).
 
-Kỹ thuật #3/#4 (tầng Kafka consumer) có directive riêng: `idempotency_strategy.md` — bắt buộc field `idempotency: 'natural-key' | 'dedup-constraint' | 'none'` trên mọi `IIntegrationEventHandler`, ép buộc compile-time (`error TS2420` nếu thiếu) + boot-time (`EventRouter.register()` ném nếu `'none'`). Phần dưới đây (1.1–1.3) chỉ nói về kỹ thuật #5 — tầng HTTP.
+Kỹ thuật #3/#4 (tầng Kafka consumer) có directive riêng: `idempotency_strategy.md`. Trước đây ép bằng
+field `idempotency: 'natural-key' | 'dedup-constraint' | 'none'` bắt buộc trên mọi
+`IIntegrationEventHandler` (compile-time + boot-time nếu `'none'`) — **gỡ 2026-07-30**: field chỉ ép
+được "có khai báo hay không", không đối chiếu được nhãn khai với hiệu ứng thật của `handle()`, nên một
+handler khai láo vẫn compile/boot sạch. Xem `idempotency_strategy.md §Enforcement` cho lý do đầy đủ.
+Bây giờ ghi lại bằng comment trên `handle()`, bắt ở code review. Phần dưới đây (1.1–1.3) chỉ nói về kỹ
+thuật #5 — tầng HTTP.
 
 ### 1.1 Kỹ thuật #5 — HTTP idempotency-key
 
@@ -315,7 +321,18 @@ export class OutboxPublisherService {
 
 ## 3. Retry
 
-### Đã có sẵn — RetryMiddleware trong CQRS pipeline
+> **[ADR-0001, 2026-07-29] SUPERSEDED — `RetryMiddleware`/`TransactionMiddleware`/`commandBus.use()`
+> không còn tồn tại.** Mọi thứ dưới đây trong §3 mô tả kiến trúc CŨ — giữ nguyên làm mốc lịch sử của
+> chuỗi quyết định (không sửa lén, cùng quy ước với `docs/adr/README.md`), nhưng KHÔNG mô tả code hiện
+> tại. Kiến trúc hiện hành: retry + transaction sống trong MỘT thân hàm cố định của `CommandBus`
+> (`withRetry` bọc ngoài `runTransactional`), transaction là `TxScope` Unit-of-Work suy từ chữ ký
+> handler thay vì cờ `command.options?.transactional`. **Hai quyết định đã lập luận kỹ ở đây VẪN CÒN
+> ĐÚNG và đã port nguyên vẹn sang code mới:** (1) chỉ retry `P2034`, loại trừ `P2028` để tránh
+> retry-storm khi pool cạn kiệt (`isPrismaTransientError`, nay ở `packages/shared-kernel/src/resilience/
+> prisma-transient-error.ts`, dùng chung cho cả 3 service thay vì copy-paste); (2) full-jitter backoff.
+> Xem `docs/adr/0001-transaction-retry-boundary.md`.
+
+### Đã có sẵn — RetryMiddleware trong CQRS pipeline (LỊCH SỬ — xem ghi chú SUPERSEDED ở trên)
 ```typescript
 // shared-kernel/src/cqrs/middleware/retry.middleware.ts
 // Tự động retry khi isPrismaTransientError() trả true
@@ -690,15 +707,31 @@ Windows **không có tín hiệu POSIX thật**. `SIGTERM`/`SIGINT` trên Node-W
 
 ## 6. Background Jobs — index tập trung
 
-Không có 1 thư mục vật lý gom hết background job (cố ý — xem lý do dưới), nên bảng này **là** chỗ tập trung: đọc đây trước khi hỏi "service X đang chạy nền gì".
+**✅ 2026-07-31: tripwire đã chạm (7 job class, 8 lượt `@Cron`/`@Interval`) — đã dựng `infrastructure/scheduled-jobs/`** (`ScheduledJobRegistry`), thay vì tiếp tục dựa vào bảng tay bên dưới. Mỗi job tự `register()` trong constructor của chính nó (`register()` ném khi trùng tên — cùng kiểu guard `EventRouter.register()`).
 
-| Job | Lịch | File | Vì sao KHÔNG gom vào 1 thư mục `jobs/` chung |
-|---|---|---|---|
-| `PollingPublisherService` | `@Interval(2000)` | `modules/outbox/infrastructure/publishers/polling-publisher.service.ts` | Đọc/hiểu cần biết `OutboxStatus` — domain knowledge của outbox, tách ra chỉ thêm gián tiếp không giảm coupling |
-| `OutboxReaperService` | `@Interval(30000)` | `modules/outbox/infrastructure/reapers/outbox-reaper.service.ts` | Cùng lý do — cần biết claim/INFLIGHT semantics của outbox |
-| `IdempotencyCleanupService` | `@Cron('0 3 * * *')` | `infrastructure/http/idempotency/idempotency-cleanup.service.ts` | Cross-cutting (không thuộc feature module nào), nên đặt cùng thư mục với `idempotency.interceptor.ts`/`idempotency.module.ts` — theo **concern** (idempotency), không theo **loại kỹ thuật** (đừng lặp lại lỗi cũ: từng nằm nhầm trong `interceptors/` dù không phải interceptor) |
+**Sửa lại 2 lần cùng ngày sau khi bị bắt lỗi thiết kế:**
+1. Bản đầu lưu CẢ live-health (lần chạy/lỗi gần nhất, số lỗi liên tiếp) trong RAM của registry, đọc qua 1 REST endpoint `GET /jobs` riêng. Sai 2 điểm — (a) app này đã tự giả định multi-replica chạy song song (xem "HA-safe claim" bên dưới, `FOR UPDATE SKIP LOCKED`), nên state RAM theo từng process cho câu trả lời khác nhau tuỳ replica nào trả lời request, không phải sự thật chung; (b) health chỉ xem được khi CHỦ ĐỘNG gọi API — không có gì tự động scrape/alert, quay lại đúng vấn đề "phải nhớ để kiểm tra" mà cả cụm việc này sinh ra để giải quyết.
+2. Sau đó phát hiện thêm: `GET /jobs` (bản đã tách metadata tĩnh ra khỏi live-health ở bước 1) **vẫn là 1 REST endpoint không ai gọi tự động** — Prometheus chỉ scrape `/metrics`, không tự khám phá route JSON tuỳ ý; con người cũng không có lý do gọi tay khi code/bảng doc đã sẵn đó. Bỏ hẳn `ScheduledJobsController` + `GET /jobs`. Thay bằng **info metric** `core_api_scheduled_job_info{job,schedule,file,purpose}` (giá trị luôn = 1, set 1 lần trong `register()`) — cùng pattern `kube_pod_info`/`node_uname_info` của các exporter Prometheus phổ biến. Giờ "job nào tồn tại" nằm chung 1 nguồn với health (`core_api_scheduled_job_last_success_timestamp_seconds`/`..._last_failure_timestamp_seconds`/`..._failures_total`, `scheduled-jobs.metrics.ts` — cùng cơ chế `outbox.metrics.ts`), join được với nhau trong 1 query Grafana, không phải 2 hệ thống tách rời.
 
-**Tripwire — xem lại quyết định "không gom" này khi:** số job vượt quá ~6-8, hoặc job bắt đầu xuất hiện ở nhiều service khác nhau (hiện tại 100% nằm trong core-api) — lúc đó chi phí "phải nhớ đọc bảng này" vượt chi phí tách physical folder, và một `infrastructure/scheduled-jobs/` thật với health/registry riêng (đăng ký tên + mô tả mỗi job) mới đáng làm.
+Bảng dưới đây (metadata) giữ lại làm tài liệu tường thuật đọc offline; nếu lệch với `core_api_scheduled_job_info` trên `/metrics` thì sửa bảng theo đó, không phải ngược lại.
+
+⚠️ **Gap đã biết, chưa giải quyết:** 1 job KHÔNG BAO GIỜ chạy (misconfig `@Cron`, lỗi wiring lúc boot) sẽ không tăng cả success lẫn failure — im lặng hoàn toàn, không rơi vào alert "failure rate > 0" ở trên. Cần alert kiểu "last-success-timestamp quá cũ" (dead man's switch) mới bắt được ca này, nhưng mỗi job có chu kỳ khác nhau tới 3 bậc độ lớn (2s vs hằng ngày) nên 1 ngưỡng chung không hợp — chưa làm, ghi lại để không quên.
+
+Lý do vẫn KHÔNG dời code từng job vào 1 thư mục `jobs/` vật lý chung (chỉ đăng ký tập trung, không di chuyển code): mỗi job vẫn cần domain knowledge riêng của module nó thuộc về (outbox cần biết `OutboxStatus`, saga cần biết claim/INFLIGHT semantics...) — tách code sang thư mục trung lập chỉ thêm gián tiếp, không giảm coupling thật. Đăng ký tập trung (biết "có gì đang chạy") và code tập trung (chỗ code nằm) là 2 việc khác nhau — việc trước đáng làm, việc sau không.
+
+| Job | Lịch | File |
+|---|---|---|
+| `PollingPublisherService` | `@Interval(2000)` | `infrastructure/outbox/polling-publisher.service.ts` |
+| `OutboxReaperService` | `@Interval(30000)` | `infrastructure/outbox/outbox-reaper.service.ts` |
+| `OutboxMetricsReporter` | `@Interval(30000)` | `infrastructure/outbox/outbox-metrics-reporter.service.ts` |
+| `OutboxCleanupService` | `@Cron('0 3 * * *')` | `infrastructure/outbox/outbox-cleanup.service.ts` |
+| `SagaCompensationReaperService` (2 job: `.poll` + `.reapStaleClaims`) | `@Interval(5000)` + `@Interval(30000)` | `infrastructure/saga-compensation/saga-compensation-reaper.service.ts` |
+| `SagaCompensationCleanupService` | `@Cron('0 3 * * *')` | `infrastructure/saga-compensation/saga-compensation-cleanup.service.ts` |
+| `IdempotencyCleanupService` | `@Cron('0 3 * * *')` | `infrastructure/http/idempotency/idempotency-cleanup.service.ts` |
+
+**Lỗi âm thầm đã sửa cùng lúc:** trước đây `PollingPublisherService.poll()` và `SagaCompensationReaperService.poll()` chỉ có `try/finally`, KHÔNG có `catch` ở tầng ngoài — nếu `claimPendingBatch` tự nó throw (vd DB blip), lỗi trôi thành unhandled rejection, không log, không ai biết job vừa "chết lặng" 1 tick. Cả 7 job giờ đều có `catch` tầng ngoài: ghi `jobRegistry.recordFailure()` + log lỗi rõ ràng, rồi **swallow** (không rethrow) — 1 job nền lỗi 1 tick không được phép làm crash cả process; tick sau vẫn chạy bình thường.
+
+**2026-07-31 (trước đó cùng ngày):** `modules/outbox/` → `infrastructure/outbox/` — outbox không có domain layer thật (không entity, không business rule), bị đặt nhầm vào `modules/` từ trước khi ranh giới "business module vs infra thuần" rõ ràng như `saga-compensation` (viết sau, đã đúng vị trí từ đầu). Xem `folder_structure_sop.md`: `modules/` = "business logic theo từng domain" — outbox không khớp định nghĩa này. Lúc dời, cấu trúc con `domain/repositories/` + `infrastructure/{cleanup,publishers,reapers,reporters,repositories}/` được giữ nguyên — **sai, sửa tiếp ngay sau đó cùng ngày**: một khi đã xác nhận outbox không phải business module, không còn lý do giữ khuôn `domain/`+`infrastructure/` lồng nhau (khuôn đó chỉ có ý nghĩa cho module có tầng DDD thật) trong khi `saga-compensation` — cùng loại, viết sau — phẳng hoàn toàn. Đã dẹp phẳng `infrastructure/outbox/` xuống 8 file ngang hàng, khớp `saga-compensation` 100%; tên file (`outbox-cleanup.service.ts`, `prisma-outbox.repository.ts`...) đã đủ tự mô tả, không cần subfolder phân loại thêm.
 
 ### 6.1 Port hoá driven-side khi nào đáng, khi nào là ceremony
 

@@ -39,13 +39,16 @@ this.producer = kafkaClient.client.producer({ idempotent: true })
 
 ## Hai pattern được phê duyệt (đừng tưởng là thiếu nhất quán)
 
-Handler khai báo pattern của mình qua field `idempotency` (bắt buộc, xem Enforcement):
+Handler ghi lại pattern mình dùng bằng **1 dòng comment trên `handle()`** (không còn là field kiểu ép
+được — xem Enforcement):
 
-| `idempotency` | Khi nào dùng | Cơ chế |
+| Pattern | Khi nào dùng | Cơ chế |
 |---|---|---|
 | `natural-key` | Hiệu ứng là set-membership (theo PK) | upsert / delete by PK → re-apply là no-op tự nhiên. KHÔNG cần `event.id`. |
 | `dedup-constraint` | Hiệu ứng là **append** (không tự idempotent) | Unique key trên `event.id` (`sourceEventId`) + `ON CONFLICT DO NOTHING` → re-apply chèn 0 row. |
-| `none` | Chỉ cho handler thật sự read-only/no-op | **Bị `EventRouter.register` từ chối** nếu handler có side effect. |
+
+Không có hàng `none` nữa — một handler có side effect mà không rơi vào 1 trong 2 pattern trên là bug
+cần sửa trước khi merge (bắt ở code review), không phải giá trị hợp lệ để khai báo.
 
 Ví dụ hiện có: `FollowCreated/Removed` = `natural-key` (upsert/delete `space_followers` theo `[spaceId,userId]`); `ItemPublished` fan-out = `dedup-constraint` (`@@unique([recipientUserId, sourceEventId])`); `IndexKnowledge` (search-service) = `natural-key` (pgvector `replaceForItem(itemId,...)` + ES `indexItem` upsert theo `id`, cả 2 đều theo khoá nghiệp vụ).
 
@@ -92,14 +95,44 @@ Mọi event về **cùng 1 quan hệ nghiệp vụ** luôn route vào **cùng 1 
 
 ---
 
-## Enforcement — invariant được ÉP BUỘC, không được NHỚ
+## Enforcement — ĐÃ THỬ ép bằng type, GỠ (2026-07-30), lý do giữ lại để không ai làm lại
 
-Rủi ro thật không phải handler hôm nay, mà là **handler tương lai quên** làm idempotent (vd `reputationRepo.increment(+10)` → redeliver → +20). Không được để reviewer "để ý". Hai lớp cứng:
+Rủi ro thật không phải handler hôm nay, mà là **handler tương lai quên** làm idempotent (vd `reputationRepo.increment(+10)` → redeliver → +20). Đây vẫn đúng — cái thay đổi là CÁCH bắt rủi ro đó.
 
-1. **Compile-time (chính):** `IIntegrationEventHandler.idempotency` là field **bắt buộc** (shared-kernel `messaging/event-router.ts`). Handler thiếu → `error TS2420` khi typecheck. Không compile nổi = không tồn tại.
-2. **Boot-time (belt & suspenders):** `EventRouter.register()` ném nếu `idempotency === 'none'` → app không boot được với handler không an toàn, fail loud ngay startup thay vì âm thầm hỏng ở lần redeliver đầu.
+**Đã từng có 2 lớp cứng** (xoá cả 2 — xem lý do):
+1. ~~Compile-time: `IIntegrationEventHandler.idempotency` là field bắt buộc, thiếu → `error TS2420`.~~
+2. ~~Boot-time: `EventRouter.register()` ném nếu `idempotency === 'none'`.~~
 
-Đây theo đúng triết lý dự án: *bất biến bằng TYPE (compile-time) hơn runtime guard* (xem `domain_modeling.md`).
+**Vì sao gỡ — audit đối chiếu với thực tiễn ép được gì:**
+
+Field chỉ ép được **1 việc thật**: có khai báo hay không, và literal `'none'` bị chặn lúc boot. Nó
+**không** ép được cái quan trọng hơn — **khai đúng hay khai láo**. Một handler viết `readonly idempotency
+= 'natural-key' as const` rồi bên trong `handle()` gọi `create()` thường (không phải upsert) vẫn
+compile sạch, vẫn boot sạch, vẫn double-apply khi redeliver — hỏng đúng thứ field này tuyên bố ngăn,
+chỉ là hỏng âm thầm giống hệt như khi chưa có field. Khác với ví dụ so sánh ở
+`docs/adr/0001-transaction-retry-boundary.md §9b` (`compensation: 'registered'|'not-needed'` của
+saga): field đó có 1 lần đối chiếu NGƯỢC với hành vi runtime thật (`CommandBus` đếm số `onCompensate`
+đã gọi, log lỗi nếu khai `'registered'` mà đếm ra 0) — bắt được đúng ca "khai láo". Field `idempotency`
+không có phép đối chiếu tương đương nào: không gì trong `EventRouter`/`ResilientEventConsumer` từng
+nhìn vào hiệu ứng thật của `handle()` để so với nhãn đã khai.
+
+⇒ Field chỉ còn giá trị "ép trả lời câu hỏi lúc viết" (forcing function) mà **không có** giá trị "bắt
+được câu trả lời sai" — khác hẳn field `compensation` (saga) hay `TxScope` validation (đối chiếu được
+với factory registry — 1 SỰ THẬT kỹ thuật kiểm chứng được, không phải lời khai về business logic).
+Rủi ro thật (handler tương lai quên làm idempotent) vẫn còn nguyên — chỉ là **type không phải công cụ
+đúng cho loại rủi ro này**, vì đúng-sai của "write này có idempotent không" là business logic, không
+phải thứ hệ thống type kiểm chứng được.
+
+**Cách bắt bây giờ:** 1 dòng comment bắt buộc-theo-quy-ước (không ép được bởi compiler) ngay trên
+`handle()` giải thích pattern đang dùng + vì sao an toàn (xem bảng patterns ở trên cho 2 pattern hợp
+lệ) — bắt ở **code review**, cùng cấp độ tin cậy thật mà field cũ từng có, chỉ là không giả vờ có thêm
+lớp bảo vệ compile-time không tồn tại.
+
+**Bài học giữ lại:** trước khi type-hoá 1 invariant, tự hỏi *"cái compiler này verify được SỰ THẬT hay
+chỉ verify được CÓ-KHAI-BÁO-HAY-KHÔNG?"* — TxScope/compensation là loại đầu (đối chiếu được với hành vi
+runtime thật), idempotency strategy là loại sau (thuần lời khai, không đối chiếu được) — cùng bài học
+kiểu §"CommandOptions.safety" ở `resilience_patterns.md §1.4`, khác lý do: `safety` bị gỡ vì ép ceremony
+đều lên mọi command bất kể rủi ro; `idempotency` bị gỡ vì bản thân cơ chế ép không thật.
 
 ---
 
