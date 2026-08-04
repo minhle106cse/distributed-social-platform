@@ -145,6 +145,8 @@ Topic Kafka tra qua `EVENT_TOPIC_MAP` (cả 2 map ở `shared-kernel/src/messagi
 ### 4.2a DLQ Replay — bước tiếp theo sau khi message vào `.DLQ`
 
 > ✅ **TRẠNG THÁI: LIVE ở notification-service + search-service (review ADR-0001, 2026-07-30).** Trước bản này, `.DLQ` là **durable store không có reprocessor** — message nằm im, "triage" nghĩa là người đọc tay Kafka UI vô thời hạn. `DlqReplayConsumer` (shared-kernel) đóng gap đó.
+>
+> **2026-08-04 — full-jitter exponential backoff (trước đó là delay CỐ ĐỊNH 60s).** User đặt đúng câu hỏi: consumer chính đã retry-rồi-lỗi, DLQ replay đấm lại NGAY sau 60s cố định thì có khác gì retry tiếp — nếu nguyên nhân là downstream quá tải lúc cao điểm, 60s không backoff không đủ để nó hồi, và các message chết cùng lúc trong 1 outage sẽ replay đồng pha rồi đấm lại downstream cùng lúc (giống thundering herd). Sửa: delay = `random(0, min(maxReplayDelayMs, baseReplayDelayMs·2^replayCount))` — công thức **giống hệt** full-jitter đã định nghĩa cho `RetryMiddleware` ở `resilience_patterns.md §Retry`, không phải phát minh cơ chế mới. Đây vẫn KHÔNG phải cơ chế điều tiết tải chủ động (không đo lag/CPU downstream, không circuit breaker) — chỉ là delayed-retry giãn cách hợp lý hơn theo thời gian + jitter chống đồng pha. Muốn giảm tải chủ động thật sự (theo dõi tỷ lệ lỗi/lag rồi tạm dừng cả replay) thì cần thêm circuit breaker, chưa làm.
 
 **Luồng đầy đủ, 2 consumer group KHÔNG bao giờ trộn lẫn:**
 ```
@@ -155,7 +157,9 @@ topic gốc ──► ResilientEventConsumer (group: <service>-group)
                                             │
                                             ▼
                               DlqReplayConsumer (group: <service>-dlq-replay-group)
-                                 chờ replayDelayMs (mặc định 60s)
+                                 chờ delay = random(0, min(maxReplayDelayMs,
+                                       baseReplayDelayMs·2^replayCount))
+                                       (mặc định base=60s, cap=5 phút — full jitter)
                                  đọc x-dlq-replay-count từ header
                                  replayCount >= maxReplays (mặc định 3)?
                                    ├─ CÓ  → log + commit, bỏ mặc trong topic.DLQ (triage tay)

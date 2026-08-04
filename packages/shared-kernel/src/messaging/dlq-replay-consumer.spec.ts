@@ -50,6 +50,7 @@ describe('DlqReplayConsumer', () => {
   let producer: jest.Mocked<MinimalProducer>
   let consumer: ReturnType<typeof buildConsumer>
   let sleep: jest.Mock
+  let random: jest.Mock
 
   beforeEach(() => {
     logger = {
@@ -65,6 +66,8 @@ describe('DlqReplayConsumer', () => {
     }
     consumer = buildConsumer()
     sleep = jest.fn().mockResolvedValue(undefined)
+    // Deterministic: full-jitter picks the top of the range, i.e. no jitter.
+    random = jest.fn().mockReturnValue(0.999999)
   })
 
   const buildRunner = (opts: Partial<DlqReplayOptions> = {}) =>
@@ -74,6 +77,7 @@ describe('DlqReplayConsumer', () => {
       producer,
       logger,
       sleep,
+      random,
       ...opts,
     })
 
@@ -101,13 +105,52 @@ describe('DlqReplayConsumer', () => {
     expect(consumer.commitOffsets).toHaveBeenCalled()
   })
 
-  it('nên đợi replayDelayMs trước khi republish (không replay ngay lập tức)', async () => {
-    const runner = buildRunner({ replayDelayMs: 5000 })
+  it('nên đợi trước khi republish (không replay ngay lập tức) — full jitter trên base delay', async () => {
+    const runner = buildRunner({ baseReplayDelayMs: 5000, maxReplayDelayMs: 100_000 })
     await runner.start()
 
     await consumer.eachMessage!(buildPayload())
 
-    expect(sleep).toHaveBeenCalledWith(5000)
+    // random() ~ 0.999999, replayCount 0 → delay ≈ random * min(cap, 5000 * 2^0) ≈ 5000
+    expect(sleep).toHaveBeenCalledWith(4999)
+  })
+
+  it('delay tăng theo cấp số nhân với x-dlq-replay-count', async () => {
+    const runner = buildRunner({ baseReplayDelayMs: 5000, maxReplayDelayMs: 100_000 })
+    await runner.start()
+
+    await consumer.eachMessage!(
+      buildPayload({
+        headers: { 'x-original-topic': 'knowledge-events', 'x-dlq-replay-count': '2' },
+      }),
+    )
+
+    // replayCount 2 → base * 2^2 = 20000
+    expect(sleep).toHaveBeenCalledWith(19999)
+  })
+
+  it('delay bị chặn trên bởi maxReplayDelayMs dù exponential đã vượt', async () => {
+    const runner = buildRunner({ baseReplayDelayMs: 60_000, maxReplayDelayMs: 90_000 })
+    await runner.start()
+
+    await consumer.eachMessage!(
+      buildPayload({
+        headers: { 'x-original-topic': 'knowledge-events', 'x-dlq-replay-count': '2' },
+      }),
+    )
+
+    // exponential = 60000 * 2^2 = 240000, nhưng cap ở 90000
+    expect(sleep).toHaveBeenCalledWith(89999)
+  })
+
+  it('random() = 0 → delay 0 (full jitter cho phép replay gần như ngay nếu may mắn)', async () => {
+    random.mockReturnValue(0)
+    const runner = buildRunner({ baseReplayDelayMs: 5000 })
+    await runner.start()
+
+    await consumer.eachMessage!(buildPayload())
+
+    expect(sleep).toHaveBeenCalledWith(0)
   })
 
   it('bỏ cuộc (KHÔNG replay nữa) khi x-dlq-replay-count đã đạt maxReplays', async () => {

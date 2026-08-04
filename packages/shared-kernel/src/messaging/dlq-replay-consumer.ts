@@ -20,16 +20,25 @@ export interface DlqReplayOptions {
   /** Replays exhausted → give up (message stays in the DLQ topic for manual
    * triage via Kafka retention; this consumer stops touching it). Default 3. */
   maxReplays?: number
-  /** Pacing delay before each replay — DLQ messages already exhausted in-process
-   * retry moments ago; replaying instantly just reproduces the same failure
-   * immediately. Default 60s gives a transient downstream outage room to clear. */
-  replayDelayMs?: number
+  /** Base for the exponential-backoff delay before each replay — DLQ messages
+   * already exhausted in-process retry moments ago; replaying instantly just
+   * reproduces the same failure immediately. Default 60s. Actual wait per
+   * attempt is full-jitter: `random(0, min(maxReplayDelayMs, base·2^replayCount))`
+   * — same formula as `RetryMiddleware` (resilience_patterns.md §Retry) so a
+   * batch of DLQ messages that failed together (e.g. one downstream outage)
+   * doesn't replay in lockstep and re-overwhelm the same downstream. */
+  baseReplayDelayMs?: number
+  /** Cap on the exponential delay so a message stuck near `maxReplays` doesn't
+   * wait unreasonably long. Default 5 minutes. */
+  maxReplayDelayMs?: number
   /** Metrics hook — called once per message given up on permanently. */
   onGiveUp?: (originalTopic: string) => void
   /** Metrics hook — called once per message successfully replayed. */
   onReplay?: (originalTopic: string, replayCount: number) => void
   /** Test seam; defaults to setTimeout. */
   sleep?: (ms: number) => Promise<void>
+  /** Test seam; defaults to Math.random. Must return [0, 1). */
+  random?: () => number
 }
 
 /**
@@ -48,13 +57,24 @@ export interface DlqReplayOptions {
  */
 export class DlqReplayConsumer {
   private readonly maxReplays: number
-  private readonly replayDelayMs: number
+  private readonly baseReplayDelayMs: number
+  private readonly maxReplayDelayMs: number
   private readonly sleep: (ms: number) => Promise<void>
+  private readonly random: () => number
 
   constructor(private readonly opts: DlqReplayOptions) {
     this.maxReplays = opts.maxReplays ?? 3
-    this.replayDelayMs = opts.replayDelayMs ?? 60_000
+    this.baseReplayDelayMs = opts.baseReplayDelayMs ?? 60_000
+    this.maxReplayDelayMs = opts.maxReplayDelayMs ?? 300_000
     this.sleep = opts.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+    this.random = opts.random ?? Math.random
+  }
+
+  /** Full-jitter exponential backoff — see `baseReplayDelayMs` doc comment. */
+  private computeDelayMs(replayCount: number): number {
+    const exponential = this.baseReplayDelayMs * 2 ** replayCount
+    const capped = Math.min(exponential, this.maxReplayDelayMs)
+    return Math.floor(this.random() * capped)
   }
 
   async start(): Promise<void> {
@@ -95,7 +115,7 @@ export class DlqReplayConsumer {
           return
         }
 
-        await this.sleep(this.replayDelayMs)
+        await this.sleep(this.computeDelayMs(replayCount))
 
         const stringHeaders: Record<string, string> = {}
         for (const [key, value] of Object.entries(headers)) {
