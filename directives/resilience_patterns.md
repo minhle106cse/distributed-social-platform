@@ -469,6 +469,27 @@ async provisionUser(email: string) {
 }
 ```
 
+**Phần audit 2026-07-11 bỏ sót — Claude/Gemini "đã có breaker" KHÔNG có nghĩa là đã có timeout (2026-08-04, user tự audit tiếp sau khi tìm ra bug `fetch()`/breaker ở trên):**
+
+| Call | Vấn đề |
+|---|---|
+| `GeminiSummarizer` (`fetch()` thô) | **Không có timeout nào cả** — không cả `AbortSignal.timeout` như Ollama đã có. Gemini treo = request treo tới giới hạn mặc định của Node/undici, dài hơn nhiều so với mọi call khác trong hệ thống |
+| `ClaudeSummarizer` (`new Anthropic({...})`) | Dùng nguyên default SDK: `timeout` 10 phút, `maxRetries` 2 — SDK tự retry ngầm BÊN TRONG 1 lần `caller.call()`, vừa kéo dài latency hot-path vượt xa mọi call khác (3-5s), vừa giấu bớt lỗi thật khỏi failure count của breaker (1 lần breaker thấy fail = tới 3 request thật đã fail) |
+
+Lý do bị bỏ sót: audit 2026-07-11 chỉ liệt kê "có breaker hay chưa", không kiểm tra tiếp "có bound latency 1 call hay chưa" cho 2 cái đã sẵn có breaker — 2 rule (breaker + timeout) độc lập, có 1 không tự động có nốt cái kia, cùng bài học với vụ tách business-outcome/layering ở trên.
+
+**Đã vá cả 2**, dùng chung `REQUEST_TIMEOUT_MS = 5000` (khớp giá trị Ollama/ES đang dùng):
+```typescript
+// Gemini — thêm signal vào fetch(), y hệt Ollama
+fetch(url, { ..., signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
+
+// Claude — override cả 2 default của SDK
+new Anthropic({ apiKey, timeout: REQUEST_TIMEOUT_MS, maxRetries: 0 })
+// maxRetries: 0 vì ClaudeApiCaller/CircuitBreaker đã là lớp retry/circuit-break
+// của hệ thống — SDK tự retry thêm là 2 cơ chế chồng nhau, khác semantics
+// (giống lý do KHÔNG bọc thêm breaker cho indexItem() đã retry→DLQ ở tầng khác)
+```
+
 **⚠️ Lỗi ngoài dự tính (business outcome ≠ fault) — phải tách trước khi vào breaker:** cả ES (404 = "org chưa index", bình thường) và gRPC (`ALREADY_EXISTS` = email đã tồn tại, bình thường) đều có 1 nhánh lỗi KHÔNG phải sự cố hạ tầng. Nếu để nhánh đó `throw`/`reject` **bên trong** `breaker.execute()`, breaker sẽ đếm nó như 1 failure thật — dùng hết `threshold` bởi chính traffic hợp lệ (nhiều user cố tạo org trùng email → breaker tự trip dù auth-service hoàn toàn khỏe). Cách xử lý đúng — bắt lỗi "bình thường" đó và `return`/`resolve` một giá trị (không `throw`) từ bên trong hàm được bọc, rồi map lại thành exception nghiệp vụ **sau khi** `breaker.execute()` đã trả về (xem `AuthProvisioningClient.provisionUser` — resolve tagged `{ alreadyExists: true }`, unwrap sau breaker). Suýt mắc lỗi này khi viết `provisionUser` — bản đầu để `reject(new OwnerEmailAlreadyExistsError())` ngay trong executor bọc bởi breaker, tự phát hiện và sửa trước khi commit.
 
 > **2026-08-04 — sửa tiếp 1 lỗi layering còn sót lại sau lần audit trên, do user review phát hiện:** dù đã tách `ALREADY_EXISTS` khỏi breaker đúng cách, `provisionUser` VẪN tự `throw new OwnerEmailAlreadyExistsError()` ngay trong `AuthProvisioningClient` (infra/gRPC adapter) trước khi trả về handler — một `ApplicationError` bị ném từ tầng infra, KHÔNG nhất quán với cách mọi `*AlreadyExists*Error`/`*AlreadyTaken*Error` khác trong repo được ném (`CreateOrgHandler`/`AcceptInviteHandler`: infra chỉ trả `existing` — data thô — handler ở APPLICATION layer mới `if (existing) throw ...`). Sửa: `provisionUser` giờ trả về union đã tag (`ProvisionedOwner | OwnerEmailAlreadyExists`, KHÔNG throw), `ProvisionOrgHandler.execute()` tự `if ('alreadyExists' in provisioned) throw new OwnerEmailAlreadyExistsError()` — đúng layer, đúng chỗ như 2 handler kia. Bài học: "business outcome không được trip breaker" và "adapter không được tự quyết định application error" là 2 rule tách biệt — sửa cái đầu không tự động sửa cái sau, dễ tưởng đã xong khi chỉ mới xong một nửa.
