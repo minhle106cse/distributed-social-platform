@@ -70,11 +70,32 @@ if (touched('prisma/')) {
   })
 }
 
+// `.ai/memory/*.jsonl` is gitignored, so `git status --porcelain` can NEVER report it — the
+// touched('.ai/memory/') check that used to sit in the condition below was dead from the day
+// it was written, and §4 only refreshed when directives/docs/status happened to change too.
+// Compare mtimes against the generated index instead: newer memory ⇒ §4 is stale. (2026-08-07)
+function memoryNewerThanIndex() {
+  const fs = require('fs')
+  const mtime = (rel) => {
+    try { return fs.statSync(path.join(ROOT, rel)).mtimeMs } catch { return 0 }
+  }
+  const indexMtime = mtime('.ai/KNOWLEDGE_INDEX.md')
+  if (!indexMtime) return true // no index yet → build it
+  try {
+    return fs
+      .readdirSync(path.join(ROOT, '.ai/memory'))
+      .filter((f) => f.endsWith('.jsonl'))
+      .some((f) => mtime(path.join('.ai/memory', f)) > indexMtime)
+  } catch {
+    return false // no memory dir → nothing to rebuild for
+  }
+}
+
 if (
   touched('directives/') ||
-  touched('.ai/memory/') ||
   touched('docs/') ||
-  touched('.ai/PROJECT_STATUS')
+  touched('.ai/PROJECT_STATUS') ||
+  memoryNewerThanIndex()
 ) {
   const pythonCmd = (() => {
     for (const py of ['python', 'python3', 'py']) {
@@ -97,7 +118,59 @@ if (
   }
 }
 
-// ─── Discipline & topology checks (warn-only, never block) ───────────────────
+// ─── Changed source files, INCLUDING inside submodules ───────────────────────
+// Every apps/* is a git submodule, so the root `git status --short` reports only the submodule
+// POINTER (" M apps/core-api") and never the .ts files inside it. The old discipline check
+// filtered root status by /^(apps|packages)\/[^/]+\/src\/.+\.ts$/ and therefore could only ever
+// match packages/* — it was structurally blind to every service's source, i.e. to almost all the
+// code in this project. Descend into each submodule explicitly. (Found + fixed 2026-08-07.)
+function capture(cmd, cwd) {
+  try {
+    return execSync(cmd, { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] })
+  } catch {
+    return ''
+  }
+}
+
+function listSubmodules() {
+  const fs = require('fs')
+  try {
+    return fs
+      .readFileSync(path.join(ROOT, '.gitmodules'), 'utf-8')
+      .split('\n')
+      .map((l) => l.match(/^\s*path\s*=\s*(.+?)\s*$/))
+      .filter(Boolean)
+      .map((m) => m[1])
+  } catch {
+    return []
+  }
+}
+
+function changedSourceFiles() {
+  const out = []
+  const collect = (raw, prefix) => {
+    String(raw)
+      .split('\n')
+      .forEach((line) => {
+        const rel = line.slice(3).trim()
+        if (!rel) return
+        const full = prefix ? `${prefix}/${rel}` : rel
+        if (/\/src\/.+\.ts$/.test(full) && !full.endsWith('.spec.ts')) out.push(full)
+      })
+  }
+  collect(changedRaw, '')
+  for (const sub of listSubmodules()) {
+    if (!existsSync(path.join(ROOT, sub))) continue // not checked out (linked worktree)
+    // Skip submodules the root status doesn't already flag — descending into all 7 on every
+    // Stop cost ~1s for nothing. Root status reports a submodule with modified OR untracked
+    // content under default config, so a clean one has nothing to contribute.
+    if (!String(changedRaw).includes(sub)) continue
+    collect(capture('git status --short --porcelain', path.join(ROOT, sub)), sub)
+  }
+  return out
+}
+
+// ─── Discipline & topology checks ────────────────────────────────────────────
 // Surface omissions the way §2 auto-detect does: machine-detected, visible —
 // not a reminder the agent can silently skip.
 const warnings = []
@@ -122,14 +195,20 @@ const warnings = []
 
 // (A) After-Task discipline: code changed but knowledge not logged. Memory is
 //     gitignored so git can't see it → compare mtimes (newest code vs newest
-//     memory/status). Heuristic, deterministic, warn-only.
+//     memory/status). Heuristic, deterministic.
+//
+//     This is addressed to the AGENT ("log the lesson before finishing"), so it does NOT go out
+//     as `systemMessage` — that field only renders in the user's terminal. It returns a
+//     `decision: "block"` + `reason`, which stops the turn ending and feeds the reason back to
+//     the model. Nothing else in this project makes After-Task more than an honour system:
+//     AGENTS.md is prose the agent may silently skip, and until 2026-08-07 this very warning was
+//     shouting at the wrong party.
+let afterTaskBlock = null
+
 ;(function checkDiscipline() {
   if (FORCE_ALL) return
   const fs = require('fs')
-  const codeFiles = String(changedRaw)
-    .split('\n')
-    .map((l) => l.slice(3).trim())
-    .filter((f) => /^(apps|packages)\/[^/]+\/src\/.+\.ts$/.test(f) && !f.endsWith('.spec.ts'))
+  const codeFiles = changedSourceFiles()
   if (codeFiles.length === 0) return
 
   const mtime = (rel) => {
@@ -144,14 +223,37 @@ const warnings = []
     '.ai/memory/gotchas.jsonl',
   ]
   const newestKnowledge = Math.max(0, ...knowledgeFiles.map(mtime))
+  if (newestCode <= newestKnowledge) return
 
-  if (newestCode > newestKnowledge) {
+  // Loop guard. Blocking a Stop hook makes the agent continue, which fires Stop again — an
+  // unguarded block never terminates. `stop_hook_active` is NOT in the public hook docs, so
+  // rather than depend on an unverified field this keys off the code state itself: block at most
+  // ONCE per (newest code mtime + file count). If the agent logs the lesson, the key changes and
+  // the check passes; if it deliberately declines, the key is unchanged and the turn ends.
+  const guardFile = path.join(ROOT, '.ai/.after-task-guard')
+  const key = `${newestCode}:${codeFiles.length}`
+  let alreadyBlocked = false
+  try { alreadyBlocked = fs.readFileSync(guardFile, 'utf-8').trim() === key } catch {}
+
+  if (alreadyBlocked) {
     warnings.push(
-      `⚠️  After-Task: ${codeFiles.length} code file(s) changed but no newer entry in ` +
-        '.ai/memory/* or .ai/PROJECT_STATUS.md. Log the lesson/decision + update status ' +
-        'before finishing (AGENTS.md After-Task Protocol). To enforce hard, flip this check to exit 2.'
+      `⚠️  After-Task still unlogged for ${codeFiles.length} code file(s) — already prompted ` +
+        'once for this change; not blocking again.'
     )
+    return
   }
+
+  try { fs.writeFileSync(guardFile, key) } catch {}
+  afterTaskBlock =
+    `After-Task Protocol not run: ${codeFiles.length} source file(s) changed ` +
+    `(${codeFiles.slice(0, 5).join(', ')}${codeFiles.length > 5 ? ', …' : ''}) but nothing newer ` +
+    'exists in .ai/memory/*.jsonl or .ai/PROJECT_STATUS.md.\n\n' +
+    'Before finishing: (1) append the lesson/decision to the right .ai/memory/<category>.jsonl ' +
+    '(canonical shape in directives/memory_sop.md); (2) if a rule was established or refined, ' +
+    'edit the relevant directives/*.md now; (3) if the change touches schema, API contract, ' +
+    'security/RBAC or ops, reconcile the matching docs/NN_*.md in THIS task; (4) update ' +
+    '.ai/PROJECT_STATUS.md if a phase/module changed.\n\n' +
+    'If this genuinely warrants no entry (pure formatting, a revert), say so explicitly and stop.'
 })()
 
 // ─── Execution ───────────────────────────────────────────────────────────────
@@ -172,12 +274,25 @@ function run(cmd) {
   }
 }
 
+// Two audiences, two channels — conflating them is what made the After-Task check inert:
+//   systemMessage      → the USER's terminal (build results, topology warnings)
+//   decision + reason  → the AGENT (blocks the turn ending, feeds the reason back)
+function emit(systemMessage, blockReason) {
+  const out = {}
+  if (systemMessage) out.systemMessage = systemMessage
+  if (blockReason) {
+    out.decision = 'block'
+    out.reason = blockReason
+  }
+  process.stdout.write(JSON.stringify(out))
+}
+
 if (tasks.length === 0) {
   // No build tasks — but still surface any discipline/topology warnings.
   const msg = warnings.length
     ? warnings.join('\n\n')
     : '✅ sync: no relevant changes detected.'
-  process.stdout.write(JSON.stringify({ systemMessage: msg }))
+  emit(msg, afterTaskBlock)
   process.exit(0)
 }
 
@@ -213,6 +328,7 @@ log('═════════════════════════
 log(allOk ? '✅ All synced.' : '❌ Some tasks failed — check output above.')
 log('══════════════════════════════════\n')
 
-// Output systemMessage for Stop hook (Claude Code reads this)
-process.stdout.write(JSON.stringify({ systemMessage: summary }))
-process.exit(allOk ? 0 : 1)
+emit(summary, afterTaskBlock)
+// Exit 0 even on task failure: the JSON `decision` above is what steers the agent, and a
+// non-zero exit here would be reported as a hook error on top of it, muddying both channels.
+process.exit(0)

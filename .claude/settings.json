@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/doc-select.cjs",
+            "command": "node .claude/hooks/turn-context.cjs",
             "shell": "bash"
           }
         ]

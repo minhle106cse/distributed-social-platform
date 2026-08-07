@@ -158,3 +158,4 @@ token.json
 # Turborepo
 .turbo
 
+.ai/.after-task-guard
