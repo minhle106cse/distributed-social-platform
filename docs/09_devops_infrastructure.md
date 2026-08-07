@@ -25,7 +25,7 @@ cortex-knowledge-hub/
 ├── directives/                 # AI Workflow SOPs (the coding rulebook)
 ├── docs/                       # Design & spec (business, schema, API, security)
 ├── .ai/                        # KNOWLEDGE_INDEX (generated) + memory buffer + status
-├── .claude/                    # settings.json (2 hooks) + hooks/doc-select.cjs
+├── .claude/                    # settings.json (2 hooks) + hooks/turn-context.cjs
 ├── docker-init/                # init-dbs.sql, nginx.conf, prometheus/, grafana/
 └── docker-compose.yml          # Local infrastructure
 ```
@@ -115,7 +115,7 @@ Nhóm chính (xem `.env.example`):
 ## 6. AI Workflow Automation (Claude Code hooks)
 
 Không có container sandbox — automation chạy bằng 2 hook trong `.claude/settings.json`:
-- **`UserPromptSubmit`** → `.claude/hooks/doc-select.cjs`: in nhắc ngắn mỗi lượt, trỏ tới index `directives/README.md` (không tự liệt kê lại).
+- **`UserPromptSubmit`** → `.claude/hooks/turn-context.cjs`: bơm **trạng thái theo lượt** vào context của agent — branch, các path chưa commit (có đi vào trong submodule `apps/*`), nợ After-Task — kèm 1 dòng trỏ tới `directives/README.md`. Cố ý **không** nhắc lại luật đã có trong `CLAUDE.md`: đo 2026-08-07 cho thấy lặp lại luật tĩnh không đổi được hành vi, hook chỉ đáng tiền khi mang thứ `CLAUDE.md` không mang được.
 - **`Stop`** → `scripts/sync.cjs`: sau mỗi lượt agent, detect git change → regenerate `.ai/KNOWLEDGE_INDEX.md`
   (host `python .ai/knowledge_builder.py`), rebuild shared-kernel / `prisma generate` khi cần, + cảnh báo
   warn-only nếu code đổi mà chưa log `.ai/memory` / `PROJECT_STATUS`.

@@ -20,7 +20,7 @@
 
 | Tool | Version | Dùng cho |
 |---|---|---|
-| Node.js | ≥ 20 | Turborepo, services, hooks (`sync.cjs`, `doc-select.cjs`) |
+| Node.js | ≥ 20 | Turborepo, services, hooks (`sync.cjs`, `turn-context.cjs`) |
 | npm | ≥ 10 | Workspaces (`apps/*`, `packages/*`) |
 | Docker + Compose | mới | Infra (Postgres+pgvector, Redis, Kafka, ES, Prometheus/Grafana) |
 | Python | 3.10+ | `.ai/knowledge_builder.py` (host python — chạy tự động bởi Stop hook) |
@@ -42,7 +42,7 @@
 | `directives/` | skeleton | SOP "luật code bất biến" (CQRS, multi-tenancy, DB, logging, testing, zod…) — xem §5 |
 | `docs/` | content | `01..11` business/design docs (tiếng Việt); `archive/` = script lịch sử |
 | `.ai/` | skeleton | **Hệ tri thức** — xem §5 |
-| `.claude/` | skeleton | `settings.json` (2 hook) + `hooks/doc-select.cjs` |
+| `.claude/` | skeleton | `settings.json` (2 hook) + `hooks/turn-context.cjs` |
 | `scripts/sync.cjs` | skeleton | Smart-sync (Stop hook) — xem §5 |
 | `docker-compose.yml` | skeleton | Infra prod-like |
 | `docker-init/` | content | `init-dbs.sql` (pgvector), `nginx.conf`, `prometheus/`, `grafana/` |
@@ -114,7 +114,7 @@ phải được reconcile trong CÙNG task khi code đổi (forcing-function tro
 
 ### 5d. `.claude/` + `scripts/sync.cjs` — automation (2 hook)
 - `settings.json` → 2 hook:
-  - **UserPromptSubmit** `hooks/doc-select.cjs` — in nhắc ngắn mỗi lượt, trỏ tới index `directives/README.md` (không tự liệt kê lại bảng — tránh 2 nguồn sự thật).
+  - **UserPromptSubmit** `hooks/turn-context.cjs` — bơm trạng thái theo lượt (branch, path chưa commit kể cả trong submodule, nợ After-Task) + 1 dòng trỏ tới `directives/README.md`. Không nhắc lại luật tĩnh đã có trong `CLAUDE.md`.
   - **Stop** `scripts/sync.cjs` — sau mỗi lượt agent: detect git change → chạy đúng pipeline cần:
     `shared-kernel/src` → turbo build · `prisma/` → db:generate · `directives|docs|.ai/memory|.ai/PROJECT_STATUS` → regenerate index (host `python`).
   - Không đổi gì relevant → trả về nhanh.

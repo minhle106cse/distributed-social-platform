@@ -18,8 +18,8 @@ rotting): **`.ai/KNOWLEDGE_ARCHITECTURE.md`**.
 ## How to read / write a directive
 
 - **When to read one:** before creating or modifying code in its area. The `UserPromptSubmit` hook
-  (`.claude/hooks/doc-select.cjs`) prints a short reminder each turn pointing at the index below —
-  the index itself is the one place this routing table lives.
+  (`.claude/hooks/turn-context.cjs`) points at the index below in one line each turn — the index
+  itself is the one place this routing table lives.
 - **The shape of a good directive** (see `naming_conventions.md` as the model):
   1. A one-line **"read this before …"** note at the top.
   2. **Terse, imperative rules** — the decision, not an essay. Tables and litmus questions over prose.

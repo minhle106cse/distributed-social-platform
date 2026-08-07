@@ -6,8 +6,10 @@
 
 ## 🧠 Session Start Protocol (do this first)
 
-1. Read `.ai/KNOWLEDGE_INDEX.md` — entire project context (overview, live status, rules, gotchas).
-2. For complex tasks, search `.ai/memory/*.jsonl` (errors, gotchas, architecture, conventions).
+1. Read `.ai/KNOWLEDGE_INDEX.md` (~8k tokens) — project context: overview, live status, directive
+   and docs maps.
+2. **Only when debugging** (or designing where you may have burned before): `.ai/GOTCHAS.md`
+   (~21k). Skip it for questions and small fixes. Untruncated text: `grep .ai/memory/*.jsonl`.
 3. Read the relevant `directives/*.md` SOP before creating/modifying code.
 
 ## 📦 Project Context — Cortex

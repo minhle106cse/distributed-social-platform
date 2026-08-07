@@ -31,14 +31,24 @@ Claude), Rate Limiting, Tenant Isolation.
 
 ## 🧠 Session Start Protocol (do this first)
 
-1. **Read `.ai/KNOWLEDGE_INDEX.md`** — the whole project context (overview, live status, rules
-   digest, gotchas). One read (~a few k tokens) instead of grepping the codebase blind.
-2. **For complex tasks**, search `.ai/memory/*.jsonl` (errors / architecture / conventions / gotchas)
-   for prior experience in the area.
-3. **Before creating/modifying code**, read the relevant `directives/*.md` for that area.
+1. **Read `.ai/KNOWLEDGE_INDEX.md`** — the whole project context (overview, live status, directive
+   map, docs map). **~8k tokens**, one read instead of grepping the codebase blind.
+2. **When debugging, or designing in an area you may have burned on before** — read
+   `.ai/GOTCHAS.md` (~21k tokens, generated, newest first). **Not** for questions or small fixes.
+   Need the untruncated text of an entry? `grep` `.ai/memory/*.jsonl`.
+3. **Before creating/modifying code**, read the relevant `directives/*.md` for that area
+   (~5k tokens each — read the one that applies, not the set).
 
-> The `UserPromptSubmit` hook (`.claude/hooks/doc-select.cjs`) prints a short reminder each prompt
-> pointing at `directives/README.md`'s routing table — it is a nudge, not a substitute for step 3.
+> **Budget honestly.** Full compliance costs ~13k tokens before any work starts, ~34k if you also
+> pull gotchas. That is cheap insurance on an architecture task and pure waste on a typo fix — the
+> table under *Task Classification* below says which is which. Gotchas used to be inlined in the
+> index (63% of its bytes, read every session even for trivial tasks); split out 2026-08-07.
+
+> The `UserPromptSubmit` hook (`.claude/hooks/turn-context.cjs`) injects **turn-local state** —
+> branch, uncommitted paths (submodules included), outstanding After-Task debt — plus a one-line
+> routing pointer. It deliberately does **not** restate this file: a hook that repeats a static rule
+> the model has already read changes nothing (measured 2026-08-07), so it carries only what
+> `CLAUDE.md` cannot. Still a nudge, not a substitute for step 3.
 
 ## 🗂️ How this project's knowledge is organized (the boundary that matters)
 
@@ -60,13 +70,16 @@ work** — never project facts that belong in the repo. Full routing rules: `.ai
 
 Two Claude Code hooks (`.claude/settings.json`) automate the loop:
 
-- **`UserPromptSubmit` → `.claude/hooks/doc-select.cjs`** — prints a short reminder each turn pointing
-  at `directives/README.md`'s routing table (the table itself lives in exactly one place).
+- **`UserPromptSubmit` → `.claude/hooks/turn-context.cjs`** — injects branch + uncommitted paths
+  (descending into the `apps/*` submodules) + After-Task debt, ~130 tokens. State, not prose.
 - **`Stop` → `scripts/sync.cjs`** — after every response, detects what changed and runs only what's
   needed: rebuild `shared-kernel` (if its `src/` changed), `prisma generate` (if a schema changed),
   and **regenerate `.ai/KNOWLEDGE_INDEX.md`** (if `directives/`, `docs/`, `.ai/memory/`, or
-  `PROJECT_STATUS.md` changed). It also emits **warn-only** discipline checks
-  (code changed but no new memory/status entry) and worktree-topology warnings.
+  `PROJECT_STATUS.md` changed). It also **BLOCKS the turn from ending** (`decision: "block"`) when
+  source files changed with no newer `.ai/memory` / `PROJECT_STATUS` entry — After-Task is the one
+  protocol step with real teeth. It blocks at most **once per code state** (guard file
+  `.ai/.after-task-guard`); if an entry genuinely isn't warranted, say so explicitly and stop.
+  Worktree-topology warnings stay warn-only and go to the user.
 
 `.ai/knowledge_builder.py` is the generator; `sync.cjs` runs it with **host `python`** (it probes
 `python`/`python3`/`py`). Run TypeScript via **`turbo`** (`npm run check` = `typecheck lint
@@ -85,13 +98,16 @@ Kafka) during smoke tests — there is no agent sandbox and nothing here needs o
 
 ## 🧭 Task Classification
 
-| Task | Read KNOWLEDGE_INDEX | Search memory | Read directive |
+| Task | `KNOWLEDGE_INDEX` (~8k) | `GOTCHAS.md` (~21k) | Directive (~5k ea.) |
 |---|---|---|---|
-| Question / explain / review code | ✅ | — | if area-specific |
-| Small fix / format / comment | ✅ | — | — |
-| Debug build/test/runtime error | ✅ | ✅ `errors` + `gotchas` | — |
-| Design a pattern / refactor architecture | ✅ | ✅ `architecture` | ✅ |
-| Implement a complex new feature | ✅ | ✅ all | ✅ |
+| Question / explain / review code | ✅ | ❌ | if area-specific |
+| Small fix / format / comment | ✅ | ❌ | — |
+| Debug build/test/runtime error | ✅ | ✅ | — |
+| Design a pattern / refactor architecture | ✅ | ✅ | ✅ |
+| Implement a complex new feature | ✅ | ✅ | ✅ |
+
+The ❌ are deliberate, not laziness: gotchas are a *"have I hit this before?"* lookup and buy
+nothing on a question or a typo fix.
 
 ## 📎 Citation Protocol (plans must cite their sources)
 
@@ -107,8 +123,10 @@ keep plans grounded in the project's actual rules instead of improvised ones.
    - `architecture.jsonl` — design decisions (reactive **and** proactive "chose A over B")
    - `conventions.jsonl` — new coding conventions
    - `gotchas.jsonl` — framework/library gotchas
-   - Formats: `{"id","timestamp","error","solution","context"}` or
-     `{"id","timestamp","decision","rationale","alternatives","context"}`.
+   - Canonical format (one shape for all four files):
+     `{"timestamp","type","title","detail","context"}` — `context` optional. For a decision, the
+     choice goes in `title`, the rationale + rejected alternatives in `detail`. Legacy shapes still
+     render; don't migrate them. Full rules: `directives/memory_sop.md`.
 2. **Update the rule** — if a convention/pattern was established or refined, edit the relevant
    `directives/*.md` **now**, not later.
 3. **Reconcile the spec (the docs forcing-function)** — if the change touches **schema, API contract,

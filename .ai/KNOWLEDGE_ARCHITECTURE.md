@@ -30,16 +30,24 @@ Both agents and humans read both. They split by **what the reader is trying to d
 
 | File | Role | Who writes it |
 |---|---|---|
-| `KNOWLEDGE_INDEX.md` | The session-start read. 6 sections. **Generated — never hand-edit.** | `knowledge_builder.py` (via the Stop hook) |
+| `KNOWLEDGE_INDEX.md` | The session-start read, **~8k tokens**. 6 sections. **Generated — never hand-edit.** | `knowledge_builder.py` (via the Stop hook) |
+| `GOTCHAS.md` | The **on-demand** lesson buffer, ~21k tokens, newest first. Read when debugging; skipped otherwise. **Generated.** | `knowledge_builder.py` (same run) |
 | `PROJECT_STATUS.md` | Live status (phase %, focus, live debts). Injected as §2. | Curated by hand, After-Task |
 | `CHANGELOG.md` | The historical task journal. **Not scanned** — kept out of the index. | Appended by hand when a durable record is wanted |
 | `memory/*.jsonl` | Experience buffer: `errors` / `gotchas` / `architecture` / `conventions`. Local, gitignored. Surfaced as §4. | Appended by hand, After-Task |
 | `knowledge_builder.py` | The generator. Scans directives + docs + memory + `apps/*/src/modules` + curated files. | — |
 | `KNOWLEDGE_ARCHITECTURE.md` | This map. | By hand, rarely |
 
-The index is a **view**, not a source. §2 = `PROJECT_STATUS.md`, §3 = directive headings, §4 =
-`memory/*.jsonl`, §5 = `docs/` list, §6 = the operating protocol digest. To change the index, change
-the source; the Stop hook regenerates it. §2 also appends an **auto-detected module map** (scanned
+The index is a **view**, not a source. §2 = `PROJECT_STATUS.md`, §3 = directive headings, §4 = a
+*pointer* to `GOTCHAS.md`, §5 = `docs/` list, §6 = the operating protocol digest. To change the
+index, change the source; the Stop hook regenerates it.
+
+> **Why §4 is only a pointer (2026-08-07).** Measured, the index was ~21k tokens and §4 alone was
+> **63% of it** — read at *every* session start, including questions and typo fixes where a
+> "have I hit this before?" lookup buys nothing. Splitting it into `GOTCHAS.md` cut the mandatory
+> read to ~8k with no loss: §4's bodies were clipped anyway, so anything genuinely needed still
+> meant grepping the JSONL. `GOTCHAS.md` **is committed** even though `.ai/memory/*.jsonl` is
+> gitignored — so the lessons survive a machine change, which the raw buffer alone would not. §2 also appends an **auto-detected module map** (scanned
 from the filesystem every run) — if it disagrees with the curated status, the curated file is stale.
 
 > **A digest file (`QUICK_REFERENCE.md`) used to exist** — a hand-maintained summary of directive
@@ -71,11 +79,31 @@ Everything else *points* to the home; it does not copy.
 1. **Docs sync-trigger** — a task that changes schema / API / security / ops MUST reconcile the
    matching 🟩 living-spec `docs/NN_*.md` in the **same task** (`AGENTS.md` After-Task Protocol,
    restated in `qa_standard.md` and `docs/README.md`). This is the discipline that stopped docs rotting.
-2. **The `Stop` hook** (`scripts/sync.cjs`) — regenerates the index, rebuilds shared-kernel / runs
-   `prisma generate` when relevant, and emits a **warn-only** nudge when code changed but no newer
-   `.ai/memory` / `PROJECT_STATUS` entry exists (After-Task discipline, machine-detected).
-3. **The `UserPromptSubmit` hook** (`.claude/hooks/doc-select.cjs`) — prints a short reminder each turn
-   pointing at `directives/README.md`'s index (deliberately doesn't re-list it — see below).
+2. **The `Stop` hook** (`scripts/sync.cjs`) — regenerates the index + `GOTCHAS.md`, rebuilds
+   shared-kernel / runs `prisma generate` when relevant, and **blocks the turn from ending**
+   (`decision: "block"`) when source files changed with no newer `.ai/memory` / `PROJECT_STATUS`
+   entry. This is the **only** part of the After-Task Protocol that is enforced rather than merely
+   requested; everything else in `AGENTS.md` is prose the agent can silently skip.
+   > Two things had to be fixed before it worked at all (2026-08-07): it emitted `systemMessage`,
+   > so a warning addressed to the *agent* was delivered to the *user*; and it filtered root
+   > `git status` by `^(apps|packages)/…`, but every `apps/*` is a **submodule** whose root status
+   > shows only the pointer — so it was structurally blind to every service's source. It now
+   > descends into each submodule, and blocks at most **once per code state**
+   > (guard file `.ai/.after-task-guard`) so a refusal can't loop forever.
+3. **The `UserPromptSubmit` hook** (`.claude/hooks/turn-context.cjs`) — injects **turn-local state**
+   into the agent's context: branch, uncommitted paths (descending into the `apps/*` submodules),
+   outstanding After-Task debt, plus a one-line pointer at `directives/README.md`.
+   > **Why state, not prose (2026-08-07).** Its predecessor `doc-select.cjs` restated routing rules
+   > the agent already has verbatim in `CLAUDE.md`. Once its delivery bug was fixed, it fired five
+   > turns running and changed the agent's behaviour zero times — the model had already read the
+   > rule and already decided. A per-turn hook only earns its ~130 tokens by carrying what a static
+   > `CLAUDE.md` **cannot**: things that differ between turns.
+   > **Hook output rule (learned the hard way, 2026-08-07):** a hook meant to steer the *agent* must
+   > emit `hookSpecificOutput.additionalContext` (or plain stdout) — valid for `UserPromptSubmit` /
+   > `SessionStart`. **`systemMessage` renders in the user's terminal and never reaches the model.**
+   > This hook used `systemMessage` from 2026-07-21 to 2026-08-07, so it reminded the human, not the
+   > agent, while looking like it worked. `sync.cjs` keeps `systemMessage` on purpose: its build
+   > summary and After-Task warning are for the user, and a `Stop` hook can't inject context anyway.
 4. **The auto-detected module map** in §2 — makes a lying curated status visible immediately.
 5. **Citation Protocol** (`AGENTS.md`) — plans must cite which directives/docs they used.
 
@@ -83,7 +111,7 @@ Everything else *points* to the home; it does not copy.
 
 - **Every session:** `.ai/KNOWLEDGE_INDEX.md` (whole context).
 - **Before writing code in an area:** the relevant `directives/*.md` — see `directives/README.md`'s
-  index (the `doc-select` hook nudges you there each turn).
+  index (the `turn-context` hook points you there each turn).
 - **Need business/design context:** the relevant `docs/NN_*.md` (`docs/README.md` indexes them).
 - **Debugging:** `.ai/memory/errors.jsonl` + `gotchas.jsonl`.
 - **Instruction set:** `AGENTS.md` (canonical) / `CLAUDE.md` (pointer).
