@@ -21,17 +21,17 @@ the working relationship (only this agent+user need it)?* Project → repo. Rela
 
 > `.ai/KNOWLEDGE_INDEX.md` is **generated** from directives + docs + `PROJECT_STATUS` + memory by
 > `knowledge_builder.py` (run automatically by the `Stop` hook). **Never hand-edit it** — edit the
-> source, the hook regenerates it. §4 "Known Gotchas" is a *view* of `.ai/memory/*.jsonl`, not a
-> second copy to maintain. (There used to be a hand-maintained `QUICK_REFERENCE.md` digest injected
+> source, the hook regenerates it. The same run also generates `.ai/GOTCHAS.md` — a *view* of
+> `.ai/memory/*.jsonl`, not a second copy to maintain; index §4 is only a pointer to it. (There used to be a hand-maintained `QUICK_REFERENCE.md` digest injected
 > as its own section — removed 2026-07-21 as a second source of truth for rules that already live in
 > `directives/`; §3's directive headings are the navigation instead.)
 
 ## ⚙️ Session start
 
-1. Read `.ai/KNOWLEDGE_INDEX.md` — whole project context.
-2. For complex tasks, search `.ai/memory/*.jsonl` for related experience.
+1. Read `.ai/KNOWLEDGE_INDEX.md` (~8k tokens) — whole project context.
+2. **Debugging only:** read `.ai/GOTCHAS.md` (~21k). `grep .ai/memory/*.jsonl` for full text.
 3. Read the relevant `directives/*.md` before writing code (`directives/README.md` indexes them; the
-   `doc-select` hook prints a reminder to check it).
+   `turn-context` hook points there each turn).
 
 ## 📖 When to SEARCH `.ai/memory/`
 
@@ -54,12 +54,28 @@ Log after solving something non-obvious (anything that took >10 min, a gotcha, a
 - `architecture.jsonl` — architecture decision (reactive **or** proactive "chose A over B")
 - `conventions.jsonl` — a new coding convention
 
-Two entry formats:
+**CANONICAL entry format** — one shape for every category (2026-08-07):
 
 ```json
-{"id": 27, "timestamp": "2026-07-21T10:00:00+07:00", "error": "…", "solution": "…", "context": "file/module"}
-{"id": 28, "timestamp": "2026-07-21T10:00:00+07:00", "decision": "…", "rationale": "…", "alternatives": "…", "context": "file/module"}
+{"timestamp": "2026-08-07T10:00:00+07:00", "type": "gotchas", "title": "the one-line lesson", "detail": "what happened, why, how it was fixed / chose A over B because …", "context": "file/module"}
 ```
+
+`type` = the file's own category (`errors` / `gotchas` / `architecture` / `conventions`). `context` is
+optional. For an architecture decision, put the choice in `title` and the rationale + rejected
+alternatives in `detail` — no separate `decision`/`rationale`/`alternatives` keys any more.
+
+> **Why one shape:** seven shapes had accumulated across 161 entries, and `knowledge_builder.py`
+> rendered only the `error`+`solution` pair — silently dropping **96 of them (60%)**, including every
+> `decision`/`rationale` entry, the format this SOP itself used to prescribe. Nothing surfaced it
+> because appending a line always appeared to succeed. The builder now normalizes across **all**
+> legacy shapes (`title`/`detail`, `decision`/`rationale`/`alternatives`, `convention`/`how`,
+> `problem`/`solution`, `symptom`/`root_cause`/`fix`, `summary`/`tag`, `entry`), so **no back-fill or
+> migration is needed** — old entries render fine. Use the canonical shape for new ones only.
+>
+> Entries render into **`.ai/GOTCHAS.md`** (generated, newest first, bodies clipped), *not* into
+> `KNOWLEDGE_INDEX.md` — §4 there is just a pointer. Read `GOTCHAS.md` when **debugging**; skip it
+> for questions and small fixes. The full text always lives here in the JSONL — `grep` it when a
+> headline looks relevant.
 
 **If the lesson is really a durable rule**, don't stop at memory — promote it: add/refine the
 `directives/*.md`. Memory is the experience buffer; directives are the law.

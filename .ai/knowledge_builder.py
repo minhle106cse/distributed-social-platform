@@ -34,6 +34,10 @@ WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 AI_DIR = WORKSPACE_ROOT / ".ai"
 MEMORY_DIR = AI_DIR / "memory"
 OUTPUT_FILE = AI_DIR / "KNOWLEDGE_INDEX.md"
+# The gotcha buffer lives OUTSIDE the index: it was 63% of the index's ~21k tokens while being
+# the part least often needed (a "have I hit this before?" lookup, useful when debugging and
+# dead weight otherwise) — and the index is read at EVERY session start. Split 2026-08-07.
+GOTCHAS_FILE = AI_DIR / "GOTCHAS.md"
 STATUS_FILE = AI_DIR / "PROJECT_STATUS.md"
 OLD_MEMORY_FILE = WORKSPACE_ROOT / ".tmp" / "agent_memory.json"
 
@@ -111,14 +115,23 @@ def load_jsonl(path: Path) -> list[dict]:
     entries = []
     if not path.exists():
         return entries
+    # A malformed line used to `continue` in silence. That let a lesson be appended, look
+    # accepted (the Stop hook still printed its ✅), and be discarded — the exact failure this
+    # file's own gotcha buffer was rewritten to stop. Report loudly instead: the entry is still
+    # skipped so one bad line can't break the build, but it can no longer disappear unnoticed.
     with open(path, "r", encoding="utf-8") as f:
-        for line in f:
+        for lineno, line in enumerate(f, 1):
             line = line.strip()
-            if line:
-                try:
-                    entries.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                print(
+                    f"[WARN] {path.name}:{lineno} skipped — invalid JSON ({exc.msg} "
+                    f"at col {exc.colno}). Fix the line; this lesson is NOT indexed.",
+                    file=sys.stderr,
+                )
     return entries
 
 
@@ -372,21 +385,85 @@ def build_index() -> str:
         except Exception:
             pass
 
+    # Entries accumulated 7 different shapes over the project's life (error/solution,
+    # title/detail, decision/rationale/alternatives, convention/how, problem/solution,
+    # symptom/root_cause/fix, summary/tag, entry). This renderer used to require BOTH
+    # `error` and `solution`, silently dropping 96 of 161 entries (60%) -- including every
+    # decision/rationale entry, the very format AGENTS.md documents as canonical. Nothing
+    # surfaced it because writing a memory line always "worked". Normalize across shapes
+    # instead of demanding one. Canonical shape for NEW entries: directives/memory_sop.md.
+    HEADLINE_KEYS = ("error", "title", "decision", "convention",
+                     "problem", "symptom", "summary", "entry")
+    BODY_KEYS = ("solution", "detail", "details", "rationale", "how", "fix", "root_cause")
+
+    def first_of(entry: dict, keys) -> str:
+        for key in keys:
+            value = entry.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+
+    def clip(text: str, limit: int) -> str:
+        """§4 is a searchable pointer, not the archive — the full text stays in the JSONL.
+        Without this, ~2,000-char detail bodies would blow the index past its budget."""
+        text = " ".join(text.split())
+        return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+    def entry_time(entry: dict) -> str:
+        return str(entry.get("timestamp") or entry.get("ts") or entry.get("date") or "")
+
+    # Newest RECENT_LIMIT entries only. Now that this renders into its own on-demand GOTCHAS.md
+    # rather than into the always-read index, the cap is a guard against unbounded growth, not a
+    # session-start budget — so it sits well above the current entry count. Any cut is ANNOUNCED
+    # in the header: an unannounced drop is exactly the bug this rewrite fixed.
+    RECENT_LIMIT = 200
+
     gotcha_lines = []
-    for entry in all_memory:
-        error = entry.get("error", "").strip()
-        solution = entry.get("solution", "").strip()
-        context = entry.get("context", "").strip()
-        if error and solution:
-            ctx_tag = f" `[{context}]`" if context else ""
-            gotcha_lines.append(f"- **{error}**{ctx_tag}\n  → {solution}")
+    ranked = sorted(all_memory, key=entry_time, reverse=True)  # newest lesson first
+    for entry in ranked[:RECENT_LIMIT]:
+        headline = first_of(entry, HEADLINE_KEYS)
+        if not headline:
+            continue
+        body = first_of(entry, BODY_KEYS)
+        alternatives = first_of(entry, ("alternatives",))
+        if alternatives:
+            body = f"{body} · alt: {alternatives}" if body else f"alt: {alternatives}"
+        context = first_of(entry, ("context", "tag")) or entry.get("_category", "")
+        ctx_tag = f" `[{context}]`" if context else ""
+        line = f"- **{clip(headline, 160)}**{ctx_tag}"
+        if body:
+            line += f"\n  → {clip(body, 280)}"
+        gotcha_lines.append(line)
 
-    sections.append(f"""## 4. Known Gotchas & Lessons Learned (from memory)
+    omitted = max(0, len(ranked) - RECENT_LIMIT)
+    scope_note = (
+        f"> Showing the **{len(gotcha_lines)} most recent** of {len(ranked)} entries "
+        f"({omitted} older ones omitted for size) — bodies are clipped.\n"
+        f"> Full text + the older {omitted}: `grep` `.ai/memory/*.jsonl`.\n"
+        if omitted
+        else f"> All {len(gotcha_lines)} entries shown; bodies are clipped — "
+             f"full text in `.ai/memory/*.jsonl`.\n"
+    )
 
-> These are real problems encountered during development.
-> Search this section BEFORE debugging to avoid repeating mistakes.
+    # §4 in the index is now a POINTER (~80 tokens); the entries themselves go to GOTCHAS.md.
+    sections.append(f"""## 4. Known Gotchas & Lessons Learned
 
-{chr(10).join(gotcha_lines) if gotcha_lines else "_No memory entries yet._"}""")
+> **Not inlined here — see `.ai/GOTCHAS.md`** ({len(gotcha_lines)} entries, newest first).
+> Read it when **debugging or designing in an area you may have burned on before**; skip it for
+> questions and small fixes. Full untruncated text: `grep` `.ai/memory/*.jsonl`.""")
+
+    gotchas_doc = f"""# 🔥 Known Gotchas & Lessons Learned (from memory)
+
+> **Auto-generated by `.ai/knowledge_builder.py`** — do not hand-edit; append to
+> `.ai/memory/*.jsonl` instead (canonical entry shape: `directives/memory_sop.md`).
+> Last updated: {now}
+>
+> Real problems hit during development. **Search this BEFORE debugging** to avoid repeating them.
+> Split out of `KNOWLEDGE_INDEX.md` on 2026-08-07: it was 63% of that file's tokens while being
+> needed only for debugging, and the index is read at every session start.
+{scope_note}
+{chr(10).join(gotcha_lines) if gotcha_lines else "_No memory entries yet._"}
+"""
 
     # ── 5. Business Domain ── (docs/README.md classifies each doc; edit sources there, not here)
     doc_entries = []
@@ -435,7 +512,7 @@ def build_index() -> str:
 - ❌ Never use `autoincrement()` for primary keys — UUID
 - ❌ Never use CORS wildcard `['*']` — origins from env""")
 
-    return "\n\n".join(sections) + "\n"
+    return "\n\n".join(sections) + "\n", gotchas_doc
 
 
 # ---------------------------------------------------------------------------
@@ -449,18 +526,23 @@ def main():
         migrate_memory()
         return
 
-    content = build_index()
+    content, gotchas = build_index()
 
     if "--check" in args:
         print(content)
-        print(f"\n--- Preview only (--check). File NOT written. ---")
+        print(f"\n--- Preview only (--check). Files NOT written. ---")
+        print(f"--- {OUTPUT_FILE.name}: {len(content):,} B | "
+              f"{GOTCHAS_FILE.name}: {len(gotchas):,} B ---")
         return
 
-    # Write the index
+    # Write the index + the on-demand gotcha buffer
     AI_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT_FILE.write_text(content, encoding="utf-8")
+    GOTCHAS_FILE.write_text(gotchas, encoding="utf-8")
     print(f"[DONE] Generated {OUTPUT_FILE}")
-    print(f"  Size: {len(content):,} bytes")
+    print(f"  Size: {len(content):,} bytes  (~{len(content)//3.4:,.0f} tokens, read every session)")
+    print(f"[DONE] Generated {GOTCHAS_FILE}")
+    print(f"  Size: {len(gotchas):,} bytes  (~{len(gotchas)//3.4:,.0f} tokens, read on demand)")
     print(f"  Timestamp: {datetime.now(timezone.utc).isoformat()}")
 
 
