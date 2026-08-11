@@ -377,6 +377,33 @@ Review lại saga (`ProvisionOrgHandler` dispatch `CreateOrgCommand`) lộ ra 2 
 
 `directives/cqrs_pattern.md` §3-4 đã cập nhật theo amendment này.
 
+## 9d. AMENDMENT (2026-08-11) — `recordObservation` mù với `MarkedTransientError`, dù `isTransient` đã retry nó
+
+User hỏi *"chỉ P2034/P2028 cần monitor, kể cả P2002 không cần?"* dẫn tới audit lại `isTransient` cạnh
+`recordObservation` ở `prisma-transient-error.ts` (§9b mục 6 sửa hôm 2026-07-30) — phát hiện 2 hàm này
+**không cùng phạm vi** dù trông như phải đi cùng nhau:
+
+- `isTransient` retry cả `P2034` **lẫn** bất kỳ lỗi nào khai `transient: true` (`MarkedTransientError`
+  — hiện có 1 caller: `CreditConcurrencyError`, OCC conflict trên credit ledger, bản chất là P2002 bị
+  convert ở application layer, xem §9b mục 4).
+- `recordObservation` chỉ đếm `OBSERVED_CODES` (`P2034`/`P2028`) qua structural check
+  `isPrismaKnownRequestError` — check này đòi field `clientVersion`, mà `CreditConcurrencyError` không
+  có (nó là domain error, không phải Prisma error thật) → **không bao giờ được đếm**, dù retry thật xảy
+  ra trên nó.
+
+Hệ quả: retry OCC trên credit ledger — tín hiệu contention đáng cảnh báo thật (hot aggregate) — vô hình
+với Prometheus, chỉ tra được qua log `LogContext.RETRY` từng lần thử. Không phải lỗi #6 tái diễn (#6 là
+đếm QUÁ NHIỀU — lỗi nghiệp vụ lẫn vào; đây là đếm QUÁ ÍT — 1 nhánh retry hợp lệ bị bỏ sót), nhưng cùng
+gốc: 2 predicate tách rời cho cùng 1 khái niệm "cái gì được coi là transient" dễ lệch nhau khi 1 bên đổi
+mà bên kia không theo.
+
+**Vá:** thêm nhánh riêng trong `recordObservation` đếm `isMarkedTransient(error)` dưới label tổng hợp
+`code="A2001"` (chữ `A`, không phải `P` — Prisma đã sở hữu namespace `Pxxxx` thật, dùng lại nó cho 1 mã tự chế sẽ đụng nếu Prisma ra mã mới đúng số đó, hoặc khiến người tra cứu lầm tưởng là mã Prisma thật rồi tìm không ra trong docs), tách biệt khỏi `OBSERVED_CODES` (không gộp vào set đó, giữ đúng tinh thần
+#6 — không đếm mọi lỗi nghiệp vụ, chỉ đếm đúng cái mà `isTransient` cũng công nhận). Thêm test khoá bất
+biến "isTransient và recordObservation phải cùng nhận diện 1 input", không chỉ test riêng lẻ từng hàm —
+để lần sau có `MarkedTransientError` thứ 2 (vd nếu `search-service` cần OCC tương tự) không lặp lại gap
+này một cách âm thầm.
+
 ## 8. Tham chiếu
 
 **Tiền lệ kiến trúc**

@@ -40,6 +40,19 @@ export function isMarkedTransient(error: unknown): error is MarkedTransientError
  * are currently auto-retried — kept narrow on purpose (see `recordObservation` doc). */
 const OBSERVED_CODES = new Set(['P2034', 'P2028'])
 
+/** Synthetic `code` label for `recordObservation` when the error is a domain error
+ * marked `transient: true` (e.g. `CreditConcurrencyError`) rather than a raw Prisma
+ * error — see `recordObservation` doc for why this needed its own branch.
+ *
+ * Shaped like a Prisma code (letter + 4 digits) so it reads consistently next to
+ * `P2034`/`P2028` in a Grafana legend/alert, but deliberately `A` — not `P` —
+ * because Prisma has actually claimed the `Pxxxx` namespace (P1xxx common, P2xxx
+ * query engine, P3xxx migration, …). Reusing `P` for a made-up code risks a real
+ * future Prisma code colliding with it, or an on-call engineer grepping Prisma's
+ * docs/issues for it and finding nothing. `A` = "application-level", not Prisma's
+ * to give out — this repo owns the whole `Axxxx` space and can never collide. */
+const APP_TRANSIENT_LABEL = 'A2001'
+
 export interface PrismaTransientErrorHelpers {
   isTransient: (error: unknown) => boolean
   recordObservation: (error: unknown, retried: boolean) => void
@@ -62,7 +75,10 @@ export function makePrismaTransientErrorHelpers(options: {
 }): PrismaTransientErrorHelpers {
   const dbTransientErrorCounter = new Counter({
     name: `${options.metricPrefix}_db_transient_error_total`,
-    help: 'Prisma P2034/P2028 errors observed on retryable commands, by code and whether auto-retried',
+    help:
+      'Prisma P2034/P2028 errors, plus app-level errors marked transient:true ' +
+      `(code="${APP_TRANSIENT_LABEL}", e.g. CreditConcurrencyError), observed on ` +
+      'retryable commands, by code and whether auto-retried',
     labelNames: ['code', 'retried'] as const,
   })
 
@@ -82,10 +98,25 @@ export function makePrismaTransientErrorHelpers(options: {
      * named `*_db_transient_error_total`, polluting any alert built on its rate —
      * a burst of duplicate-name requests would page on-call for what is not a
      * database reliability signal at all (review of ADR-0001, 2026-07-30).
+     *
+     * Separately counts `isMarkedTransient` errors under the synthetic
+     * `A2001` code. `isTransient` above already retries these (e.g.
+     * `CreditConcurrencyError` — OCC conflict detected via P2002 at the
+     * application layer, not by Prisma), but until this branch existed nothing
+     * observed them: they don't satisfy `isPrismaKnownRequestError` (no
+     * `clientVersion`), so they silently fell through the `OBSERVED_CODES` check
+     * — the retry decision and the retry metric had different scopes. A hot
+     * aggregate driving frequent OCC retries was invisible to this counter,
+     * visible only in per-attempt `LogContext.RETRY` warn logs (found reviewing
+     * the P2002-monitoring question, 2026-08-11).
      */
     recordObservation(error: unknown, retried: boolean): void {
       if (isPrismaKnownRequestError(error) && OBSERVED_CODES.has(error.code)) {
         dbTransientErrorCounter.inc({ code: error.code, retried: String(retried) })
+        return
+      }
+      if (isMarkedTransient(error)) {
+        dbTransientErrorCounter.inc({ code: APP_TRANSIENT_LABEL, retried: String(retried) })
       }
     },
   }

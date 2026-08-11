@@ -37,6 +37,24 @@ describe('makePrismaTransientErrorHelpers', () => {
       expect(() => recordObservation(knownRequestError('P2002'), false)).not.toThrow()
       expect(() => recordObservation(new Error('boom'), false)).not.toThrow()
     })
+
+    it('đếm lỗi domain khai transient:true (vd CreditConcurrencyError) dưới label A2001 — bug tìm thấy 2026-08-11: retry path và observation path từng lệch scope nhau', async () => {
+      const { register } = await import('prom-client')
+      const metricPrefix = `test_marked_${Math.random().toString(36).slice(2)}`
+      const { isTransient, recordObservation: record } = makePrismaTransientErrorHelpers({
+        metricPrefix,
+      })
+      const occConflict = { transient: true as const }
+
+      // isTransient đã retry error này từ trước — assert lại để khoá bất biến
+      // "retry" và "observe" phải cùng nhận diện nó, không phải 2 predicate lệch nhau.
+      expect(isTransient(occConflict)).toBe(true)
+      expect(() => record(occConflict, true)).not.toThrow()
+
+      const metric = await register.getSingleMetricAsString(`${metricPrefix}_db_transient_error_total`)
+      expect(metric).toContain('code="A2001"')
+      expect(metric).toContain('retried="true"')
+    })
   })
 })
 
