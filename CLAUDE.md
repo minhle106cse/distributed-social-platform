@@ -1,8 +1,13 @@
 # Claude Code Entry Point
 
-> **This file mirrors `AGENTS.md` (the canonical agent instruction file).** Read `AGENTS.md` for the
-> full Session Start Protocol, the docs↔directives boundary, how the AI workflow actually runs, and
-> the After-Task Protocol. Read `.ai/KNOWLEDGE_ARCHITECTURE.md` for how all the knowledge fits together.
+> **This file mirrors `AGENTS.md` (the canonical agent instruction file).** Claude Code auto-loads
+> *only this file* at session start — `AGENTS.md` is not read unless you open it yourself — so the
+> decision-relevant parts (Task Classification, Citation Protocol, Session Start Protocol, Hard
+> Rules) are duplicated here in full, not linked. Edit `AGENTS.md` first, then port the same change
+> here in the same task — a change that lands in one and not the other is silent drift, nothing
+> checks for it except `scripts/sync.cjs`'s warn-only reminder. What's genuinely CLAUDE.md-only-by-
+> reference (the docs↔directives boundary table, hook internals, the docs forcing-function detail):
+> read `AGENTS.md`. For how all the knowledge fits together: `.ai/KNOWLEDGE_ARCHITECTURE.md`.
 
 ## 🧠 Session Start Protocol (do this first)
 
@@ -11,6 +16,23 @@
 2. **Only when debugging** (or designing where you may have burned before): `.ai/GOTCHAS.md`
    (~21k). Skip it for questions and small fixes. Untruncated text: `grep .ai/memory/*.jsonl`.
 3. Read the relevant `directives/*.md` SOP before creating/modifying code.
+
+**Which of the above a task actually needs — don't over- or under-read:**
+
+| Task | `KNOWLEDGE_INDEX` (~8k) | `GOTCHAS.md` (~21k) | Directive (~5k ea.) |
+|---|---|---|---|
+| Question / explain / review code | ✅ | ❌ | if area-specific |
+| Small fix / format / comment | ✅ | ❌ | — |
+| Debug build/test/runtime error | ✅ | ✅ | — |
+| Design a pattern / refactor architecture | ✅ | ✅ | ✅ |
+| Implement a complex new feature | ✅ | ✅ | ✅ |
+
+The ❌ are deliberate, not laziness — gotchas are a *"have I hit this before?"* lookup, useless on a
+question or a typo fix.
+
+**Plans must cite sources.** Any implementation plan MUST have a "References & Compliance" section
+listing which `directives/*.md` and `docs/NN_*.md` you actually read and where each decision came
+from. A plan missing this may be rejected outright.
 
 ## 📦 Project Context — Cortex
 
