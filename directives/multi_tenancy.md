@@ -1,58 +1,58 @@
 # SOP: Multi-Tenancy & Org RBAC Standard
 
 > [!NOTE]
-> Directive này quy định cách triển khai multi-tenancy + phân quyền trong org cho Cortex.
-> **Tenant = Organization**. Mọi resource thuộc về một Organization và bị cô lập hoàn toàn.
-> Nguồn sự thật chi tiết: `docs/10_security_rbac.md`.
+> This directive defines how multi-tenancy + in-org authorization is implemented in Cortex.
+> **Tenant = Organization**. Every resource belongs to one Organization and is completely isolated.
+> The detailed source of truth: `docs/10_security_rbac.md`.
 
 ---
 
 ## 🎯 Goal
 
-Tuyệt đối không data leak giữa tenant. Mọi DB query/event/response scoped bởi `orgId`.
-Phân quyền trong org là **động** (OWNER chỉnh runtime), không hardcode trong route.
+Absolutely no data leaking between tenants. Every DB query/event/response is scoped by `orgId`.
+In-org authorization is **dynamic** (the OWNER adjusts it at runtime), never hardcoded in a route.
 
 ---
 
-## 📜 Kiến Trúc Bắt Buộc
+## 📜 The Mandatory Architecture
 
-### 1. JWT Access Token — CHỈ chứa identity hệ thống (KHÔNG có orgId)
+### 1. The JWT access token — ONLY system identity (NO orgId)
 
 ```typescript
 // core-api: infrastructure/http/guards/jwt-auth.guard.ts
 export interface JwtPayload {
   sub: string          // userId
   email: string
-  roles: string[]      // SYSTEM roles (superadmin/support/user) — KHÔNG phải org role
+  roles: string[]      // SYSTEM roles (superadmin/support/user) — NOT org roles
   permissions: string[] // SYSTEM permissions (platform-level)
 }
 ```
 
-> ⚠️ Một user thuộc **nhiều org** → KHÔNG nhét `orgId`/`orgRole` vào token. Org context xác định
-> **per-request** qua header `X-Org-Id`. Token thuần identity → không phải re-issue khi đổi org,
-> revoke membership có hiệu lực tức thì.
+> ⚠️ A user belongs to **several orgs** → do NOT put `orgId`/`orgRole` in the token. Org context is determined
+> **per request** via the `X-Org-Id` header. A pure-identity token → no re-issue when switching orgs, and
+> revoking a membership takes effect immediately.
 
-### 2. Org context — header `X-Org-Id` → TenantContextMiddleware + OrgGuard
+### 2. Org context — the `X-Org-Id` header → TenantContextMiddleware + OrgGuard
 
-**Bước 2a — OrgGuard** (chỉ áp cho route org-scoped): verify membership, resolve role + permissions, gắn `request.org`.
+**Step 2a — OrgGuard** (applied only to org-scoped routes): verifies membership, resolves the role + permissions, and attaches `request.org`.
 
 ```typescript
-// infrastructure/http/guards/org.guard.ts (rút gọn)
-// ⚠️ Guard là HTTP infra → KHÔNG inject PrismaService, đi qua repository interface.
+// infrastructure/http/guards/org.guard.ts (abridged)
+// ⚠️ A guard is HTTP infrastructure → do NOT inject PrismaService; go through the repository interface.
 const orgId = request.headers['x-org-id']
 if (!orgId) throw new ForbiddenException('X-Org-Id header is required')
 const membership = await this.membershipRepo.findByOrgAndUser(orgId, userId)
 if (!membership) throw new ForbiddenException('You are not a member of this organization')
 request.org = { orgId, orgRole: membership.role, permissions: await resolve(orgId, role) }
-setTenantId(orgId) // điền orgId (đã xác thực) vào ALS cho repo dùng
+setTenantId(orgId) // put the (now authenticated) orgId into the ALS for repositories to use
 ```
 
-**Bước 2b — TenantContextMiddleware** (global, chạy đầu request): mở AsyncLocalStorage context **rỗng** bọc TRỌN vòng đời request. **Dùng MIDDLEWARE, KHÔNG interceptor** — middleware gọi `next()` ngay trong scope `run()` nên context propagate đáng tin tới guard/handler/repo; interceptor trả Observable bị subscribe NGOÀI scope → dễ mất context. Store là object mutable; OrgGuard (2a) điền orgId qua `setTenantId` sau khi validate.
+**Step 2b — TenantContextMiddleware** (global, running first in the request): opens an **empty** AsyncLocalStorage context wrapping the ENTIRE request lifecycle. **Use a MIDDLEWARE, NOT an interceptor** — a middleware calls `next()` inside the `run()` scope, so the context propagates reliably to the guard/handler/repository; an interceptor returns an Observable subscribed OUTSIDE the scope → context is easily lost. The store is a mutable object; OrgGuard (2a) fills in the orgId via `setTenantId` after validating.
 
 ```typescript
 // infrastructure/http/middlewares/tenant-context.middleware.ts
 use(_req, _res, next) {
-  runWithTenantContext(() => next()) // store rỗng {}, bọc cả request
+  runWithTenantContext(() => next()) // an empty {} store, wrapping the whole request
 }
 ```
 
@@ -65,8 +65,8 @@ export const setTenantId = (orgId: string) => {
   if (s) s.orgId = orgId
 }
 export const getTenantId = () => tenantStorage.getStore()?.orgId
-// FAIL-CLOSED cho repo tenant-scoped: thiếu context → NÉM (chống `orgId: undefined`
-// lọt xuống Prisma → where bỏ filter → rò chéo tenant).
+// FAIL-CLOSED for tenant-scoped repositories: missing context → THROW (preventing `orgId: undefined`
+// reaching Prisma → the where clause dropping the filter → a cross-tenant leak).
 export const requireTenantId = () => {
   const id = getTenantId()
   if (!id) throw new Error('Tenant context not set')
@@ -74,47 +74,47 @@ export const requireTenantId = () => {
 }
 ```
 
-### 3. Repository — Bắt buộc filter bởi `orgId` (lấy từ `getTenantId()`)
+### 3. Repository — MUST filter by `orgId` (taken from `getTenantId()`)
 
 ```typescript
 async findById(id: string): Promise<KnowledgeItem | null> {
-  const orgId = requireTenantId() // fail-closed: không bao giờ query thiếu orgId
+  const orgId = requireTenantId() // fail-closed: never query without an orgId
   const db = getTx() ?? this.prisma.client
-  // deletedAt:null tự động bởi soft-delete extension (xem database_standard.md §3)
+  // deletedAt:null is applied automatically by the soft-delete extension (see database_standard.md §3)
   const row = await db.knowledgeItem.findFirst({ where: { id, orgId } })
   return row ? KnowledgeItemMapper.toDomain(row) : null
 }
 ```
 
-### 4. Schema — `orgId` bắt buộc + index compound `(orgId, ...)`
+### 4. Schema — `orgId` is mandatory + a compound `(orgId, ...)` index
 
 ```prisma
 model KnowledgeItem {
   id      String @id @default(uuid())
-  orgId   String @map("org_id")    // ← BẮT BUỘC
+  orgId   String @map("org_id")    // ← MANDATORY
   spaceId String @map("space_id")
   @@index([orgId, spaceId])
   @@map("knowledge_items")
 }
 ```
 
-> KHÔNG FK chéo domain. `Membership.userId` là loose ref tới auth_db (no cross-db FK).
+> NO cross-domain FKs. `Membership.userId` is a loose reference into auth_db (no cross-DB FK).
 
 ---
 
-## 🔐 Org RBAC — Phân quyền ĐỘNG trong org
+## 🔐 Org RBAC — DYNAMIC authorization within an org
 
-> Hai tầng RBAC độc lập: **System RBAC** (auth-service, "bạn là ai trên platform") vs
-> **Org RBAC** (core-api, "bạn làm được gì trong org NÀY"). KHÔNG merge.
+> Two independent RBAC layers: **System RBAC** (auth-service, "who you are on the platform") vs
+> **Org RBAC** (core-api, "what you can do in THIS org"). Do NOT merge them.
 
 ### Catalog (code) vs Mapping (DB)
 
-| Thành phần | Nguồn | File / Bảng |
+| Component | Source | File / Table |
 |---|---|---|
-| Permission catalog (action tồn tại) | **Code** | `modules/tenant/domain/org-permissions.ts` (`OrgPermission`) |
-| Role → permission mapping (per-org) | **DB** | `org_role_permissions` |
+| The permission catalog (which actions exist) | **Code** | `modules/tenant/domain/org-permissions.ts` (`OrgPermission`) |
+| Role → permission mapping (per org) | **DB** | `org_role_permissions` |
 
-### Khai báo quyền trên route — theo ACTION, không theo role
+### Declaring permissions on a route — by ACTION, not by role
 
 ```typescript
 @Get('orgs/:id/members')
@@ -123,46 +123,46 @@ model KnowledgeItem {
 async getMembers(@CurrentOrg() org: OrgContext) { ... }
 ```
 
-- Đổi "ai được làm gì" = sửa `org_role_permissions` qua API `PATCH /orgs/:id/role-permissions/:role`.
-  **KHÔNG sửa code route.**
-- Seed default mapping (ADMIN/MEMBER/GUEST) khi tạo org (`CreateOrgHandler.seedDefaults`).
+- Changing "who can do what" = editing `org_role_permissions` via the `PATCH /orgs/:id/role-permissions/:role` API.
+  **Do NOT edit the route code.**
+- Seed the default mapping (ADMIN/MEMBER/GUEST) when the org is created (`CreateOrgHandler.seedDefaults`).
 
-### Guardrail bắt buộc (chống lock-out)
+### Mandatory guardrails (lock-out prevention)
 
-- **OWNER = implicit-all**: OrgGuard cấp toàn bộ catalog cho OWNER, KHÔNG đọc DB, KHÔNG cho sửa.
-- Chỉ ADMIN/MEMBER/GUEST chỉnh được.
-- Permission update phải ⊆ catalog (`isValidOrgPermission`) → reject quyền lạ.
+- **OWNER = implicit-all**: OrgGuard grants the OWNER the entire catalog, reading NO DB and allowing NO edits.
+- Only ADMIN/MEMBER/GUEST are adjustable.
+- A permission update must be ⊆ the catalog (`isValidOrgPermission`) → unknown permissions are rejected.
 
-### Reputation-gating ≠ RBAC
+### Reputation gating ≠ RBAC
 
-Quyền mở-khóa-theo-điểm (Verify, edit wiki...) enforce ở **Application layer** (handler so `ReputationSummary.points` với ngưỡng), KHÔNG ở HTTP guard.
+Points-unlocked privileges (Verify, wiki editing, …) are enforced in the **Application layer** (the handler compares `ReputationSummary.points` against a threshold), NOT in an HTTP guard.
 
 ---
 
-## 🔁 Org-Switch Flow
+## 🔁 Org-switch flow
 
-Client chỉ cần đổi header `X-Org-Id` ở request kế tiếp. **KHÔNG** re-issue token, **KHÔNG** "multiple orgs in one token".
+The client only changes the `X-Org-Id` header on the next request. Do **NOT** re-issue the token, and do **NOT** put "multiple orgs in one token".
 
 ---
 
 ## ⚠️ Forbidden Patterns
 
-| Sai | Đúng |
+| Wrong | Right |
 |---|---|
-| Đọc `orgId` từ JWT payload | Đọc từ header `X-Org-Id` → OrgGuard verify membership |
-| `db.knowledgeItem.findMany()` không có `orgId` | `where: { orgId: getTenantId(), ... }` |
-| Truyền `orgId` qua param từng method | `getTenantId()` từ AsyncLocalStorage |
-| Hardcode `if (role === 'ADMIN')` trong route/handler | `@RequireOrgPermission(...)` + mapping DB |
-| Cho sửa permission của OWNER | OWNER implicit-all, reject mọi update |
-| Query `userId` không kèm `orgId` | `where: { userId, orgId }` (user thuộc nhiều org) |
-| Đặt `OrgGuard` / `TenantContextMiddleware` trong `common/` | HTTP infra → `infrastructure/http/{guards,middlewares}/` (xem `folder_structure_sop.md` §Enforcement) |
-| `OrgGuard` inject `PrismaService` query thẳng | Đi qua `IMembershipRepository` — guard không được bypass repository |
-| `org-permissions.ts` (catalog domain) đặt trong `common/` | `modules/tenant/domain/` — vocabulary của tenant domain, không phải abstraction cross-cutting |
+| Reading `orgId` from the JWT payload | Read it from the `X-Org-Id` header → OrgGuard verifies membership |
+| `db.knowledgeItem.findMany()` without an `orgId` | `where: { orgId: getTenantId(), ... }` |
+| Passing `orgId` as a parameter through every method | `getTenantId()` from AsyncLocalStorage |
+| Hardcoding `if (role === 'ADMIN')` in a route/handler | `@RequireOrgPermission(...)` + the DB mapping |
+| Allowing the OWNER's permissions to be edited | OWNER is implicit-all; reject every update |
+| Querying `userId` without `orgId` | `where: { userId, orgId }` (a user belongs to several orgs) |
+| Putting `OrgGuard` / `TenantContextMiddleware` in `common/` | HTTP infrastructure → `infrastructure/http/{guards,middlewares}/` (see `folder_structure_sop.md` §Enforcement) |
+| `OrgGuard` injecting `PrismaService` and querying directly | Go through `IMembershipRepository` — a guard must not bypass the repository |
+| `org-permissions.ts` (a domain catalog) placed in `common/` | `modules/tenant/domain/` — it is the tenant domain's vocabulary, not a cross-cutting abstraction |
 
 ---
 
-## 🔗 Liên quan
+## 🔗 Related
 
 - `directives/cqrs_pattern.md` — AsyncLocalStorage (transaction context)
-- `directives/database_standard.md` — Naming, index conventions
-- `docs/10_security_rbac.md` — RBAC hai tầng + Org RBAC động (chi tiết đầy đủ)
+- `directives/database_standard.md` — naming and index conventions
+- `docs/10_security_rbac.md` — the two RBAC layers + dynamic Org RBAC (full detail)

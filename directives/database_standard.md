@@ -1,17 +1,23 @@
 # SOP: Database & Prisma Standard
 
 > [!NOTE]
-> Directive này quy định chuẩn thiết kế Database Schema và thao tác với Prisma ORM cho toàn bộ dự án Microservices, đảm bảo tính nhất quán về kiểu dữ liệu, index, và an toàn khi clone/deploy.
+> This directive sets the database-schema design and Prisma ORM conventions for the whole
+> microservices project — consistent data types, indexing, and clone/deploy safety.
 
 ## 🎯 Goal
-Thống nhất chuẩn quy ước đặt tên (Naming Conventions), kiểu khóa chính (Primary Keys), cơ chế Soft Delete, và cấu trúc script tự động sinh (Auto-generation scripts) cho Prisma Client.
 
-## 📜 Kiến Trúc & Quy Ước Bắt Buộc
+One agreed standard for naming conventions, primary-key type, the soft-delete mechanism, and the
+auto-generation scripts for the Prisma Client.
 
-### 1. Naming Conventions (Quy ước đặt tên)
-- **Model Name:** PascalCase (VD: `User`, `RefreshToken`).
-- **Field Name:** camelCase (VD: `createdAt`, `fullName`).
-- **Database Column/Table:** Bắt buộc sử dụng attribute `@map` hoặc `@@map` để ánh xạ xuống Database dưới định dạng `snake_case`. Điều này giúp Database dễ nhìn hơn theo chuẩn SQL thuần, đồng thời code TS vẫn giữ được camelCase.
+## 📜 Required Architecture & Conventions
+
+### 1. Naming Conventions
+
+- **Model Name:** PascalCase (e.g. `User`, `RefreshToken`).
+- **Field Name:** camelCase (e.g. `createdAt`, `fullName`).
+- **Database Column/Table:** MUST use the `@map` / `@@map` attribute to map down to `snake_case` in
+  the database. This keeps the DB readable by plain-SQL conventions while TS code stays camelCase.
+
 ```prisma
 model RefreshToken {
   id        String   @id @default(uuid())
@@ -22,26 +28,52 @@ model RefreshToken {
 }
 ```
 
-### 2. Primary Keys (Khóa chính)
-- **Tuyệt đối không dùng** `autoincrement()` cho các hệ thống phân tán (Microservices).
-- Khóa chính luôn luôn dùng định dạng `String` với hàm gen `uuid()` hoặc `cuid()` để tránh đụng độ ID khi scale database hoặc merge data.
+### 2. Primary Keys
+
+- **Never use** `autoincrement()` in a distributed (microservices) system.
+- Primary keys are always `String`, generated with `uuid()` or `cuid()`, to avoid ID collisions when
+  scaling the database or merging data.
+
 ```prisma
 id String @id @default(uuid())
 ```
 
-### 3. Vòng đời dữ liệu (Soft Delete)
-- Hạn chế Hard Delete (`DELETE` vật lý). Dùng cột `deletedAt DateTime? @map("deleted_at")` cho model quan trọng (Organization, Space, KnowledgeItem…). (Phân biệt với `isActive` = disable tạm — xem lesson trong KNOWLEDGE_INDEX.)
-- **Filter `deletedAt: null` là TỰ ĐỘNG, KHÔNG ghi tay ở repo.** Cả 2 service có Prisma Client Extension (`$extends` trong `PrismaService`) tự chèn `deletedAt: null` cho các model trong `SOFT_DELETE_MODELS`, chỉ với `findUnique/findFirst/findMany/count`.
+### 3. Data Lifecycle (Soft Delete)
+
+- Avoid hard `DELETE`. Use a `deletedAt DateTime? @map("deleted_at")` column on important models
+  (Organization, Space, KnowledgeItem, …). (Distinct from `isActive` = temporarily disabled — see
+  the lesson in `KNOWLEDGE_INDEX`.)
+- **The `deletedAt: null` filter is AUTOMATIC, never hand-written in a repository.** Both services
+  have a Prisma Client Extension (`$extends` in `PrismaService`) that auto-injects `deletedAt: null`
+  for the models listed in `SOFT_DELETE_MODELS`, on `findUnique`/`findFirst`/`findMany`/`count`
+  only.
   - auth-service: `infrastructure/database/prisma/prisma.client.ts` (`['User','Role','Permission']`).
-  - core-api: `infrastructure/database/prisma/prisma.service.ts` (`['Organization','Space']`) — **composition**: `rawClient` (lifecycle, raw SQL) + `client` (đã extend); repo dùng `getTx() ?? this.prisma.client`; transaction manager gọi `this.prisma.client.$transaction` để `tx` cũng thừa hưởng filter.
-  - ⚠️ **Thêm model soft-delete mới → THÊM tên vào `SOFT_DELETE_MODELS`** (chỉ model thật sự có cột `deletedAt`, nếu không query sẽ lỗi).
-  - **Escape hatch:** truyền key `deletedAt` tường minh trong `where` (kể cả `undefined`) → extension KHÔNG override → dùng cho restore / tra cứu bản đã xóa.
-  - **Giới hạn:** extension KHÔNG lọc `update/updateMany/delete` và KHÔNG đụng raw SQL — cân nhắc khi thao tác ghi.
-- **Field UNIQUE + soft-delete → dùng PARTIAL unique index, KHÔNG `@unique` full.** `@@unique([slug], where: { deletedAt: null })` (cần `previewFeatures = ["partialIndexes"]` trong generator). Lý do: `@unique` full tính cả bản đã xóa → (1) slug bị "burn" vĩnh viễn, (2) lệch với app-check (findBySlug chỉ thấy bản live) → tạo mới báo "trống" nhưng DB ném P2002. Partial index enforce unique CHỈ trên bản chưa xóa → nhả slug khi xóa + khớp app-check. Ví dụ: `Organization.slug`. (Prisma `db push` tạo được; partial unique KHÔNG xuất hiện trong `WhereUniqueInput` nên query bằng `findFirst`, không `findUnique`.)
+  - core-api: `infrastructure/database/prisma/prisma.service.ts` (`['Organization','Space']`) —
+    **composition**: `rawClient` (lifecycle, raw SQL) + `client` (extended); repositories use
+    `getTx() ?? this.prisma.client`; the transaction manager calls `this.prisma.client.$transaction`
+    so `tx` inherits the filter too.
+  - ⚠️ **Adding a new soft-deletable model → ADD its name to `SOFT_DELETE_MODELS`** (only models
+    that genuinely have a `deletedAt` column, or the query errors).
+  - **Escape hatch:** pass a `deletedAt` key explicitly in `where` (even `undefined`) → the
+    extension does NOT override it → use this for restore flows / looking up deleted records.
+  - **Limitation:** the extension does NOT filter `update`/`updateMany`/`delete`, and does not touch
+    raw SQL — be deliberate about write operations.
+- **A field that is UNIQUE and soft-deletable → use a PARTIAL unique index, not a full `@unique`.**
+  `@@unique([slug], where: { deletedAt: null })` (requires `previewFeatures = ["partialIndexes"]` in
+  the generator block). Why: a full `@unique` counts deleted rows too → (1) the slug is "burned"
+  permanently, and (2) it diverges from the application check (`findBySlug` only sees live rows), so
+  creating a new one reports "available" while the DB throws `P2002`. A partial index enforces
+  uniqueness ONLY over non-deleted rows → the slug is released on delete and matches the app check.
+  Example: `Organization.slug`. (Prisma `db push` can create it; a partial unique does NOT appear in
+  `WhereUniqueInput`, so query it with `findFirst`, not `findUnique`.)
 
 ### 4. Prisma Client Generation
-- Prisma xả thư viện typing ra `node_modules` hoặc thư mục tùy chỉnh (e.g. `src/generated`). Do thư mục này không được đưa lên Git (bị block bởi `.gitignore`), nó sẽ gây lỗi "Cannot find module" nếu có Dev clone code về hoặc chạy Docker build mới.
-- **Bắt buộc** cài đặt script `postinstall` trong `package.json` của mọi Microservice có dùng Prisma:
+
+- Prisma emits its typings into `node_modules` or a custom directory (e.g. `src/generated`). That
+  directory is not committed to Git (blocked by `.gitignore`), so it causes "Cannot find module"
+  errors when a developer clones the repo or runs a fresh Docker build.
+- **Required**: a `postinstall` script in the `package.json` of every microservice using Prisma:
+
 ```json
 "scripts": {
   "postinstall": "npx prisma generate"
@@ -49,19 +81,24 @@ id String @id @default(uuid())
 ```
 
 ### 5. Prisma v7+ — `prisma.config.ts` (BREAKING CHANGE)
+
 > [!WARNING]
-> Từ **Prisma v7**, thuộc tính `url = env("DATABASE_URL")` trong khối `datasource` của `schema.prisma` **không còn được hỗ trợ** (lỗi code `P1012`). Đây là breaking change quan trọng.
+> As of **Prisma v7**, the `url = env("DATABASE_URL")` property inside `schema.prisma`'s
+> `datasource` block is **no longer supported** (error code `P1012`). This is a significant
+> breaking change.
 
-**Chuẩn bắt buộc cho mọi service dùng Prisma v7+:**
+**Required standard for every service on Prisma v7+:**
 
-1. **`schema.prisma`** — KHÔNG có `url`:
+1. **`schema.prisma`** — NO `url`:
+
 ```prisma
 datasource db {
   provider = "postgresql"
 }
 ```
 
-2. **`prisma.config.ts`** — Khai báo URL tại đây (Hỗ trợ Neon DB Connection Pool):
+2. **`prisma.config.ts`** — declare the URL here (supports the Neon DB connection pool):
+
 ```typescript
 import 'dotenv/config'
 import { defineConfig } from 'prisma/config'
@@ -70,14 +107,16 @@ export default defineConfig({
   schema: 'prisma/schema.prisma',
   migrations: { path: 'prisma/migrations' },
   datasource: {
-    // Prisma CLI luôn cần kết nối trực tiếp (Direct Connection) để chạy DB Push/Migrate.
-    // Ở Production (Neon), nó sẽ lấy DIRECT_URL. Ở Local Docker, nó fallback về DATABASE_URL.
+    // The Prisma CLI always needs a direct connection to run DB push/migrate.
+    // In production (Neon) it takes DIRECT_URL; on local Docker it falls back to DATABASE_URL.
     url: process.env.DIRECT_URL || process.env.DATABASE_URL!,
   }
 })
 ```
 
-3. **Runtime Client Init**: Khi khởi tạo PrismaClient trong code, truyền URL có pool (DATABASE_URL) vào constructor:
+3. **Runtime client init**: when constructing `PrismaClient` in code, pass the pooled URL
+   (`DATABASE_URL`) to the constructor:
+
 ```typescript
 const prisma = new PrismaClient({
   datasourceUrl: process.env.DATABASE_URL
@@ -85,8 +124,11 @@ const prisma = new PrismaClient({
 ```
 
 ### 6. Port Conflict — Docker Postgres
+
 > [!IMPORTANT]
-> Port `5432` (default Postgres) thường bị chiếm bởi Postgres cài sẵn trên máy host. Dự án này dùng **port `15432`** để tránh xung đột. Cấu hình chuẩn:
+> Port `5432` (default Postgres) is commonly taken by a host-installed Postgres. This project uses
+> **port `15432`** to avoid the conflict. Standard config:
+
 - `docker-compose.yml`: `"${DB_PORT:-15432}:5432"`
-- `.env` gốc: `DB_PORT=15432`
-- `.env` mỗi service: `DATABASE_URL=...@localhost:15432/...`
+- root `.env`: `DB_PORT=15432`
+- each service's `.env`: `DATABASE_URL=...@localhost:15432/...`

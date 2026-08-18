@@ -230,25 +230,29 @@ By strictly enforcing this folder structure and the "Pure POJO" rule for the CQR
 - The deciding question for a repo that both reads and writes: **"does its read result go straight out as the query response, or is it an intermediate step inside a handler/service?"** Straight-out → `application/queries/`. Intermediate → `domain/repositories/`. (Examples: `space_followers.findFollowerIds` feeds fan-out → domain; `ISearchChunkReader.semanticSearch` feeds RRF fusion → domain (read port, split from the write repo in ADR-0001); `INotificationQueryRepository.findByRecipient` → returns `NotificationDto[]` to the query handler → `application/queries/`.)
 - **NEVER** create `application/repositories/`. (Historical note: auth-service originally put query-repos there; migrated 2026-07-03.)
 
-## Command cần đọc dữ liệu giữa chừng → đọc qua domain/write repo, KHÔNG BAO GIỜ qua query-repo
+## A command that needs to read mid-flight reads through the domain/write repo, NEVER through a query-repo
 
-> Chốt 2026-07-23, sau audit tìm thấy mọi query-repo hiện tại (`membership.query-repository.ts`,
-> `knowledge.query-repository.ts`, `engagement.query-repository.ts`, auth `user`/`role.query-repository.ts`...)
-> đều KHÔNG tham gia transaction, khác với mọi write-repo (từ ADR-0001: write-repo chỉ tồn tại trong TxScope, query-repo dùng client thường — nên ranh giới này giờ là CẤU TRÚC, không còn là quy ước). Kiểm tra thực tế: hiện
-> tại **không có command handler nào** inject query-repository hoặc gọi `QueryBus` — query-repo chỉ
-> được gọi từ Controller. Vậy hiện trạng không phải bug, nhưng cần chốt thành luật để không ai vô
-> tình phá ranh giới.
+> Settled 2026-07-23, after an audit found that every current query-repo
+> (`membership.query-repository.ts`, `knowledge.query-repository.ts`, `engagement.query-repository.ts`,
+> auth's `user`/`role.query-repository.ts`, …) does **NOT** participate in a transaction, unlike every
+> write-repo (per ADR-0001: a write-repo only exists inside a `TxScope`, a query-repo uses the plain
+> client — so this boundary is now **STRUCTURAL**, no longer a convention). Reality check: **no command
+> handler currently** injects a query-repository or calls `QueryBus` — query-repos are only called from
+> a Controller. So the present state is not a bug, but it needs settling as a rule so nobody breaks the
+> boundary by accident.
 
-**Luật:** nếu một command handler cần đọc dữ liệu **transactionally-consistent** giữa chừng (thấy được
-write chưa commit trong cùng transaction), nó phải đọc qua **write repository trong TxScope** (`tx.<repo>`),
-**KHÔNG BAO GIỜ** qua query-repository — kể cả khi kỹ thuật có thể làm được ở giai đoạn hiện tại (query-repo
-và write-repo cùng trỏ 1 DB source-of-truth).
+**Rule:** if a command handler needs to read **transactionally-consistent** data mid-flight (must see
+writes not yet committed in the same transaction), it must read through the **write repository inside
+the `TxScope`** (`tx.<repo>`), **NEVER** through a query-repository — even where it is technically
+possible today (query-repo and write-repo currently point at the same source-of-truth DB).
 
-**Lý do sâu hơn "hiện tại chưa ai vi phạm" — đây là ranh giới CQRS thật, không chỉ tiện lợi kỹ thuật:**
-Query = luôn đọc từ **read DB** (read model / projection, có thể eventually-consistent). Command = ghi
-vào **source-of-truth DB**; nếu command cần đọc để quyết định logic, nó phải đọc từ chính source-of-truth
-(qua write-repo) để đảm bảo dữ liệu mới nhất — không phải từ read DB. Hôm nay Phase 3 (CQRS read model
-tách vật lý) chưa triển khai nên query-repo và write-repo tình cờ cùng 1 DB — luật này phải đúng CẢ
-TRƯỚC LẪN SAU khi Phase 3 triển khai, nên áp dụng từ bây giờ, không đợi tới lúc tách DB thật mới sửa.
-Nếu 1 command tương lai cần đọc, thêm method vào domain write-repo interface (không tái sử dụng
-query-repo dù có sẵn) — kể cả khi nghĩa là trùng lặp 1 phần logic đọc.
+**The reason goes deeper than "nobody has violated it yet" — this is a real CQRS boundary, not just a
+technical convenience:** Query = always reads from the **read DB** (read model / projection, may be
+eventually-consistent). Command = writes to the **source-of-truth DB**; if a command needs to read in
+order to decide something, it must read from the source-of-truth itself (through the write-repo) to be
+sure the data is current — not from the read DB. Today Phase 3 (physically splitting the CQRS read
+model) is not implemented, so query-repo and write-repo happen to share one DB — this rule must hold
+**BOTH BEFORE AND AFTER** Phase 3 lands, so it applies from now rather than being fixed only once the
+DBs are genuinely split. If a future command needs to read, add a method to the domain write-repo
+interface (do not reuse the query-repo even though one exists) — even when that means duplicating part
+of the read logic.

@@ -1,48 +1,48 @@
 # SOP: Eventing & Messaging Patterns
 
-> Reference architecture cho toàn bộ event-driven của Cortex: domain event (in-process) vs integration event (cross-service), CloudEvents envelope, transport routing (Kafka + queue), inbound dispatch.
-> Đọc file này TRƯỚC khi thêm bất kỳ event mới, consumer mới, hay transport mới.
+> The reference architecture for everything event-driven in Cortex: domain event (in-process) vs integration event (cross-service), the CloudEvents envelope, transport routing (Kafka + queue), inbound dispatch.
+> Read this file BEFORE adding any new event, new consumer, or new transport.
 >
-> Triết lý: **học pattern có tên trước, đừng tự chế.** Mỗi component dưới đây ánh xạ 1-1 vào một pattern đã được chứng minh (EIP của Hohpe & Woolf, DDD/eShop của Microsoft, CloudEvents của CNCF, binder của Spring Cloud Stream). Tên nguồn ghi ở cuối.
+> The philosophy: **learn the named pattern first, don't invent your own.** Every component below maps 1-to-1 onto a proven pattern (EIP by Hohpe & Woolf, DDD/eShop by Microsoft, CloudEvents by the CNCF, the binder from Spring Cloud Stream). Sources are listed at the end.
 
 ---
 
-## 📌 Khi nào đọc directive này
+## 📌 When to read this directive
 
-| Task | Mục cần đọc |
+| Task | Section to read |
 |---|---|
-| Side-effect giữa các aggregate TRONG 1 service | §1 Domain event |
-| Phát event cho service khác (qua Kafka/queue) | §1 Integration event + §2 + §3 |
-| Thêm 1 event type mới | §2 (định nghĩa) + §3 (routing) |
-| Viết consumer / handler mới | §4 Inbound |
-| Thêm transport mới (BullMQ, SQS…) | §3 Transport + binder |
+| A side effect between aggregates WITHIN one service | §1 Domain event |
+| Emitting an event for another service (via Kafka/queue) | §1 Integration event + §2 + §3 |
+| Adding a new event type | §2 (definition) + §3 (routing) |
+| Writing a new consumer / handler | §4 Inbound |
+| Adding a new transport (BullMQ, SQS, …) | §3 Transport + binder |
 
 ---
 
-## 1. Domain event vs Integration event — KHÔNG trộn
+## 1. Domain event vs Integration event — do NOT conflate them
 
-Đây là 2 artifact **khác nhau**, thiết kế khác nhau (Microsoft eShop, Fowler). Trộn 1 cái là mất cả tự do lẫn ổn định.
+These are two **different** artifacts with different designs (Microsoft eShop, Fowler). Merging them loses both freedom and stability.
 
 | | **Domain event** | **Integration event** |
 |---|---|---|
-| Phạm vi | trong 1 bounded context, in-process | cross-service, qua broker |
-| Đồng bộ? | sync/async, ngay lập tức | luôn async |
-| Nội dung | đầy đủ chi tiết domain | payload phẳng, ID ổn định, versioned |
-| Transport | `EventBus` in-memory (shared-kernel/cqrs) | CloudEvents qua Kafka/queue |
-| Evolution | tự do đổi | đổi chậm, thận trọng (nhiều consumer phụ thuộc) |
+| Scope | within one bounded context, in-process | cross-service, via a broker |
+| Synchronous? | sync/async, immediate | always async |
+| Content | full domain detail | a flat payload, stable IDs, versioned |
+| Transport | the in-memory `EventBus` (shared-kernel/cqrs) | CloudEvents over Kafka/queue |
+| Evolution | change freely | change slowly and carefully (many consumers depend on it) |
 | Code | `IEvent { name }` + `IEventHandler` | `CloudEvent<T>` + `IIntegrationEventHandler` |
 
-**Luồng canonical (eShop):** `command handler → (raise domain event) → domain handler → tạo integration event → outbox`. Hiện tại Cortex đi thẳng `command handler → outbox` (đơn giản hoá có ý thức cho scale này). Khi credit/saga vào (Phase 5), tách tầng domain-event trung gian.
+**The canonical flow (eShop):** `command handler → (raise a domain event) → domain handler → create an integration event → outbox`. Cortex currently goes straight from `command handler → outbox` (a conscious simplification at this scale). When credits/sagas arrive (Phase 5), split out the intermediate domain-event layer.
 
-**Rule:**
-- Domain event để enforce rule giữa aggregate trong cùng service → dùng `EventBus`.
-- Integration event để báo cho service khác → đi qua outbox → CloudEvents. KHÔNG bao giờ publish entity/domain object thô ra Kafka.
+**Rules:**
+- Use a domain event to enforce a rule between aggregates in the same service → use the `EventBus`.
+- Use an integration event to notify another service → through the outbox → CloudEvents. NEVER publish a raw entity/domain object to Kafka.
 
 ---
 
-## 2. Event definition — typed factory, một nguồn
+## 2. Event definition — a typed factory, one source
 
-Mỗi integration event có 1 file định nghĩa ở `shared-kernel/src/messaging/events/definitions/<event>.event.ts`, gom **payload type + factory** (co-locate contract). Đây là "construct an toàn như command" — quên field / sai shape = compile error.
+Every integration event has one definition file at `shared-kernel/src/messaging/events/definitions/<event>.event.ts`, holding **the payload type + the factory** together (a co-located contract). This is "construction as safe as a command" — a forgotten field or a wrong shape is a compile error.
 
 ```typescript
 // shared-kernel/src/messaging/events/definitions/knowledge-published.event.ts
@@ -54,7 +54,7 @@ export const KnowledgePublishedEvent = defineEvent<KnowledgePublishedPayload>({
 })
 ```
 
-Producer chỉ gọi `.create()` — `eventType`/`aggregateType` cố định, payload typed:
+A producer only calls `.create()` — `eventType`/`aggregateType` are fixed, and the payload is typed:
 ```typescript
 await this.outboxRepo.append(
   KnowledgePublishedEvent.create({ aggregateId, orgId, payload }),
@@ -62,130 +62,129 @@ await this.outboxRepo.append(
 ```
 
 **Rules:**
-- Mọi event type khai trong `EventType` const (1 nguồn, không magic string rải rác).
-- `EventType` value đặt theo **past-tense** (`KnowledgePublished`, không `PublishKnowledge`).
-- Mỗi event PHẢI có file definition + `defineEvent`. Không append outbox bằng object literal thô.
+- Every event type is declared in the `EventType` const (one source; no magic strings scattered around).
+- `EventType` values are named in the **past tense** (`KnowledgePublished`, not `PublishKnowledge`).
+- Every event MUST have a definition file + `defineEvent`. Never append to the outbox with a raw object literal.
 
 ---
 
-## 3. Wire contract = CloudEvents 1.0 + transport routing
+## 3. The wire contract = CloudEvents 1.0 + transport routing
 
 ### 3.1 Envelope — CloudEvents 1.0 (CNCF)
 
-Wire format là **CloudEvents 1.0**, KHÔNG phải struct tự chế. Lý do: không có chuẩn thì mỗi team tự đặt tên field → cần translator để nói chuyện với tool ngoài. CloudEvents protocol-agnostic, có Kafka binding sẵn, interop với Knative/Argo/Event Grid.
+The wire format is **CloudEvents 1.0**, NOT a bespoke struct. The reason: without a standard, every team invents its own field names → you need a translator to talk to any external tool. CloudEvents is protocol-agnostic, has a ready-made Kafka binding, and interoperates with Knative/Argo/Event Grid.
 
 ```typescript
 interface CloudEvent<TData> {
   specversion: '1.0'
-  id: string          // outbox row id (UUID v7) — dedup key của consumer
-  source: string      // '/cortex/core-api/KnowledgeItem' (producing context)
-  type: string        // EventType.* — khóa routing (topic + transport + handler)
+  id: string          // the outbox row id (UUID v7) — the consumer's dedup key
+  source: string      // '/cortex/core-api/KnowledgeItem' (the producing context)
+  type: string        // EventType.* — the routing key (topic + transport + handler)
   time: string        // RFC3339
-  subject?: string    // aggregate id (resource trong source)
+  subject?: string    // the aggregate id (the resource within source)
   datacontenttype?: string  // 'application/json'
-  data: TData         // payload
-  orgid: string       // extension — multi-tenancy (tên MUST lowercase)
-  partitionkey: string // extension — Kafka message key (= aggregate id), giữ ordering
+  data: TData         // the payload
+  orgid: string       // extension — multi-tenancy (the name MUST be lowercase)
+  partitionkey: string // extension — the Kafka message key (= the aggregate id), preserving ordering
 }
 ```
 
-**Quan trọng:** outbox table (storage nội bộ producer) giữ column riêng (`eventType`, `aggregateId`…); CloudEvent được **map từ outbox row lúc publish** (PollingPublisher). Storage schema ≠ public contract — đừng leak DB schema ra wire.
+**Important:** the outbox table (the producer's internal storage) keeps its own columns (`eventType`, `aggregateId`, …); the CloudEvent is **mapped from the outbox row at publish time** (PollingPublisher). The storage schema ≠ the public contract — don't leak the DB schema onto the wire.
 
-### 3.2 Transport selection — "binder" pattern (Spring Cloud Stream)
+### 3.2 Transport selection — the "binder" pattern (Spring Cloud Stream)
 
-Kafka và queue **sống chung**. Mỗi event khai đi transport nào trong `EVENT_TRANSPORT_MAP` (giống "binder per binding" của Spring Cloud Stream). `CompositeMessagePublisher` fan-out theo map. Đổi 1 dòng map để chuyển/ thêm transport — producer code không đổi.
+Kafka and the queue **coexist**. Each event declares which transport it takes in `EVENT_TRANSPORT_MAP` (like Spring Cloud Stream's "binder per binding"). `CompositeMessagePublisher` fans out according to the map. Change one line of the map to switch/add a transport — producer code doesn't change.
 
 ```typescript
 EVENT_TRANSPORT_MAP[EventType.KNOWLEDGE_PUBLISHED] = [Transport.KAFKA]
-// đổi thành [Transport.KAFKA, Transport.QUEUE] để fan ra cả 2
+// change to [Transport.KAFKA, Transport.QUEUE] to fan out to both
 ```
 
-Topic Kafka tra qua `EVENT_TOPIC_MAP` (cả 2 map ở `shared-kernel/src/messaging/routing/maps.ts`). Cả 2 là `Record<EventTypeValue, …>` → thêm event mà quên map = compile error.
+Kafka topics are looked up via `EVENT_TOPIC_MAP` (both maps live in `shared-kernel/src/messaging/routing/maps.ts`). Both are `Record<EventTypeValue, …>` → adding an event and forgetting the map is a compile error.
 
 **Rules:**
-- Adapter mới = implement `ITransportPublisher` (có `.transport`) + thêm vào providers của `MessagingModule`. KHÔNG sửa PollingPublisher.
-- Mọi adapter sống chung 1 chỗ (`MessagingModule`); `KafkaModule` chỉ giữ raw client.
-- Kafka key LUÔN là `partitionkey` (= aggregate id) để giữ per-aggregate ordering.
+- A new adapter = implement `ITransportPublisher` (with a `.transport`) + add it to `MessagingModule`'s providers. Do NOT modify PollingPublisher.
+- Every adapter lives in one place (`MessagingModule`); `KafkaModule` holds only the raw client.
+- The Kafka key is ALWAYS `partitionkey` (= the aggregate id) to preserve per-aggregate ordering.
 
 ---
 
 ## 4. Inbound — outbox, idempotency, dispatch
 
 ### 4.1 Producer reliability
-- **Transactional Outbox** (Guaranteed Delivery): ghi business + outbox trong cùng 1 DB tx. Xem `resilience_patterns.md §2`.
-- **PollingPublisher** @Interval: at-least-once. Fail → retry → `FAILED_DLQ` sau N attempts (`OUTBOX_MAX_ATTEMPTS`).
-- **Observability (2026-07-31):** trước đây chỉ mở DB mới biết PENDING/INFLIGHT/FAILED_DLQ backlog, và
-  1 row rơi vào `FAILED_DLQ` vĩnh viễn log CHUNG dòng với lần retry thường. Đã tách: `core_api_outbox_dead_letter_total{eventType}`
-  (Counter, chỉ tăng khi row THỰC SỰ hết `maxAttempts`) + `core_api_outbox_backlog{status}` (Gauge, `OutboxMetricsReporter`
-  @Interval 30s snapshot count theo status) — cả 2 lên `GET /metrics` tự động (prom-client default registry). Recording rule
-  `outbox:dead_letter_rate5m` (`docker-init/prometheus/rules.yml`) + alert `Outbox Dead-Letter Rate Above Zero`
-  (`docker-init/grafana/provisioning/alerting/rules.yaml`), cùng khuôn với `notification:dlq_rate5m`/`search:dlq_rate5m`.
-- **Cleanup (2026-07-31):** Postgres KHÔNG tự hết hạn row như Kafka topic retention — `OutboxCleanupService`
-  (`@Cron('0 3 * * *')`, cùng khuôn `IdempotencyCleanupService` — `resilience_patterns.md §1`) xoá row
-  `PROCESSED` cũ hơn `OUTBOX_PURGE_RETENTION_DAYS` (mặc định 30 ngày) mỗi đêm. **KHÔNG BAO GIỜ đụng vào
-  `FAILED_DLQ`** — row đó cần người triage trước, xoá tự động sẽ mất luôn bằng chứng lỗi. Saga compensation
-  có `SagaCompensationCleanupService` tương đương, xoá row `DONE` theo `SAGA_COMPENSATION_PURGE_RETENTION_DAYS`.
-- **HA-safe claim (competing consumers):** poll KHÔNG `findMany(PENDING)` trần — hai replica sẽ publish trùng. Claim atomically bằng `UPDATE … SET status='INFLIGHT' … WHERE id IN (SELECT id … WHERE status='PENDING' … FOR UPDATE SKIP LOCKED) RETURNING id`. Mỗi replica bỏ qua row replica khác đã khoá → không giẫm chân. **Publish NGOÀI transaction** (không giữ row-lock qua Kafka network I/O). Crash giữa claim↔publish để lại row `INFLIGHT` → **Reaper** @Interval reset `INFLIGHT` quá `OUTBOX_CLAIM_TIMEOUT_MS` về `PENDING` (redeliver được idempotent receiver nuốt). Cờ `running`/`reaping` chỉ chống overlap trong 1 process — không phải cơ chế mutual-exclusion (đó là việc của SKIP LOCKED).
-- **Idempotent producer**: `producer({ idempotent: true })` (kafkajs tự set `acks=all`, `maxInFlightRequests≤5`) — chặn trùng do kafkajs retry ở broker. Kết hợp với Idempotent Receiver (§4.2) → at-least-once nhưng kết quả như exactly-once.
-- **Partition key = danh tính aggregate ổn định, KHÔNG phải row id.** Nếu 2 event của cùng 1 aggregate keyed khác nhau → lạc partition → mất thứ tự (vd unfollow xử lý trước follow → ghost follower). FollowCreated/FollowRemoved đều key bằng `Follow.streamKey(userId, targetType, targetId)`, KHÔNG bằng `follow.id` (unfollow không có row id). Khớp đúng PK projection `[spaceId, userId]` phía consumer.
-- **Checklist chọn `aggregateId` cho event mới** — tự hỏi 2 câu trước khi viết `.create({ aggregateId: ... })`:
-  1. Aggregate có **1 row DB sống xuyên suốt mọi event** trong vòng đời nó (kể cả sau update/soft-delete)? → Dùng thẳng `row.id` (case `KnowledgeItem` — Published/Archived/MarkedStale đều update cùng 1 row).
-  2. Có khả năng **row gốc không còn tồn tại** lúc 1 event sau bắn ra (quan hệ N-N bị xoá cứng như Follow, hoặc aggregate thuần event-sourced không có row bền như `CreditAccount`)? → PHẢI dùng **deterministic key** ghép từ field nghiệp vụ ổn định — tính được **không cần query DB trước**, và **giống hệt nhau** cho mọi event của "con" aggregate đó. VD: `Follow.streamKey(userId, targetType, targetId)`, `CreditAccount.aggregateId = orgId:userId`.
-  Câu hỏi quyết định nhanh: *"2 event của cùng 1 'thứ' này, thứ tự có quan trọng không, và event sau có thể bắn ra khi row của event trước đã biến mất không?"* — Có 1 trong 2 → deterministic key, không được `row.id`.
+- **Transactional Outbox** (Guaranteed Delivery): write the business change + the outbox row in the same DB transaction. See `resilience_patterns.md §2`.
+- **PollingPublisher** on an `@Interval`: at-least-once. Failure → retry → `FAILED_DLQ` after N attempts (`OUTBOX_MAX_ATTEMPTS`).
+- **Observability (2026-07-31):** previously the only way to see the PENDING/INFLIGHT/FAILED_DLQ backlog was opening the DB, and a row landing permanently in `FAILED_DLQ` logged on the SAME line as an ordinary retry. Now split out: `core_api_outbox_dead_letter_total{eventType}`
+  (a Counter, incremented only when a row GENUINELY exhausts `maxAttempts`) + `core_api_outbox_backlog{status}` (a Gauge; `OutboxMetricsReporter`
+  snapshots counts by status on a 30s `@Interval`) — both surface on `GET /metrics` automatically (the prom-client default registry). The recording rule
+  `outbox:dead_letter_rate5m` (`docker-init/prometheus/rules.yml`) + the alert `Outbox Dead-Letter Rate Above Zero`
+  (`docker-init/grafana/provisioning/alerting/rules.yaml`) follow the same shape as `notification:dlq_rate5m`/`search:dlq_rate5m`.
+- **Cleanup (2026-07-31):** Postgres does NOT expire rows by itself the way Kafka topic retention does — `OutboxCleanupService`
+  (`@Cron('0 3 * * *')`, the same shape as `IdempotencyCleanupService` — `resilience_patterns.md §1`) deletes
+  `PROCESSED` rows older than `OUTBOX_PURGE_RETENTION_DAYS` (30 days by default) every night. **NEVER touch
+  `FAILED_DLQ`** — those rows need human triage first, and deleting them automatically destroys the evidence of the failure. Saga compensation
+  has an equivalent `SagaCompensationCleanupService`, deleting `DONE` rows according to `SAGA_COMPENSATION_PURGE_RETENTION_DAYS`.
+- **HA-safe claim (competing consumers):** the poll does NOT use a bare `findMany(PENDING)` — two replicas would publish duplicates. Claim atomically with `UPDATE … SET status='INFLIGHT' … WHERE id IN (SELECT id … WHERE status='PENDING' … FOR UPDATE SKIP LOCKED) RETURNING id`. Each replica skips rows another replica has already locked → no treading on each other. **Publish OUTSIDE the transaction** (don't hold a row lock across Kafka network I/O). A crash between claim and publish leaves an `INFLIGHT` row → the **Reaper** (`@Interval`) resets `INFLIGHT` rows older than `OUTBOX_CLAIM_TIMEOUT_MS` back to `PENDING` (the redelivery is absorbed by the idempotent receiver). The `running`/`reaping` flags only prevent overlap within one process — they are not a mutual-exclusion mechanism (that's SKIP LOCKED's job).
+- **Idempotent producer**: `producer({ idempotent: true })` (kafkajs sets `acks=all` itself; `maxInFlightRequests≤5` must be set explicitly — see the correction in `resilience_patterns.md §1.4`) — preventing duplicates caused by kafkajs retrying at the broker. Combined with the Idempotent Receiver (§4.2) → at-least-once delivery with an exactly-once result.
+- **The partition key is a stable aggregate identity, NOT a row id.** If two events for the same aggregate are keyed differently → they land on different partitions → ordering is lost (e.g. an unfollow processed before its follow → a ghost follower). FollowCreated/FollowRemoved are both keyed by `Follow.streamKey(userId, targetType, targetId)`, NOT by `follow.id` (an unfollow has no row id). This matches the projection's PK `[spaceId, userId]` on the consumer side.
+- **A checklist for choosing `aggregateId` for a new event** — ask two questions before writing `.create({ aggregateId: ... })`:
+  1. Does the aggregate have **one DB row that survives every event** in its lifetime (including after updates/soft-deletes)? → Use `row.id` directly (the `KnowledgeItem` case — Published/Archived/MarkedStale all update the same row).
+  2. Is it possible that **the original row no longer exists** when a later event fires (an N-N relation hard-deleted like Follow, or a purely event-sourced aggregate with no durable row, like `CreditAccount`)? → You MUST use a **deterministic key** composed from stable business fields — computable **without querying the DB first**, and **identical** for every event of that "logical" aggregate. E.g. `Follow.streamKey(userId, targetType, targetId)`, `CreditAccount.aggregateId = orgId:userId`.
+  The quick decision question: *"For two events about this same 'thing', does order matter, and can a later event fire after the earlier event's row has disappeared?"* — a yes to either → deterministic key, never `row.id`.
 
 ### 4.2 Consumer
 
-> ✅ **TRẠNG THÁI: LIVE ở notification-service (Milestone B2 + hardening, 2026-07-01).** `NotificationEventsConsumer` (group `notification-service-group`) subscribe **cả** `knowledge-events` + `engagement-events` → 1 `EventRouter` register 3 handlers: `ItemPublishedHandler` (fan-out NEW_IN_SPACE to space followers, exclude author) + `FollowCreatedHandler` (upsert `space_followers` projection) + `FollowRemovedHandler` (delete from projection). `space_followers` = local projection trong `notification_db`, KHÔNG join `core_db`. FollowCreated/Removed từ `core-api/engagement` (`EngagementModule` import `OutboxModule`; follow/unfollow handlers append event qua `OUTBOX_REPOSITORY`, `transactional:true`). Idempotent via `@@unique([recipientUserId, sourceEventId])` + `createMany skipDuplicates`. **DLQ LIVE:** poison pill (parse fail) → `DeadLetterProducer` đẩy `<topic>.DLQ` NGAY + commit; handler error → bounded retry (`KAFKA_CONSUMER_MAX_RETRIES`, linear backoff) → hết budget thì DLQ + commit. Consumer LUÔN commit (sau success / sau DLQ) → **không bao giờ block partition head-of-line**.
-- **Polling Consumer** (kafkajs raw, KHÔNG NestJS `@EventPattern`) — chủ động kiểm soát offset commit + idempotency, tránh coupling req-reply của NestJS transport.
-- **EventRouter** (Message Dispatcher / `@EventPattern` viết tay): map `type → handler`, **1:1** trong 1 consumer group. Adapter chỉ parse + `router.route(event)`, không switch tay. `register()` ném khi trùng type — guard, không phải thiếu tính năng.
-- **Fan-out 1 event → N concern = N consumer GROUP**, KHÔNG phải N handler trong 1 router. Mỗi concern (feed/search/notify) là 1 consumer group riêng (group id riêng theo concern, vd `KAFKA_FEED_CONSUMER_GROUP`); Kafka giao bản sao event cho từng group → fail/scale độc lập. ⚠️ KHÔNG cho 2 consumer dùng chung 1 group id (sẽ chia partition thay vì fan-out).
-- **Idempotent Receiver**: handler check `ProcessedEvent` theo `event.id`. Xem `resilience_patterns.md §1`.
-- **Retry → DLQ**: handler lỗi → retry bounded (`CONSUMER_MAX_RETRIES`, backoff tuyến tính), hết retry → `DeadLetterProducer.send()` đẩy sang `<topic>.DLQ` (helper `deadLetterTopic()`). Poison pill (parse fail) → dead-letter NGAY (retry vô nghĩa). Message lỗi được **cô lập, không mất, không block partition**.
+> ✅ **STATUS: LIVE in notification-service (Milestone B2 + hardening, 2026-07-01).** `NotificationEventsConsumer` (group `notification-service-group`) subscribes to **both** `knowledge-events` and `engagement-events` → one `EventRouter` registers 3 handlers: `ItemPublishedHandler` (fan-out NEW_IN_SPACE to space followers, excluding the author) + `FollowCreatedHandler` (upsert the `space_followers` projection) + `FollowRemovedHandler` (delete from the projection). `space_followers` is a local projection inside `notification_db`, NOT a join against `core_db`. FollowCreated/Removed come from `core-api/engagement` (`EngagementModule` imports `OutboxModule`; the follow/unfollow handlers append the event via `OUTBOX_REPOSITORY`, `transactional:true`). Idempotent via `@@unique([recipientUserId, sourceEventId])` + `createMany skipDuplicates`. **DLQ LIVE:** a poison pill (parse failure) → `DeadLetterProducer` pushes to `<topic>.DLQ` IMMEDIATELY + commits; a handler error → bounded retry (`KAFKA_CONSUMER_MAX_RETRIES`, linear backoff) → on budget exhaustion, DLQ + commit. The consumer ALWAYS commits (after success / after DLQ) → it **never blocks the partition head-of-line**.
+- **Polling Consumer** (raw kafkajs, NOT NestJS `@EventPattern`) — actively controlling offset commits + idempotency, avoiding the req-reply coupling of the NestJS transport.
+- **EventRouter** (a Message Dispatcher / a hand-written `@EventPattern`): maps `type → handler`, **1:1** within one consumer group. The adapter only parses + `router.route(event)`, with no hand-written switch. `register()` throws on a duplicate type — that is a guard, not a missing feature.
+- **Fanning one event out to N concerns = N consumer GROUPS**, NOT N handlers in one router. Each concern (feed/search/notify) is its own consumer group (with its own group id per concern, e.g. `KAFKA_FEED_CONSUMER_GROUP`); Kafka delivers a copy of the event to each group → independent failure/scaling. ⚠️ NEVER let two consumers share one group id (they would split partitions instead of fanning out).
+- **Idempotent Receiver**: the handler checks `ProcessedEvent` by `event.id`. See `resilience_patterns.md §1`.
+- **Retry → DLQ**: a handler error → bounded retry (`CONSUMER_MAX_RETRIES`, linear backoff); on exhaustion → `DeadLetterProducer.send()` pushes to `<topic>.DLQ` (the `deadLetterTopic()` helper). A poison pill (parse failure) → dead-letter IMMEDIATELY (retrying is pointless). A failing message is **isolated, not lost, and doesn't block the partition**.
 
-### 4.2a DLQ Replay — bước tiếp theo sau khi message vào `.DLQ`
+### 4.2a DLQ Replay — the next step after a message lands in `.DLQ`
 
-> ✅ **TRẠNG THÁI: LIVE ở notification-service + search-service (review ADR-0001, 2026-07-30).** Trước bản này, `.DLQ` là **durable store không có reprocessor** — message nằm im, "triage" nghĩa là người đọc tay Kafka UI vô thời hạn. `DlqReplayConsumer` (shared-kernel) đóng gap đó.
+> ✅ **STATUS: LIVE in notification-service + search-service (ADR-0001 review, 2026-07-30).** Before this version, `.DLQ` was a **durable store with no reprocessor** — messages sat there, and "triage" meant a human reading Kafka UI by hand, indefinitely. `DlqReplayConsumer` (shared-kernel) closes that gap.
 >
-> **2026-08-04 — full-jitter exponential backoff (trước đó là delay CỐ ĐỊNH 60s).** User đặt đúng câu hỏi: consumer chính đã retry-rồi-lỗi, DLQ replay đấm lại NGAY sau 60s cố định thì có khác gì retry tiếp — nếu nguyên nhân là downstream quá tải lúc cao điểm, 60s không backoff không đủ để nó hồi, và các message chết cùng lúc trong 1 outage sẽ replay đồng pha rồi đấm lại downstream cùng lúc (giống thundering herd). Sửa: delay = `random(0, min(maxReplayDelayMs, baseReplayDelayMs·2^replayCount))` — công thức **giống hệt** full-jitter đã định nghĩa cho `RetryMiddleware` ở `resilience_patterns.md §Retry`, không phải phát minh cơ chế mới. Đây vẫn KHÔNG phải cơ chế điều tiết tải chủ động (không đo lag/CPU downstream, không circuit breaker) — chỉ là delayed-retry giãn cách hợp lý hơn theo thời gian + jitter chống đồng pha. Muốn giảm tải chủ động thật sự (theo dõi tỷ lệ lỗi/lag rồi tạm dừng cả replay) thì cần thêm circuit breaker, chưa làm.
+> **2026-08-04 — full-jitter exponential backoff (it was previously a FIXED 60s delay).** The user asked exactly the right question: the main consumer has already retried and failed, so if DLQ replay hits again after a fixed 60s, how is that different from just retrying — if the cause is an overloaded downstream at peak, 60s without backoff isn't enough for it to recover, and every message that died during one outage will replay in phase and hammer the downstream simultaneously (a thundering herd). Fixed: delay = `random(0, min(maxReplayDelayMs, baseReplayDelayMs·2^replayCount))` — **exactly the same** full-jitter formula already defined for `RetryMiddleware` in `resilience_patterns.md §Retry`, not a newly invented mechanism. This is still NOT an active load-regulation mechanism (it doesn't measure downstream lag/CPU, and has no circuit breaker) — only a delayed retry that spaces out more sensibly over time, with jitter to break phase alignment. Genuine active load shedding (watching the error rate/lag and pausing replay entirely) would need a circuit breaker; not done.
 
-**Luồng đầy đủ, 2 consumer group KHÔNG bao giờ trộn lẫn:**
+**The full flow — 2 consumer groups that NEVER mix:**
 ```
-topic gốc ──► ResilientEventConsumer (group: <service>-group)
-                │ hết retry
+original topic ──► ResilientEventConsumer (group: <service>-group)
+                │ retries exhausted
                 ▼
            DeadLetterProducer.send() ──► topic.DLQ
                                             │
                                             ▼
                               DlqReplayConsumer (group: <service>-dlq-replay-group)
-                                 chờ delay = random(0, min(maxReplayDelayMs,
+                                 waits delay = random(0, min(maxReplayDelayMs,
                                        baseReplayDelayMs·2^replayCount))
-                                       (mặc định base=60s, cap=5 phút — full jitter)
-                                 đọc x-dlq-replay-count từ header
-                                 replayCount >= maxReplays (mặc định 3)?
-                                   ├─ CÓ  → log + commit, bỏ mặc trong topic.DLQ (triage tay)
-                                   └─ KHÔNG → republish NGUYÊN BYTES về topic gốc
-                                              (tăng x-dlq-replay-count, KHÔNG parse lại
-                                              CloudEvent — có thể vẫn là poison pill)
-                                              → quay lại đầu vòng lặp trên
+                                       (defaults base=60s, cap=5 minutes — full jitter)
+                                 reads x-dlq-replay-count from the header
+                                 replayCount >= maxReplays (default 3)?
+                                   ├─ YES → log + commit, leave it in topic.DLQ (manual triage)
+                                   └─ NO  → republish the RAW BYTES to the original topic
+                                              (incrementing x-dlq-replay-count, NOT re-parsing
+                                              the CloudEvent — it may still be a poison pill)
+                                              → back to the top of the loop above
 ```
 
-**Định vị file (đi tìm luồng này lần sau, đọc theo đúng thứ tự):**
-1. `infrastructure/kafka/kafka.module.ts` (`@Global`) — chỉ giữ `KafkaClientService` (raw `Kafka` client) + `DeadLetterProducer` (implements `IDeadLetterProducer`, dùng bởi consumer chính).
-2. `infrastructure/kafka/kafka-client.service.ts` — **mọi nơi service này chạm vào Kafka để thoả `MinimalConsumer<T>`/`MinimalProducer` (shared-kernel) đều đi qua đúng 2 method của file này**: `createConsumer<T>(config)`, `createProducer()`. (2026-07-31: từng có 2 class adapter riêng `implements` tường minh cho mục đích "landmark"; 2026-08-01 phát hiện adapter không thêm hành vi nào — raw kafkajs Consumer/Producer đã tự thoả structural type — nên gộp lại thành 1 dòng ép kiểu `as unknown as` mỗi method, bỏ hẳn 2 class. `MinimalDlqProducer` cũng đổi tên thành `MinimalProducer` cùng lúc — shape của nó không có gì đặc thù DLQ, y hệt `MinimalConsumer` dùng chung cho cả 2 luồng.)
-3. `modules/<domain>/infrastructure/consumers/<domain>-events.consumer.ts` (hoặc `knowledge-indexer.consumer.ts` ở search-service) — wiring **consumer chính**: `EventRouter` + `ResilientEventConsumer`, group `<service>-group`.
-4. `modules/<domain>/infrastructure/consumers/dlq-replay.consumer.ts` — wiring **consumer replay**: `SharedDlqReplayConsumer`, group riêng `<service>-dlq-replay-group` (đăng ký ở `<domain>.module.ts`, KHÔNG ở `KafkaModule` — đây là wiring riêng của domain, không phải infra dùng chung toàn app).
+**File locations (when tracing this flow next time, read them in this order):**
+1. `infrastructure/kafka/kafka.module.ts` (`@Global`) — holds only `KafkaClientService` (the raw `Kafka` client) + `DeadLetterProducer` (implementing `IDeadLetterProducer`, used by the main consumer).
+2. `infrastructure/kafka/kafka-client.service.ts` — **everywhere this service touches Kafka to satisfy `MinimalConsumer<T>`/`MinimalProducer` (shared-kernel) goes through exactly two methods in this file**: `createConsumer<T>(config)` and `createProducer()`. (2026-07-31: there used to be two separate adapter classes explicitly `implements`ing them for "landmark" purposes; on 2026-08-01 it was found the adapters added no behaviour — the raw kafkajs Consumer/Producer already satisfy the structural type — so they collapsed into one `as unknown as` cast per method, dropping both classes. `MinimalDlqProducer` was renamed `MinimalProducer` at the same time — its shape has nothing DLQ-specific about it, exactly like `MinimalConsumer`, shared by both flows.)
+3. `modules/<domain>/infrastructure/consumers/<domain>-events.consumer.ts` (or `knowledge-indexer.consumer.ts` in search-service) — the **main consumer**'s wiring: `EventRouter` + `ResilientEventConsumer`, group `<service>-group`.
+4. `modules/<domain>/infrastructure/consumers/dlq-replay.consumer.ts` — the **replay consumer**'s wiring: `SharedDlqReplayConsumer`, its own group `<service>-dlq-replay-group` (registered in `<domain>.module.ts`, NOT in `KafkaModule` — this is domain-specific wiring, not app-wide shared infrastructure).
 
 **Rules:**
-- 2 consumer PHẢI khác group id (§4.2 rule fan-out cũng áp dụng ở đây, lý do khác: replay có nhịp phút, consumer chính có nhịp mili-giây — 2 tuning knob khác nhau, gộp group sẽ làm replay cạnh tranh offset với consumer chính).
-- Đếm số lần replay nằm TRONG header message (`x-dlq-replay-count`), không phải bảng phụ trong DB — stateless qua restart service.
-- Hết `maxReplays` → **không escalate đi đâu nữa**, message ở lại `.DLQ` cho người triage tay — không phải bug, là điểm dừng có chủ đích.
+- The 2 consumers MUST have different group ids (the §4.2 fan-out rule applies here too, for a different reason: replay operates on a scale of minutes and the main consumer on milliseconds — two different tuning knobs; merging groups would make replay compete for offsets with the main consumer).
+- The replay count lives IN the message header (`x-dlq-replay-count`), not in an auxiliary DB table — stateless across service restarts.
+- On exhausting `maxReplays` → **no further escalation anywhere**, the message stays in `.DLQ` for a human to triage — not a bug, a deliberate stopping point.
 
-### 4.3 Handler — giống MediatR `INotificationHandler<T>`
+### 4.3 Handler — like MediatR's `INotificationHandler<T>`
 ```typescript
 class ItemPublishedHandler implements IIntegrationEventHandler<KnowledgePublishedPayload> {
   readonly eventType = EventType.KNOWLEDGE_PUBLISHED         // subscription declaration
-  // Safe under redelivery: dedup nằm NGAY trong lệnh ghi — createMany({ skipDuplicates })
-  // trên @@unique([recipientUserId, sourceEventId]), không cần check-rồi-ghi tách rời.
+  // Safe under redelivery: dedup lives RIGHT IN the write statement — createMany({ skipDuplicates })
+  // over @@unique([recipientUserId, sourceEventId]), with no separate check-then-write.
   async handle(event: CloudEvent<KnowledgePublishedPayload>) {
     await this.notificationRepo.insertMany(rows)
   }
@@ -193,58 +192,58 @@ class ItemPublishedHandler implements IIntegrationEventHandler<KnowledgePublishe
 ```
 
 **Rules:**
-- Handler là **subscriber** → tự khai `readonly eventType` (event = 1:N, khác command 1:1). Đăng ký: `router.register(handler)`.
-- **Mọi handler PHẢI an toàn dưới at-least-once delivery** (redeliver được, không double-apply) — nhưng
-  đây KHÔNG còn là field kiểu `readonly idempotency: 'natural-key'|'dedup-constraint'|'none'` được
-  compiler ép (đã xoá 2026-07-30): framework không có cách nào đối chiếu nhãn khai với việc `handle()`
-  thật sự làm gì — 1 handler khai `'natural-key'` nhưng viết `create()` thường vẫn compile sạch, vẫn
-  double-apply khi redeliver, không ai biết cho tới khi vỡ. Nhãn không kiểm chứng được không đáng giữ
-  làm type. Thay vào đó: viết 1 dòng comment ngay trên `handle()` giải thích VÌ SAO an toàn (xem ví dụ
-  trên) — kỹ thuật cụ thể (natural-key upsert/delete PK, dedup-constraint trên event.id) vẫn là đúng kỹ
-  thuật cần dùng, xem `resilience_patterns.md §1.0` cho taxonomy đầy đủ; chỉ là không còn ai enforce
-  được ngoài code review.
-- Dedup đặt **nguyên tử trong lệnh ghi** (`ON CONFLICT`/upsert/delete PK), KHÔNG check-rồi-ghi tách rời (khe hở crash) và KHÔNG cần bảng inbox tập trung khi side effect là ghi-DB-cùng-database.
-- Handler KHÔNG import Prisma. Ghi nhiều repo **cùng 1 DB** thì inject `@Inject(TX_RUNNER) ITxRunner`
-  rồi `run(SCOPE, tx => ...)` — repo đến TỪ scope, handler không tự giữ repo nào (ADR-0001).
+- A handler is a **subscriber** → it declares its own `readonly eventType` (events are 1:N, unlike commands, which are 1:1). Registration: `router.register(handler)`.
+- **Every handler MUST be safe under at-least-once delivery** (redeliverable, never double-applying) — but
+  this is NO LONGER a compiler-enforced `readonly idempotency: 'natural-key'|'dedup-constraint'|'none'`
+  field (removed 2026-07-30): the framework has no way to cross-check the declared label against what `handle()`
+  actually does — a handler declaring `'natural-key'` while writing a plain `create()` still compiles cleanly, still
+  double-applies on redelivery, and nobody knows until it breaks. An unverifiable label isn't worth keeping
+  as a type. Instead: write one comment line right above `handle()` explaining WHY it is safe (see the example
+  above) — the concrete techniques (a natural-key upsert/delete by PK, a dedup constraint on event.id) are still
+  the right techniques to use; see `resilience_patterns.md §1.0` for the full taxonomy. It is only that nobody
+  can enforce it beyond code review.
+- Dedup must be **atomic within the write statement** (`ON CONFLICT`/upsert/delete by PK), NOT a separate check-then-write (a crash window), and needs no central inbox table when the side effect is a DB write in the same database.
+- Handlers do NOT import Prisma. To write to several repositories in **the same DB**, inject `@Inject(TX_RUNNER) ITxRunner`
+  and `run(SCOPE, tx => ...)` — the repos come FROM the scope, and the handler holds no repo of its own (ADR-0001).
   ```typescript
   await this.txRunner.run(NOTIFICATION_TX_SCOPE, async (tx: NotificationTxScope) => {
-    const followerIds = await tx.spaceFollowers.findFollowerIds(orgId, spaceId)   // đọc
-    await tx.notifications.insertMany(rows)                                        // ghi — cùng 1 transaction
+    const followerIds = await tx.spaceFollowers.findFollowerIds(orgId, spaceId)   // read
+    await tx.notifications.insertMany(rows)                                        // write — the same transaction
   })
   ```
-  - **`ITxRunner` KHÔNG thuộc về CQRS** — port độc lập trong shared-kernel. CommandBus chỉ là *một* nơi
-    gọi nó; event handler gọi trực tiếp là hợp lệ (interface, không phải Prisma).
-  - `EventRouter.route()` **cố ý KHÔNG** tự bọc transaction như CommandBus: tiền đề "mọi write đều
-    local-DB" đúng với Command nhưng SAI với event handler (`IndexKnowledgeHandler` ghi pgvector +
-    Elasticsearch — bọc tự động sẽ tạo an toàn giả).
-  - Đọc-rồi-ghi phải nằm TRONG cùng một `run()`: danh sách follower không được đổi giữa lúc đọc nó và
-    lúc fan-out theo nó.
-- Ghi **chéo store/service** (Postgres + Elasticsearch, hoặc DB service khác) thì transaction là bất khả thi —
-  dùng idempotency + retry/DLQ, KHÔNG cố bọc transaction (xem `IndexKnowledgeHandler`).
-- Lỗi trong handler ném ra cho adapter (adapter quyết retry/DLQ) — đừng nuốt im lặng.
+  - **`ITxRunner` does NOT belong to CQRS** — it is an independent port in shared-kernel. The CommandBus is merely *one*
+    caller; an event handler calling it directly is legitimate (it's an interface, not Prisma).
+  - `EventRouter.route()` **deliberately does NOT** wrap a transaction automatically the way the CommandBus does: the premise "every write is
+    local-DB" holds for Commands but is FALSE for event handlers (`IndexKnowledgeHandler` writes to pgvector +
+    Elasticsearch — wrapping automatically would create false safety).
+  - A read-then-write must live INSIDE the same `run()`: the follower list must not change between reading it and
+    fanning out over it.
+- For writes **across stores/services** (Postgres + Elasticsearch, or another service's DB) a transaction is impossible —
+  use idempotency + retry/DLQ, do NOT try to wrap a transaction (see `IndexKnowledgeHandler`).
+- Errors inside a handler are thrown out to the adapter (the adapter decides retry/DLQ) — never swallow them silently.
 
 ---
 
-## 5. Anti-patterns (đã gặp, đừng lặp)
+## 5. Anti-patterns (already encountered — don't repeat them)
 
-- ❌ Guard chết `if (event.type !== X) return` trong handler — router đã route theo type, check này unreachable, nuốt bug.
-- ❌ Magic string event name rải nhiều chỗ — dùng `EventType` const.
-- ❌ `switch (eventType)` tay trong consumer — dùng `EventRouter`.
-- ❌ `new Kafka()` trong từng consumer — dùng `KafkaClientService` singleton.
-- ❌ Publish entity/domain object thô ra Kafka — phải qua CloudEvents + payload phẳng.
-- ❌ `payload: unknown` ở call site — dùng `defineEvent` typed factory.
-- ❌ Nuốt message lỗi ở consumer (log rồi `return`) — phải retry-bounded → dead-letter, nếu không sẽ mất event âm thầm.
-- ❌ Dead-letter ngay lần lỗi đầu — phải retry trước (lọc lỗi transient), chỉ poison pill mới DLQ tức thì.
+- ❌ A dead guard `if (event.type !== X) return` in a handler — the router already routed by type, so this check is unreachable and swallows bugs.
+- ❌ Magic-string event names scattered around — use the `EventType` const.
+- ❌ A hand-written `switch (eventType)` in a consumer — use `EventRouter`.
+- ❌ `new Kafka()` in each consumer — use the `KafkaClientService` singleton.
+- ❌ Publishing a raw entity/domain object to Kafka — it must go through CloudEvents + a flat payload.
+- ❌ `payload: unknown` at the call site — use the `defineEvent` typed factory.
+- ❌ Swallowing a failing message in the consumer (logging then `return`) — it must be bounded-retry → dead-letter, otherwise events are lost silently.
+- ❌ Dead-lettering on the first failure — retry first (to filter out transient errors); only a poison pill goes straight to the DLQ.
 
 ---
 
-## 🔗 Liên quan
-- `resilience_patterns.md` — Outbox, Idempotency, Retry, DLQ chi tiết
-- `event_sourcing.md` — EventStore, projection, aggregate
-- `cqrs_pattern.md` — command/query bus, middleware pipeline
-- `domain_modeling.md` — entity factory, transaction boundary (getTx)
+## 🔗 Related
+- `resilience_patterns.md` — Outbox, Idempotency, Retry, DLQ in detail
+- `event_sourcing.md` — EventStore, projections, aggregates
+- `cqrs_pattern.md` — the command/query bus, the middleware pipeline
+- `domain_modeling.md` — entity factories, transaction boundaries (getTx)
 
-## 📚 Nguồn (học từ kỹ sư khác)
+## 📚 Sources (learning from other engineers)
 - [Domain Events vs Integration Events — Microsoft .NET / eShop](https://learn.microsoft.com/en-us/dotnet/architecture/microservices/microservice-ddd-cqrs-patterns/domain-events-design-implementation)
 - [CloudEvents 1.0 — CNCF spec](https://github.com/cloudevents/spec/blob/main/cloudevents/spec.md) + [Kafka binding](https://github.com/cloudevents/spec/blob/main/cloudevents/bindings/kafka-protocol-binding.md)
 - [Spring Cloud Stream — Binder abstraction](https://docs.spring.io/spring-cloud-stream/docs/Brooklyn.RELEASE/reference/htmlsingle/index.html)

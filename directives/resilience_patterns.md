@@ -1,130 +1,124 @@
 # SOP: Resilience Patterns
 
-> Hướng dẫn implement 4 pattern bảo vệ hệ thống: Idempotency, Transactional Outbox, Retry, Throttle.
-> Đọc file này trước khi viết bất kỳ endpoint nào xử lý mutation quan trọng hoặc gọi external service.
+> A guide to implementing the 4 patterns that protect the system: Idempotency, Transactional Outbox, Retry, Throttle.
+> Read this file before writing any endpoint that handles an important mutation or calls an external service.
 
 ---
 
-## 📌 Khi nào đọc directive này
+## 📌 When to read this directive
 
-| Task | Pattern cần dùng |
+| Task | Pattern needed |
 |---|---|
-| Endpoint POST/PATCH có thể bị client retry | Idempotency §1 |
-| Viết Kafka consumer handler mới (nhận event, không phải publish) | `idempotency_strategy.md` (kỹ thuật #3/#4 ở §1.0 dưới đây) |
-| Sau khi save DB cần publish event ra Kafka | Transactional Outbox |
-| Gọi external service có thể fail tạm thời | Retry |
-| Gọi external service trên hot path (user đang chờ response) — ES/Ollama/gRPC/AI | Circuit Breaker §3.1 |
-| Viết route mới cần giới hạn theo org (không chỉ IP) | Rate Limiting §4.1 |
-| Gọi Claude API / embedding cho nhiều item | Throttle |
-| Viết `main.ts`/entrypoint mới cho 1 service | Graceful Shutdown |
-| Cần trace 1 request xuyên nhiều service (HTTP→gRPC→Kafka) trong log | Correlation-id §7 |
+| A POST/PATCH endpoint a client might retry | Idempotency §1 |
+| Writing a new Kafka consumer handler (receiving an event, not publishing) | `idempotency_strategy.md` (techniques #3/#4 in §1.0 below) |
+| Needing to publish an event to Kafka after a DB save | Transactional Outbox |
+| Calling an external service that can fail temporarily | Retry |
+| Calling an external service on the hot path (a user is waiting for the response) — ES/Ollama/gRPC/AI | Circuit Breaker §3.1 |
+| Writing a new route that needs a per-org limit (not just per-IP) | Rate Limiting §4.1 |
+| Calling the Claude API / embedding for many items | Throttle |
+| Writing a new `main.ts`/entrypoint for a service | Graceful Shutdown |
+| Needing to trace one request across several services (HTTP→gRPC→Kafka) in the logs | Correlation-id §7 |
 
 ---
 
 ## 1. Idempotency
 
-"Idempotency" không phải 1 kỹ thuật — là 1 họ 5 kỹ thuật khác hẳn nhau về cơ chế, chi phí khác nhau. Sai lầm phổ biến nhất là nhảy thẳng lên kỹ thuật đắt nhất (idempotency-key + bảng riêng) khi kỹ thuật rẻ hơn đã đủ.
+"Idempotency" is not one technique — it is a family of 5 techniques with quite different mechanisms and quite different costs. The most common mistake is jumping straight to the most expensive one (an idempotency key + its own table) when a cheaper one would already suffice.
 
-### 1.0 Chọn kỹ thuật — luôn ưu tiên cái rẻ nhất áp dụng được
+### 1.0 Choosing a technique — always prefer the cheapest one that applies
 
-| # | Kỹ thuật | Cơ chế | Khi nào dùng | Chi phí |
+| # | Technique | Mechanism | When to use | Cost |
 |---|---|---|---|---|
-| 1 | **Set-semantics** | Ghi đè tuyệt đối (`status = 'X'`, `permissions = [...]`), không cộng dồn (`+= 1`) | State-machine transition, config overwrite | 0 — tự nhiên |
-| 2 | **Domain guard → no-op hợp lệ** | Domain tự ném lỗi kiểu `AlreadyMemberError`/`InviteAlreadyUsedError`, caller coi là thành công | Accept-invite, register (unique constraint + catch lỗi ở domain) | 0 — chỉ cần domain model đúng |
-| 3 | **DB unique constraint (natural-key)** | `@@unique([...])` — ghi và dedup là **1 câu lệnh** (`upsert`/`ON CONFLICT DO NOTHING`) | follow/vote/bookmark; Kafka consumer khi hiệu ứng là set-membership (xem `idempotency_strategy.md`) | Thấp — 1 index, không bảng phụ |
-| 4 | **Dedup theo event id (dedup-constraint)** | Unique key trên `sourceEventId` khi không có business key tự nhiên | Kafka consumer khi hiệu ứng là **append** (xem `idempotency_strategy.md`) | Thấp — vẫn 1 câu lệnh atomic |
-| 5 | **Idempotency-key header + bảng cache response** | Client gửi `X-Idempotency-Key`, server cache/replay response | **Chỉ khi #1–4 không áp dụng được** — tạo resource mới thật mỗi lần, không có business key, và hậu quả trùng lặp tốn kém thật (tiền, AI compute, cross-service saga) | Cao nhất — bảng riêng, write phụ, cron TTL |
+| 1 | **Set-semantics** | Absolute overwrite (`status = 'X'`, `permissions = [...]`), never accumulation (`+= 1`) | State-machine transitions, config overwrites | 0 — natural |
+| 2 | **Domain guard → a legitimate no-op** | The domain itself throws something like `AlreadyMemberError`/`InviteAlreadyUsedError`, and the caller treats it as success | Accept-invite, register (a unique constraint + catching the error in the domain) | 0 — just needs a correct domain model |
+| 3 | **DB unique constraint (natural-key)** | `@@unique([...])` — the write and the dedup are **one statement** (`upsert`/`ON CONFLICT DO NOTHING`) | follow/vote/bookmark; a Kafka consumer whose effect is set-membership (see `idempotency_strategy.md`) | Low — one index, no auxiliary table |
+| 4 | **Dedup by event id (dedup-constraint)** | A unique key on `sourceEventId` when there is no natural business key | A Kafka consumer whose effect is an **append** (see `idempotency_strategy.md`) | Low — still one atomic statement |
+| 5 | **Idempotency-key header + a response-cache table** | The client sends `X-Idempotency-Key`, the server caches/replays the response | **Only when #1–4 cannot apply** — a genuinely new resource is created each time, there is no business key, and the consequence of duplication is genuinely expensive (money, AI compute, a cross-service saga) | Highest — its own table, an extra write, a TTL cron |
 
-### ⚠️ 5 kỹ thuật KHÔNG loại trừ nhau ở tầng thuộc tính code — chọn theo thứ tự ưu tiên nhân-quả, không phải checklist (2026-07-14)
+### ⚠️ The 5 techniques are NOT mutually exclusive at the level of code properties — choose by causal priority order, not as a checklist (2026-07-14)
 
-> **Cập nhật (cùng ngày, sau đó):** phần dưới đây mô tả cách suy luận (đọc code, tìm cơ chế nào quyết định trước) — **lý luận vẫn đúng và hữu ích khi tự đọc code**, nhưng field `safety.primaryReplayGuard` mà nó nhắc tới đã **bị xoá hoàn toàn** khỏi `CommandOptions` (xem §1.4 — audit lại phát hiện đây không phải pattern senior thật dùng, chỉ là tự tổng hợp). Đọc phần này như **bài tập tư duy** ("làm sao đọc code để biết cơ chế nào là chính"), không phải mô tả 1 field còn tồn tại trong code.
+> **Update (later the same day):** the section below describes a way of reasoning (read the code, find which mechanism decides first) — **the reasoning is still valid and useful when reading code yourself**, but the `safety.primaryReplayGuard` field it refers to has been **removed entirely** from `CommandOptions` (see §1.4 — a re-audit found this was not a pattern real senior engineers use, just something synthesised here). Read this section as a **thinking exercise** ("how do I read code to tell which mechanism is the decisive one"), not as a description of a field that still exists in the code.
 
-User phát hiện đúng: `set-semantics`/`domain-guard`/`natural-key` **không phải** 3 nhánh rẽ tách biệt trong code — 1 handler thật hoàn toàn có thể mang **nhiều đặc điểm cùng lúc**. Ví dụ `AcceptInviteHandler`:
+The user was right: `set-semantics`/`domain-guard`/`natural-key` are **not** three mutually exclusive branches in code — a real handler can absolutely exhibit **several characteristics at once**. Take `AcceptInviteHandler`:
 ```typescript
-if (invite.isUsed()) throw new InviteAlreadyUsedError()   // đặc điểm domain-guard: THROW
-if (existing) throw new AlreadyMemberError()               // domain-guard, 1 lần nữa
+if (invite.isUsed()) throw new InviteAlreadyUsedError()   // domain-guard characteristic: THROWS
+if (existing) throw new AlreadyMemberError()               // domain-guard again
 
-await this.membershipRepo.save(membership)   // upsert theo (orgId,userId) — TỰ THÂN có đặc điểm natural-key
-invite.accept(command.userId)                 // chỉ gán usedAt — TỰ THÂN có đặc điểm set-semantics
+await this.membershipRepo.save(membership)   // upsert on (orgId,userId) — natural-key characteristic in itself
+invite.accept(command.userId)                 // only assigns usedAt — set-semantics characteristic in itself
 await this.inviteRepo.save(invite)
 ```
-Dòng `invite.accept()` tự nó **có** đặc điểm set-semantics, dòng `membershipRepo.save()` tự nó **có** đặc điểm natural-key (upsert theo `orgId_userId`, lấy thẳng từ input). Nếu coi 5 giá trị là "mô tả thuộc tính đang tồn tại trong code", câu trả lời đúng cho command này là "cả 3" — mâu thuẫn với việc `safety.primaryReplayGuard` chỉ nhận 1 giá trị.
+The `invite.accept()` line by itself **has** set-semantics characteristics, and the `membershipRepo.save()` line by itself **has** natural-key characteristics (an upsert on `orgId_userId`, taken straight from the input). If the 5 values were read as "which properties exist in this code", the correct answer for this command would be "all three" — contradicting `safety.primaryReplayGuard` accepting only one value.
 
-**Cách giải quyết — đổi câu hỏi từ "code này CÓ đặc điểm gì" sang "cái gì THỰC SỰ là lý do khiến gọi lại an toàn — cái nào chặn TRƯỚC, khiến mọi thứ sau nó không còn quan trọng?"** Vì thực thi tuần tự, luôn có đúng 1 câu trả lời nếu hỏi đúng cách này. Đi theo thứ tự dưới, dừng ở bước ĐẦU TIÊN khớp — nhưng phải **đọc hết** handler+repo trước khi áp dụng, không dừng ở dấu hiệu đầu tiên thấy được:
+**The resolution — change the question from "which characteristics DOES this code have" to "what is REALLY the reason a repeat call is safe — which one blocks FIRST, making everything after it irrelevant?"** Because execution is sequential, there is always exactly one answer when the question is asked this way. Walk the order below and stop at the FIRST match — but you must **read the whole** handler + repo before applying it, never stopping at the first sign you spot:
 
 ```
-1. Đường thực thi khi GỌI LẠI có throw/return-sớm nào chặn TRƯỚC
-   khi chạm write nào không, VÀ throw đó chỉ fire khi "việc này đã
-   làm rồi" (KHÔNG fire ở lần gọi đầu tiên hợp lệ)?  → domain-guard
-2. Write chính dùng upsert/updateMany/deleteMany theo khoá LẤY THẲNG
-   từ input (không phải id tự sinh v7()/uuid()), VÀ cả 2 nhánh
-   (chưa tồn tại / đã tồn tại) đều THỰC SỰ có thể xảy ra (không bị
-   1 guard phía trước loại trừ sẵn 1 nhánh)?          → natural-key
-3. Write chính chỉ là "=" lên 1 record đã ĐẢM BẢO tồn tại (qua guard
-   phía trước, hoặc qua khoá surrogate đã biết)?       → set-semantics
-4. Không cái nào trên áp dụng, cần chặn ở tầng HTTP?    → idempotency-key
-5. Không có gì bảo vệ, nhưng chứng minh được vô hại?    → none (+ghi lý do)
+1. On a REPEAT call, is there a throw/early-return that blocks BEFORE
+   touching any write, AND does that throw only fire when "this has
+   already been done" (NOT on the first legitimate call)?  → domain-guard
+2. Does the main write use upsert/updateMany/deleteMany on a key taken
+   STRAIGHT from the input (not a self-generated v7()/uuid() id), AND
+   are BOTH branches (doesn't exist yet / already exists) GENUINELY
+   reachable (not with one branch pre-excluded by an earlier guard)?  → natural-key
+3. Is the main write merely an "=" onto a record GUARANTEED to exist
+   (via an earlier guard, or via a known surrogate key)?              → set-semantics
+4. None of the above applies, and it must be blocked at the HTTP layer? → idempotency-key
+5. Nothing protects it, but it is provably harmless?                   → none (+record why)
 ```
 
-**Bước 1 — phân biệt throw "replay-detection" với throw "validation lỗi input":** không phải mọi `throw` đều tính là domain-guard. Phép test: throw đó có fire **giống hệt nhau** ở lần gọi đầu tiên (input hợp lệ) lẫn lần gọi lặp lại không? Nếu có (vd `RoleNotFoundError` khi `roleCode` sai — fire bất kể lần đầu hay lần lặp) → đó là validation, **không tính**. Chỉ throw nào **chỉ fire khi đây chắc chắn là lần lặp lại** (vd `InviteAlreadyUsedError` — false ở lần đầu, true ở lần lặp) mới tính là domain-guard thật.
+**Step 1 — distinguish a "replay-detection" throw from an "invalid input" throw:** not every `throw` counts as a domain guard. The test: does that throw fire **identically** on the first call (with valid input) and on a repeat call? If yes (e.g. `RoleNotFoundError` when `roleCode` is wrong — fires regardless of first or repeat) → that is validation and **does not count**. Only a throw that **only fires when this is definitely a repeat** (e.g. `InviteAlreadyUsedError` — false on the first call, true on a repeat) counts as a genuine domain guard.
 
-**Bước 2 — phân biệt "syntax là upsert" với "cả 2 nhánh thực sự sống":** thấy `.upsert()` trong code chưa đủ để kết luận natural-key. Ví dụ `UpdateMemberRoleCommand` gọi **đúng** `membershipRepo.save()` (cùng upsert với `accept-invite` ở trên) — nhưng có `MembershipNotFoundError` throw trước, đảm bảo record chắc chắn tồn tại → nhánh `create` của upsert **chết hẳn, không bao giờ chạm tới** trên đường đi của command này. 1 upsert với 1 nhánh chết không còn là "create-or-no-op" nữa, nó suy biến thành phép gán trần → `set-semantics`, không phải `natural-key`, dù syntax là `.upsert()`. Ngược lại, ví dụ `CreateInviteCommand` cũng gọi `.upsert({where:{id}})` nhưng `id` là `v7()` tự sinh mới mỗi lần gọi — khoá này **không tái sinh được** từ input, nên gọi lại 2 lần luôn ra 2 `id` khác nhau, nhánh `update` không bao giờ chạm tới → cũng không phải `natural-key`, rơi xuống `none`.
+**Step 2 — distinguish "the syntax is an upsert" from "both branches are genuinely alive":** seeing `.upsert()` in the code is not enough to conclude natural-key. For example `UpdateMemberRoleCommand` calls the **same** `membershipRepo.save()` (the same upsert as `accept-invite` above) — but a `MembershipNotFoundError` throws first, guaranteeing the record exists → the upsert's `create` branch is **completely dead, never reachable** along this command's path. An upsert with one dead branch is no longer "create-or-no-op"; it degenerates into a plain assignment → `set-semantics`, not `natural-key`, despite the `.upsert()` syntax. Conversely, `CreateInviteCommand` also calls `.upsert({where:{id}})` but `id` is a freshly generated `v7()` on every call — that key **cannot be regenerated** from the input, so two calls always produce two different `id`s and the `update` branch is never reached → also not `natural-key`, falling through to `none`.
 
-**5 tổ hợp đã verify có thật trong code (không phải lý thuyết suông):**
+**5 combinations verified to genuinely exist in the code (not hypothetical):**
 
-| Tổ hợp | Command | Ghi chú |
+| Combination | Command | Note |
 |---|---|---|
-| Chỉ 1 (domain-guard) | `register` | `UserAlreadyExistsError` (replay-detection thật) + `create()` trần (id tự sinh, không phải upsert) |
-| Chỉ 2 (natural-key) | `follow-target` | Không throw gì; `Follow.upsert()` theo khoá lấy thẳng từ input, cả 2 nhánh đều sống |
-| 1+3, không 2 | `refresh` | `RefreshTokenUsedError` (replay-detection thật) + `update({where:{id}})` set-semantics (khoá surrogate) — repo KHÔNG có `.upsert()` nào |
-| 2+3, không 1 | `cast-vote` | `KnowledgeItemNotFoundError` chỉ là validation (fire cả 2 trường hợp). Nhánh "đã vote" vừa `changeValue()` (3) vừa `upsert()` (2) trong cùng đoạn code |
-| Cả 1+2+3 | `accept-invite` | Domain-guard fire trước, 2 write còn lại (natural-key + set-semantics) không bao giờ chạm tới trên đường replay |
+| 1 only (domain-guard) | `register` | `UserAlreadyExistsError` (genuine replay detection) + a plain `create()` (self-generated id, not an upsert) |
+| 2 only (natural-key) | `follow-target` | Throws nothing; `Follow.upsert()` on a key taken straight from the input, both branches alive |
+| 1+3, not 2 | `refresh` | `RefreshTokenUsedError` (genuine replay detection) + `update({where:{id}})` set-semantics (surrogate key) — the repo has no `.upsert()` at all |
+| 2+3, not 1 | `cast-vote` | `KnowledgeItemNotFoundError` is only validation (fires in both cases). The "already voted" branch both `changeValue()`s (3) and `upsert()`s (2) in the same block |
+| All of 1+2+3 | `accept-invite` | The domain guard fires first, so the other two writes (natural-key + set-semantics) are never reached along the replay path |
 
-Đây là quy tắc tổng quát cho MỌI trường hợp trông như "khớp nhiều nhãn": nhãn nào chặn/quyết định TRƯỚC theo thứ tự thực thi, nhãn đó thắng — nhưng phải xét đủ cả 3 phép test độc lập trước khi kết luận, không dừng sớm.
+This is the general rule for EVERY case that looks like it "matches several labels": whichever label blocks/decides FIRST in execution order wins — but you must run all 3 independent tests before concluding, never stopping early.
 
-**Vì sao không gộp 3 giá trị đầu thành 1 (đã cân nhắc, không làm):** cả 3 (`set-semantics`/`domain-guard`/`natural-key`) đều "chỉ là kỷ luật viết code" (khác `idempotency-key` — cần hạ tầng thật). Nhưng chúng có **failure mode khác nhau** khi code sau này bị sửa — đây là lý do giữ tách, không phải để đủ số lượng:
-- `natural-key` an toàn phụ thuộc **1 dòng SCHEMA** (`@@unique`) — ai đó lỡ xoá index, mất bảo vệ âm thầm, không lỗi compile/runtime nào báo. Nghi ngờ vỡ → tìm trong `schema.prisma`.
-- `domain-guard` an toàn phụ thuộc **domain code** — ai đó xoá dòng `throw` trong entity, mất bảo vệ âm thầm. Nghi ngờ vỡ → tìm trong entity/domain method.
-- `set-semantics` không phụ thuộc gì — luôn đúng miễn còn dùng `=`.
+**Why the first 3 values weren't merged into one (considered, rejected):** all three (`set-semantics`/`domain-guard`/`natural-key`) are "just coding discipline" (unlike `idempotency-key`, which needs real infrastructure). But they have **different failure modes** when the code is later modified — that is the reason for keeping them separate, not padding the count:
+- `natural-key` safety depends on **one line of SCHEMA** (`@@unique`) — if someone drops that index, the protection is silently lost, with no compile/runtime error. Suspect a break → look in `schema.prisma`.
+- `domain-guard` safety depends on **domain code** — if someone deletes the `throw` in the entity, the protection is silently lost. Suspect a break → look in the entity/domain method.
+- `set-semantics` depends on nothing — always correct as long as it's still `=`.
 
-Nhãn tách riêng giữ được **manh mối audit** ("nghi vỡ thì tìm ở đâu") — gộp lại mất thông tin này, dù đúng là chúng không phải "lựa chọn chiến lược" như `idempotency-key`.
+Separate labels preserve the **audit clue** ("where do I look if I suspect it broke") — merging them loses that information, even though they genuinely aren't "strategic choices" the way `idempotency-key` is.
 
-**Đã cân nhắc thêm 1 lần nữa: liệu nên bỏ hẳn field này (hoặc đổi thành `Set<CommandIdempotency>` liệt kê hết thuộc tính có mặt) vì các giá trị không loại trừ nhau — quyết định: KHÔNG, chỉ đổi TÊN field.** Lý do type không sai cấu trúc: nó trả lời đúng 1 câu hỏi có 1 đáp án ("cơ chế NÀO quyết định an toàn"), không phải "có những thuộc tính gì" — giống hệt HTTP status code (`404` không tuyên bố "không có sự thật nào khác đúng", nó báo cáo sự thật QUYẾT ĐỊNH response). Đổi thành `Set` sẽ đẩy việc tự suy luận waterfall sang MỌI consumer (drift test, `CommandSafetyMiddleware`) thay vì 1 người (lúc gán nhãn, có đủ ngữ cảnh) — tốn công hơn, không "trung thực hơn". Vấn đề thật chỉ là **danh xưng**: field cũ tên `idempotency` đọc vào tưởng là "thuộc tính command này có", không phải "kết luận đã ưu tiên hoá". **Đã đổi tên field từ `idempotency` → `primaryReplayGuard`** (chữ "primary" báo ngay có thể còn cơ chế khác hiện diện, field này chỉ ghi lại cái nào load-bearing) — không đổi cấu trúc/giá trị, chỉ đổi cách gọi tên để tự nó nói đúng bản chất. Đụng lại cả 37 command (chỉ đổi tên key, giá trị giữ nguyên) + `idempotency-label-drift.spec.ts` (regex) + `command-safety.middleware.spec.ts` (fixture). JSDoc trên `CommandIdempotency`/`CommandSafety` (shared-kernel) giờ có cảnh báo "KHÔNG phải danh sách thuộc tính" ngay **dòng đầu tiên**, trước mọi nội dung khác.
+**Considered once more: should the field be dropped entirely (or changed into a `Set<CommandIdempotency>` listing every property present) given the values aren't mutually exclusive — decision: NO, only RENAME the field.** Why the type isn't structurally wrong: it answers exactly one question with exactly one answer ("WHICH mechanism decides safety"), not "which properties are present" — exactly like an HTTP status code (`404` doesn't claim "no other fact is true", it reports the fact that DECIDED the response). Changing it to a `Set` would push the waterfall reasoning onto EVERY consumer (the drift test, `CommandSafetyMiddleware`) instead of one person (at labelling time, with full context) — more work, not "more honest". The real problem was only **the name**: the old field, called `idempotency`, read as "properties this command has" rather than "a prioritised conclusion". **The field was renamed `idempotency` → `primaryReplayGuard`** ("primary" signals immediately that other mechanisms may also be present, and that this field only records which one is load-bearing) — no structural/value change, only a name that states its own nature. This touched all 37 commands (key rename only, values unchanged) + `idempotency-label-drift.spec.ts` (regex) + `command-safety.middleware.spec.ts` (fixture). The JSDoc on `CommandIdempotency`/`CommandSafety` (shared-kernel) now carries the warning "NOT a list of properties" on its **very first line**, before anything else.
 
-**Không phải idempotency dù hay bị nhầm:** OCC/versioning (`@@unique([aggregateId, version])`) giải quyết **lost update khi ghi đồng thời**, khác hẳn "đã làm việc này chưa". Hai cơ chế thường phối hợp trên cùng 1 endpoint (xem 1.3).
+**Not idempotency, though often confused with it:** OCC/versioning (`@@unique([aggregateId, version])`) solves **lost updates under concurrent writes**, a completely different question from "has this already been done". The two mechanisms often work together on the same endpoint (see 1.3).
 
-Kỹ thuật #3/#4 (tầng Kafka consumer) có directive riêng: `idempotency_strategy.md`. Trước đây ép bằng
-field `idempotency: 'natural-key' | 'dedup-constraint' | 'none'` bắt buộc trên mọi
-`IIntegrationEventHandler` (compile-time + boot-time nếu `'none'`) — **gỡ 2026-07-30**: field chỉ ép
-được "có khai báo hay không", không đối chiếu được nhãn khai với hiệu ứng thật của `handle()`, nên một
-handler khai láo vẫn compile/boot sạch. Xem `idempotency_strategy.md §Enforcement` cho lý do đầy đủ.
-Bây giờ ghi lại bằng comment trên `handle()`, bắt ở code review. Phần dưới đây (1.1–1.3) chỉ nói về kỹ
-thuật #5 — tầng HTTP.
+Techniques #3/#4 (the Kafka consumer layer) have their own directive: `idempotency_strategy.md`. These used to be enforced by a mandatory `idempotency: 'natural-key' | 'dedup-constraint' | 'none'` field on every `IIntegrationEventHandler` (compile-time + boot-time if `'none'`) — **removed 2026-07-30**: the field could only enforce "is there a declaration", and could not cross-check the declared label against `handle()`'s real effect, so a handler declaring falsely still compiled and booted cleanly. See `idempotency_strategy.md §Enforcement` for the full reasoning. It is now recorded in a comment above `handle()` and caught at code review. The sections below (1.1–1.3) cover only technique #5 — the HTTP layer.
 
-### 1.1 Kỹ thuật #5 — HTTP idempotency-key
+### 1.1 Technique #5 — the HTTP idempotency key
 
-**Vấn đề:** Client gửi `POST /credits/spend` → timeout → retry → server xử lý 2 lần, tốn tiền 2 lần.
+**The problem:** a client sends `POST /credits/spend` → times out → retries → the server processes it twice, charging money twice.
 
-**Giải pháp:** Client gửi header `X-Idempotency-Key: <uuid>`. Server check key đã tồn tại chưa — nếu rồi trả lại response cũ, không xử lý lại.
+**The solution:** the client sends an `X-Idempotency-Key: <uuid>` header. The server checks whether the key already exists — if so, it returns the previous response rather than processing again.
 
-**⚠️ Đã sửa (2026-07-12) — trước đây interceptor KHÔNG chặn được 2 request đồng thời cùng key, giờ đã chặn.** Bản đầu dùng pattern check-then-run: `findUnique` trước, chạy handler, `create` sau — 2 request đến đúng lúc nhau đều thấy "chưa có key" (record chỉ được ghi SAU KHI handler chạy xong) rồi **cả hai đều chạy handler thật**. Đây từng được ghi là "giới hạn đã biết, cần lớp 2 riêng bù vào" — nhưng khi verify thật (không chỉ suy đoán) bằng cách gọi `POST /spaces` 2 lần đồng thời cùng key vào Postgres thật, xác nhận **race có thật**: 2 row `Space` trùng tên được tạo (`POST /spaces` không có lớp 2 nào chặn — đã ghi đúng trong bảng "Cố ý KHÔNG thêm lớp 2" ở dưới, nghĩa là race này không hề được bù bởi cơ chế khác cho 2/5 endpoint).
+**⚠️ Fixed (2026-07-12) — the interceptor previously could NOT block two concurrent requests with the same key; now it can.** The first version used check-then-run: `findUnique` first, run the handler, `create` afterwards — two requests arriving at the same moment both saw "no such key" (the record was only written AFTER the handler completed) and **both ran the real handler**. This had been recorded as a "known limitation needing a separate second layer to compensate" — but on genuine verification (not just reasoning), by firing `POST /spaces` twice concurrently with the same key against a real Postgres, the **race was confirmed real**: two `Space` rows with duplicate names were created (`POST /spaces` has no second layer blocking it — correctly recorded in the "Deliberately NOT adding a second layer" table below, meaning this race was not compensated by any other mechanism for 2 of the 5 endpoints).
 
-**Sửa tận gốc — claim-before-execute**, thay vì check-then-run: ghi 1 row **TRƯỚC KHI** chạy handler, `response: null` (đang xử lý), dựa vào `@id` unique constraint để atomic hoá bước "giành quyền xử lý key này". Request thứ 2 đến sau sẽ thấy row đã tồn tại (dù `response` còn null) → trả lỗi `409 Conflict` ngay (fail-fast, không polling) thay vì chạy handler lần 2. Nếu handler lỗi, row claim bị xoá — key không bị "kẹt" tới hết TTL 24h cho lần retry hợp lệ sau đó.
+**The root fix — claim-before-execute** instead of check-then-run: write a row **BEFORE** running the handler, with `response: null` (in progress), relying on the `@id` unique constraint to make "claiming the right to process this key" atomic. A second request arriving later finds the row already exists (even with `response` still null) → immediately returns `409 Conflict` (fail fast, no polling) instead of running the handler a second time. If the handler errors, the claim row is deleted — so the key isn't "stuck" for the full 24h TTL, blocking a legitimate later retry.
 
-### Schema (đã có)
+### Schema (already exists)
 ```prisma
 model IdempotencyRecord {
   key       String   @id               // X-Idempotency-Key header value
-  response  Json?                      // NULL = đã claim, handler đang chạy
+  response  Json?                      // NULL = claimed, handler still running
   createdAt DateTime @default(now()) @map("created_at")
-  expiresAt DateTime @map("expires_at")   // TTL 24h, cron xóa expired rows
+  expiresAt DateTime @map("expires_at")   // TTL 24h, a cron deletes expired rows
 
   @@index([expiresAt])
   @@map("idempotency_records")
 }
 ```
 
-### Implement — NestJS Interceptor + module dùng chung
+### Implementation — a NestJS interceptor + a shared module
 
 ```typescript
 // infrastructure/http/idempotency/idempotency.interceptor.ts
@@ -142,11 +136,11 @@ export class IdempotencyInterceptor implements NestInterceptor {
 
     const existing = await this.prisma.client.idempotencyRecord.findUnique({ where: { key } })
     if (existing) {
-      if (existing.response !== null) return of(existing.response) // replay, KHÔNG chạy lại handler
+      if (existing.response !== null) return of(existing.response) // replay, do NOT re-run the handler
       throw new ConflictException('A request with this idempotency key is already in progress')
     }
 
-    // Claim TRƯỚC KHI chạy handler — atomic nhờ @id unique constraint.
+    // Claim BEFORE running the handler — atomic thanks to the @id unique constraint.
     try {
       await this.prisma.client.idempotencyRecord.create({
         data: { key, response: Prisma.JsonNull, expiresAt: new Date(Date.now() + TTL_MS) },
@@ -165,7 +159,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
           .catch((err) => req.log.error({ err }, 'Failed to persist idempotency response'))
       }),
       catchError((err) =>
-        // Handler lỗi → xoá claim để retry hợp lệ sau đó không bị kẹt tới hết TTL.
+        // Handler failed → delete the claim so a legitimate later retry isn't stuck for the full TTL.
         from(this.prisma.client.idempotencyRecord.delete({ where: { key } }).catch(() => undefined)).pipe(
           switchMap(() => throwError(() => err)),
         ),
@@ -175,73 +169,73 @@ export class IdempotencyInterceptor implements NestInterceptor {
 }
 ```
 
-`IdempotencyInterceptor` + reaper dọn TTL (`IdempotencyCleanupService`) sống trong **`infrastructure/http/idempotency/idempotency.module.ts`**, export qua `HttpIdempotencyModule` (`@Global()`). Đăng ký **1 lần duy nhất** ở `AppModule`, mọi controller khác dùng `@UseInterceptors(IdempotencyInterceptor)` mà không cần import lại module — tránh copy-paste provider vào từng module tiêu thụ (bài học từ lần đầu chỉ đăng ký trong `CreditModule` dù phục vụ nhiều module khác).
+`IdempotencyInterceptor` + the TTL reaper (`IdempotencyCleanupService`) live in **`infrastructure/http/idempotency/idempotency.module.ts`**, exported via `HttpIdempotencyModule` (`@Global()`). Registered **exactly once** in `AppModule`, so every other controller can use `@UseInterceptors(IdempotencyInterceptor)` without re-importing the module — avoiding copy-pasting the provider into each consuming module (the lesson from the first attempt, which registered it only in `CreditModule` despite serving several other modules).
 
-⚠️ **Client nhận `409` khi trùng key đang xử lý phải tự retry sau, không phải lỗi cần fix ở server** — đây là hành vi đúng, không phải bug.
+⚠️ **A client receiving `409` for a key already in progress must retry later; this is not a server-side bug to fix** — it is the correct behaviour.
 
-### 1.2 Đã áp dụng ở đâu (core-api, audit 2026-07-10)
+### 1.2 Where it has been applied (core-api, audit 2026-07-10)
 
-| Endpoint | Lý do thêm |
+| Endpoint | Reason for adding it |
 |---|---|
-| `POST /credits/grant` | Event ledger append-only, không gì chặn ghi 2 lần → cấp nhầm tiền thật |
-| `POST /admin/orgs` | Saga xuyên 2 service (gRPC tạo user thật ở `auth_db` + org ở `core_db`) — blast radius lớn nhất hệ thống |
-| `POST /knowledge` | Không unique constraint chặn document trùng + kích Kafka fan-out tốn embedding compute thật |
-| `POST /spaces` | Không unique constraint chặn space trùng |
-| `POST /knowledge/:id/publish` | Domain state tự an toàn (`publish()` set không điều kiện), nhưng outbox event append **vô điều kiện mỗi lần gọi** → retry vẫn tốn re-embed thừa nếu không chặn |
+| `POST /credits/grant` | An append-only event ledger with nothing preventing a double write → real money granted twice |
+| `POST /admin/orgs` | A saga across 2 services (gRPC creating a real user in `auth_db` + an org in `core_db`) — the largest blast radius in the system |
+| `POST /knowledge` | No unique constraint preventing a duplicate document, and it triggers a Kafka fan-out costing real embedding compute |
+| `POST /spaces` | No unique constraint preventing a duplicate space |
+| `POST /knowledge/:id/publish` | The domain state is naturally safe (`publish()` sets unconditionally), but the outbox event is appended **unconditionally on every call** → a retry still wastes re-embedding unless blocked |
 
-**Cố ý KHÔNG thêm** — đã an toàn bởi kỹ thuật #1–#3 sẵn có trong domain/schema, thêm interceptor là dư thừa: `follows`/`votes`/`bookmarks` (`@@unique` chặn ở DB), `accept-invite`/`register` (domain tự ném lỗi), `update-member-role`/`update-role-permissions` (ghi đè idempotent), roles/permissions CRUD ở auth-service (unique constraint hoặc ghi đè), `PATCH .../read` ở notification-service (`markAsRead()` đã idempotent), `POST .../invites` (duplicate token vô hại — không gửi email, pull-based qua link).
+**Deliberately NOT added** — already safe via techniques #1–#3 present in the domain/schema, so adding the interceptor would be redundant: `follows`/`votes`/`bookmarks` (`@@unique` blocks at the DB), `accept-invite`/`register` (the domain throws), `update-member-role`/`update-role-permissions` (idempotent overwrite), the roles/permissions CRUD in auth-service (a unique constraint or an overwrite), `PATCH .../read` in notification-service (`markAsRead()` is already idempotent), `POST .../invites` (a duplicate token is harmless — no email is sent, it's pull-based via a link).
 
-### 1.3 Case điển hình 2 lớp phối hợp — lưu ý phạm vi mỗi lớp khác nhau (cập nhật 2026-07-12)
+### 1.3 The canonical two-layer case — note that each layer's scope is different (updated 2026-07-12)
 
-Interceptor (claim-before-execute) giờ đã tự chặn **2 request CÙNG idempotency-key** đến đồng thời — không cần lớp 2 riêng cho case đó nữa. Nhưng OCC/unique-constraint dưới đây vẫn cần thiết vì bảo vệ 1 case **khác hẳn**: 2 request hợp lệ, **khác** idempotency-key (2 lần spend riêng biệt, 2 admin tạo org riêng biệt cùng lúc) — đây là concurrency ở tầng nghiệp vụ, idempotency-key không và không nên can thiệp (2 request khác key là 2 hành động khác nhau thật, không phải retry).
+The interceptor (claim-before-execute) now blocks **two concurrent requests with the SAME idempotency key** by itself — no separate second layer is needed for that case any more. But the OCC/unique constraints below are still necessary because they protect a **completely different** case: two legitimate requests with **different** idempotency keys (two separate spends, two admins creating separate orgs at the same time) — that is business-level concurrency, which an idempotency key does not and should not touch (two requests with different keys are two genuinely different actions, not a retry).
 
-- `POST /credits/spend`, `POST /credits/grant` → lớp nghiệp vụ = **OCC** ở `CreditAccount` aggregate (`@@unique([aggregateId, version])`) — chặn 2 lần spend khác nhau cùng lúc làm lệch số dư
-- `POST /admin/orgs` → lớp nghiệp vụ = **unique constraint trên `slug`** ở `CreateOrgCommand` — chặn 2 admin cùng tạo org trùng slug
-- `POST /knowledge`, `POST /spaces` → **chưa có lớp nghiệp vụ** (không unique constraint tự nhiên nào áp được cho document/space trùng tên) — chấp nhận được vì đây là race giữa 2 hành động **khác nhau thật** của người dùng (đặt trùng tên), khác hẳn race đã sửa ở trên (2 request **giống hệt nhau** cùng key, đã đóng)
+- `POST /credits/spend`, `POST /credits/grant` → the business layer = **OCC** on the `CreditAccount` aggregate (`@@unique([aggregateId, version])`) — preventing two different concurrent spends from corrupting the balance
+- `POST /admin/orgs` → the business layer = a **unique constraint on `slug`** in `CreateOrgCommand` — preventing two admins from creating orgs with the same slug
+- `POST /knowledge`, `POST /spaces` → **no business layer yet** (no natural unique constraint applies to a duplicate document/space name) — acceptable, because this is a race between two **genuinely different** user actions (choosing the same name), quite unlike the race fixed above (two **identical** requests with the same key, now closed)
 
-### ⛔ 1.4 `CommandOptions.safety` — XÂY RỒI GỠ TRONG CÙNG NGÀY (2026-07-14) — không dùng, đọc để không lặp lại
+### ⛔ 1.4 `CommandOptions.safety` — BUILT AND REMOVED THE SAME DAY (2026-07-14) — unused; read this so it isn't repeated
 
-**Đã từng tồn tại, đã xoá hoàn toàn khỏi code** (`CommandIdempotency`/`CommandConcurrency`/`CommandSafety`/field `safety`/`CommandSafetyMiddleware`/`idempotency-label-drift.spec.ts`) sau khi user hỏi thẳng: *"những cái này senior thật có làm không, hay tôi tự chế?"*
+**It once existed and has been deleted entirely from the code** (`CommandIdempotency`/`CommandConcurrency`/`CommandSafety`/the `safety` field/`CommandSafetyMiddleware`/`idempotency-label-drift.spec.ts`) after the user asked directly: *"do real senior engineers actually do this, or am I inventing it?"*
 
-**Việc đã xây (tóm tắt để không ai làm lại):** field bắt buộc `safety: { primaryReplayGuard, concurrency }` trên mọi command (5+3 giá trị enum), 1 middleware runtime check `occ⟹transactional`, 1 test tĩnh verify nhãn `idempotency-key` khớp interceptor, cộng 4 vòng chỉnh sửa taxonomy (waterfall priority-order, đổi tên field, worked examples) — tổng ~8 vòng hội thoại.
+**What had been built (summarised so nobody rebuilds it):** a mandatory `safety: { primaryReplayGuard, concurrency }` field on every command (5+3 enum values), one runtime middleware checking `occ⟹transactional`, one static test verifying the `idempotency-key` label matched the interceptor, plus 4 rounds of taxonomy refinement (waterfall priority order, the field rename, worked examples) — about 8 conversation rounds in total.
 
-**Vì sao gỡ — audit đối chiếu với thực hành thật:**
-- 5 pattern nền tảng thật của idempotency (Idempotency-key/Stripe, OCC/JPA `@Version`, Kafka Idempotent Receiver, Kafka idempotent producer, Transactional Outbox) đều có tên, có tài liệu tham chiếu chuẩn, sinh viên nào cũng học được — **những cái này giữ nguyên, không đụng**.
-- Nhưng lớp *meta* phủ lên trên (field bắt buộc phân loại 8 giá trị + thuật toán ưu tiên hình thức hoá + test tĩnh quét regex) **không phải pattern có tên, không tìm thấy tài liệu chuẩn nào mô tả cách làm này** — tự tổng hợp ra, không phải điều senior thật làm khi review code hàng ngày. Senior thật xử lý case mơ hồ bằng 1 câu comment tại chỗ, không đúc thành field bắt buộc + thuật toán 5 bước cho toàn bộ 37 command bất kể mức rủi ro.
-- Ép ceremony đồng đều lên **mọi** command (kể cả `logout`, `create-invite` — rủi ro thấp) trái với cách senior thật phân bổ rigor: chỉ nơi rủi ro cao (tiền, saga) mới đáng.
+**Why it was removed — an audit against real practice:**
+- The 5 genuinely foundational idempotency patterns (Idempotency-key/Stripe, OCC/JPA `@Version`, Kafka Idempotent Receiver, the Kafka idempotent producer, Transactional Outbox) all have names, standard reference documentation, and are learnable by anyone — **these are kept, untouched**.
+- But the *meta* layer laid on top (a mandatory field classifying 8 values + a formalised priority algorithm + a static regex-scanning test) is **not a named pattern, and no standard documentation describing this approach could be found** — it was synthesised here, not something real senior engineers do in day-to-day code review. A real senior handles an ambiguous case with a one-line comment in place, rather than casting it into a mandatory field + a 5-step algorithm applied to all 37 commands regardless of risk level.
+- Forcing uniform ceremony onto **every** command (including `logout` and `create-invite` — low risk) contradicts how real seniors allocate rigour: only where risk is high (money, sagas) does it earn its cost.
 
-**Quyết định — xoá dứt khoát, không giữ bản rút gọn:** *"đối với những cái senior không làm thì nên xóa không nên tự làm chế thêm"* (nguyên văn). Comment prose giải thích lý do an toàn (vốn có sẵn cạnh field `safety` cũ) được **giữ lại nguyên trạng** trên từng command — đây mới là cách thật senior ghi lại quyết định: 1 câu comment tại chỗ, không phải type hệ thống hoá.
+**The decision — delete it outright, keeping no reduced version:** *"for things senior engineers don't do, delete them rather than inventing more"* (verbatim). The prose comments explaining why each command is safe (which already sat next to the old `safety` field) were **kept exactly as they were** on each command — that is the way a real senior records the decision: one comment in place, not a systematised type.
 
-**Cùng đợt audit, tìm ra 2 lệch chuẩn thật (không phải do phiên làm việc này gây ra, tồn tại từ trước) — đã sửa:**
-1. `IdempotencyInterceptor` thiếu request-fingerprint (chuẩn Stripe thật yêu cầu: reuse key với body khác phải bị từ chối, không được âm thầm trả response cache cũ). Đã thêm cột `requestHash` (`sha256(method+url+body)`) vào `IdempotencyRecord`, so sánh trước khi replay — mismatch → `422`.
-2. Comment ở `kafka-producer.service.ts`/2 `dead-letter.producer.ts` khẳng định `idempotent:true` tự set `maxInFlightRequests≤5` — verify thẳng trong `node_modules/kafkajs/src`: **sai**, default là `null` (không giới hạn), không nơi nào trong code từng set nó. Đã set tường minh `maxInFlightRequests: 5` ở cả 3 producer (đúng ngưỡng Kafka khuyến nghị để idempotent producer giữ đúng thứ tự khi retry).
+**In the same audit, 2 genuine deviations were found (pre-existing, not caused by this session) — both fixed:**
+1. `IdempotencyInterceptor` lacked a request fingerprint (the real Stripe standard requires it: reusing a key with a different body must be rejected, never silently replaying the old cached response). Added a `requestHash` column (`sha256(method+url+body)`) to `IdempotencyRecord`, compared before replaying — a mismatch → `422`.
+2. Comments in `kafka-producer.service.ts` and both `dead-letter.producer.ts` files asserted that `idempotent:true` automatically sets `maxInFlightRequests≤5` — verified directly in `node_modules/kafkajs/src`: **false**, the default is `null` (unlimited), and nowhere in the code ever set it. Explicitly set `maxInFlightRequests: 5` in all 3 producers (Kafka's recommended threshold for an idempotent producer to preserve ordering on retry).
 
-**Bài học giữ lại cho lần sau:** trước khi coi 1 cơ chế là "best practice", tự hỏi *"cái này có tên, có tài liệu tham chiếu chuẩn mà người khác cũng học theo không, hay tôi đang tự tổng hợp ra?"* — nếu là loại sau, dừng lại hỏi trước khi type-hoá/enforce nó trên toàn bộ codebase.
+**The lesson to keep:** before treating a mechanism as "best practice", ask *"does this have a name and standard reference documentation others also learn from, or am I synthesising it?"* — if the latter, stop and ask before type-ifying/enforcing it across the whole codebase.
 
-### Rules (idempotency-key interceptor — phần còn lại, vẫn đúng)
-- ⛔ KHÔNG đăng ký `IdempotencyInterceptor` global qua `APP_INTERCEPTOR` — chỉ áp per-route bằng `@UseInterceptors()`, và chỉ cho mutation có side-effect tốn kém thật (xem bảng quyết định 1.0)
-- ⛔ KHÔNG áp cho GET
-- Interceptor tự chặn được race giữa 2 request **cùng key** (claim-before-execute) — vẫn cần xét thêm lớp nghiệp vụ (OCC/unique constraint) cho race giữa 2 request hợp lệ **khác key** (1.3)
-- Key reuse với request khác (`requestHash` không khớp) → `422`, không âm thầm replay response cũ (Stripe-standard, thêm 2026-07-14)
-- Handler được bảo vệ phải return body — không `void`
-- TTL 24h là chuẩn, có thể giảm xuống 1h cho endpoint không quan trọng
-- Cron cleanup (`IdempotencyCleanupService`, `@Cron('0 3 * * *')`) chạy 1 lần duy nhất qua `HttpIdempotencyModule` — không đăng ký lại ở module khác
+### Rules (the idempotency-key interceptor — the remainder, still valid)
+- ⛔ Do NOT register `IdempotencyInterceptor` globally via `APP_INTERCEPTOR` — apply it per-route with `@UseInterceptors()`, and only for mutations with genuinely expensive side effects (see the decision table in 1.0)
+- ⛔ Do NOT apply it to GET
+- The interceptor blocks races between two requests with the **same key** by itself (claim-before-execute) — you must still consider a business layer (OCC/unique constraint) for a race between two legitimate requests with **different keys** (1.3)
+- Reusing a key with a different request (`requestHash` mismatch) → `422`, never a silent replay of the old response (the Stripe standard, added 2026-07-14)
+- A protected handler must return a body — not `void`
+- A 24h TTL is standard, and can be lowered to 1h for less important endpoints
+- The cleanup cron (`IdempotencyCleanupService`, `@Cron('0 3 * * *')`) runs exactly once via `HttpIdempotencyModule` — don't register it again in another module
 
 ---
 
 ## 2. Transactional Outbox
 
-### Vấn đề
+### The problem
 ```
-1. Save domain object vào DB ✅
-2. Publish event lên Kafka ❌ (server crash)
-→ DB có data nhưng Kafka không có event → inconsistency
+1. Save the domain object to the DB ✅
+2. Publish the event to Kafka ❌ (server crashes)
+→ the DB has the data but Kafka has no event → inconsistency
 ```
 
-### Giải pháp
-Thay vì publish thẳng lên Kafka, INSERT vào bảng `outbox_events` **trong cùng transaction** với domain write. Một polling service đọc outbox và publish lên Kafka.
+### The solution
+Instead of publishing straight to Kafka, INSERT into an `outbox_events` table **in the same transaction** as the domain write. A polling service reads the outbox and publishes to Kafka.
 
-### Schema (đã có)
+### Schema (already exists)
 ```prisma
 model OutboxEvent {
   id            String       @id @default(uuid())
@@ -252,14 +246,14 @@ model OutboxEvent {
   status        OutboxStatus @default(PENDING)
   createdAt     DateTime     @default(now())
   processedAt   DateTime?
-  @@index([status, createdAt])  // polling query dùng index này
+  @@index([status, createdAt])  // the polling query uses this index
 }
 enum OutboxStatus { PENDING  PROCESSED  FAILED_DLQ }
 ```
 
-### Implement — viết outbox trong cùng transaction
+### Implementation — writing the outbox in the same transaction
 ```typescript
-// Trong command handler, dùng TransactionManager
+// In the command handler, using TransactionManager
 async execute(command: PublishDocumentCommand): Promise<void> {
   await this.transactionManager.run(async () => {
     // 1. Domain write
@@ -267,7 +261,7 @@ async execute(command: PublishDocumentCommand): Promise<void> {
     item.publish()
     await this.knowledgeRepo.save(item)
 
-    // 2. Outbox write — CÙNG transaction, không bao giờ tách ra
+    // 2. Outbox write — the SAME transaction, never split apart
     await this.prisma.outboxEvent.create({
       data: {
         aggregateType: 'KnowledgeItem',
@@ -276,17 +270,17 @@ async execute(command: PublishDocumentCommand): Promise<void> {
         payload: { itemId: item.id, orgId: item.orgId, spaceId: item.spaceId },
       },
     })
-    // Nếu transaction fail → cả 2 rollback → không có inconsistency
+    // If the transaction fails → both roll back → no inconsistency
   })
 }
 ```
 
-### Polling Publisher (Phase 2 — khi có Kafka)
+### Polling Publisher (Phase 2 — once Kafka exists)
 ```typescript
 // infrastructure/outbox/outbox-publisher.service.ts
 @Injectable()
 export class OutboxPublisherService {
-  // Chạy mỗi 1 giây, pick PENDING rows và publish lên Kafka
+  // Runs every second, picks up PENDING rows and publishes them to Kafka
   @Interval(1000)
   async poll(): Promise<void> {
     const events = await this.prisma.outboxEvent.findMany({
@@ -313,35 +307,37 @@ export class OutboxPublisherService {
 ```
 
 ### Rules
-- ⛔ KHÔNG publish Kafka trực tiếp trong handler — luôn qua outbox
-- ⛔ Domain write và outbox write phải cùng 1 transaction
-- PENDING → PROCESSED hoặc FAILED_DLQ, không bao giờ xóa row (audit trail)
+- ⛔ Do NOT publish to Kafka directly in a handler — always via the outbox
+- ⛔ The domain write and the outbox write must be in the same transaction
+- PENDING → PROCESSED or FAILED_DLQ; never delete the row (audit trail)
 
 ---
 
 ## 3. Retry
 
 > **[ADR-0001, 2026-07-29] SUPERSEDED — `RetryMiddleware`/`TransactionMiddleware`/`commandBus.use()`
-> không còn tồn tại.** Mọi thứ dưới đây trong §3 mô tả kiến trúc CŨ — giữ nguyên làm mốc lịch sử của
-> chuỗi quyết định (không sửa lén, cùng quy ước với `docs/adr/README.md`), nhưng KHÔNG mô tả code hiện
-> tại. Kiến trúc hiện hành: retry + transaction sống trong MỘT thân hàm cố định của `CommandBus`
-> (`withRetry` bọc ngoài `runTransactional`), transaction là `TxScope` Unit-of-Work suy từ chữ ký
-> handler thay vì cờ `command.options?.transactional`. **Hai quyết định đã lập luận kỹ ở đây VẪN CÒN
-> ĐÚNG và đã port nguyên vẹn sang code mới:** (1) chỉ retry `P2034`, loại trừ `P2028` để tránh
-> retry-storm khi pool cạn kiệt (`isPrismaTransientError`, nay ở `packages/shared-kernel/src/resilience/
-> prisma-transient-error.ts`, dùng chung cho cả 3 service thay vì copy-paste); (2) full-jitter backoff.
-> Xem `docs/adr/0001-transaction-retry-boundary.md`.
+> no longer exist.** Everything below in §3 describes the OLD architecture — kept as-is as a
+> historical marker in the decision chain (not silently edited, following the same convention as
+> `docs/adr/README.md`), but it does NOT describe the current code. The current architecture: retry
+> and transaction live in ONE fixed method body of `CommandBus` (`withRetry` wrapping
+> `runTransactional`), and the transaction is a `TxScope` Unit-of-Work inferred from the handler's
+> signature rather than from a `command.options?.transactional` flag. **Two decisions argued
+> carefully here are STILL CORRECT and were ported verbatim into the new code:** (1) retry only
+> `P2034`, excluding `P2028` to avoid a retry storm when the pool is exhausted
+> (`isPrismaTransientError`, now in `packages/shared-kernel/src/resilience/prisma-transient-error.ts`,
+> shared across all 3 services instead of copy-pasted); (2) full-jitter backoff.
+> See `docs/adr/0001-transaction-retry-boundary.md`.
 
-### Đã có sẵn — RetryMiddleware trong CQRS pipeline (LỊCH SỬ — xem ghi chú SUPERSEDED ở trên)
+### Already in place — RetryMiddleware in the CQRS pipeline (HISTORICAL — see the SUPERSEDED note above)
 ```typescript
 // shared-kernel/src/cqrs/middleware/retry.middleware.ts
-// Tự động retry khi isPrismaTransientError() trả true
+// Automatically retries when isPrismaTransientError() returns true
 // (connection reset, deadlock, pool timeout)
 this.commandBus.use(this.loggingMiddleware, this.retryMiddleware, this.transactionMiddleware)
 ```
 
-### Khi nào cần retry thủ công (ngoài CQRS)
-Gọi external HTTP service (Claude API, Elasticsearch):
+### When manual retry is needed (outside CQRS)
+Calling an external HTTP service (the Claude API, Elasticsearch):
 ```typescript
 async function withRetry<T>(
   fn: () => Promise<T>,
@@ -360,19 +356,19 @@ async function withRetry<T>(
   throw new Error('unreachable')
 }
 
-// Dùng
+// Usage
 const result = await withRetry(() => this.claudeClient.complete(prompt))
 ```
 
-### ⚠️ Tự phản biện (2026-07-14) — P2028 bị loại khỏi transient set, thêm metric quan sát
+### ⚠️ Self-critique (2026-07-14) — P2028 removed from the transient set, plus an observation metric
 
-User đặt đúng 3 câu hỏi buộc audit lại `isPrismaTransientError`, không chỉ tin lời chú thích cũ ("connection reset, deadlock, pool timeout" — 1 câu gộp chung, sai chỗ):
+The user asked exactly 3 questions that forced a re-audit of `isPrismaTransientError`, rather than trusting the old comment ("connection reset, deadlock, pool timeout" — one lumped-together phrase, and wrong in places):
 
-1. **"Lỗi mạng không báo về FE được à?"** — Trước tiên làm rõ phạm vi: `RetryMiddleware` chỉ retry 2 mã Prisma (`P2034`, `P2028`) — **lỗi DB nội bộ, không phải lỗi gọi ra ngoài** (gRPC/HTTP đi qua Circuit Breaker, có báo lỗi thật về client, không qua middleware này). Tiền đề không áp dụng cho phần mạng — nhưng câu hỏi vẫn đúng cho phần DB, dẫn tới finding #2.
-2. **"Có nặng nề hệ thống không?"** — Có, và đây là bug thiết kế thật: `P2034` (deadlock) an toàn để retry (Postgres tự abort transaction thua, thường resolve trong mili-giây — đúng khuyến nghị Prisma docs). Nhưng `P2028` (transaction/connection API error) **có thể là dấu hiệu pool cạn kiệt** — auto-retry nó = xin lại connection từ **đúng cái pool đang cạn**, không giúp gì, còn cộng dồn tải đúng lúc hệ thống cần giảm để phục hồi (retry-storm antipattern). Trước đây gộp chung 2 mã này vào cùng 1 policy — sai.
-3. **"Ít command dùng, value không?"** — Chỉ 6/37 command có `retryable: true` (5 auth-service: login/register/refresh/provision-user/cancel-provisioned-user — path danh tính tần suất cao; 1 core-api: `update-role-permissions`). Phân bổ này có lý (OLTP tần suất cao mới đáng retry deadlock) nhưng đồng nghĩa core-api gần như không nhận giá trị gì từ middleware này dù đăng ký global — chấp nhận được vì chi phí đăng ký gần 0 (1 nhánh rẽ `if (!retryable) return next()`).
+1. **"So network errors can't be reported back to the frontend?"** — First, clarify the scope: `RetryMiddleware` only retries 2 Prisma codes (`P2034`, `P2028`) — **internal DB errors, not outbound call errors** (gRPC/HTTP go through the Circuit Breaker, and do report real errors back to the client, not through this middleware). The premise doesn't apply to the network part — but the question is still valid for the DB part, and it led to finding #2.
+2. **"Is it heavy on the system?"** — Yes, and this was a genuine design bug: `P2034` (deadlock) is safe to retry (Postgres aborts the losing transaction itself, usually resolving in milliseconds — exactly as the Prisma docs recommend). But `P2028` (a transaction/connection API error) **can be a sign of pool exhaustion** — auto-retrying it means asking **the very pool that is exhausted** for another connection: no recovery benefit, and it piles on load exactly when the system needs to shed it (the retry-storm antipattern). These two codes had previously been lumped into one policy — wrong.
+3. **"Few commands use it — is it worth anything?"** — Only 6 of 37 commands had `retryable: true` (5 in auth-service: login/register/refresh/provision-user/cancel-provisioned-user — the high-frequency identity path; 1 in core-api: `update-role-permissions`). That distribution is reasonable (high-frequency OLTP is what makes deadlock retries worthwhile), but it also means core-api gains almost nothing from this middleware despite registering it globally — acceptable, since the registration cost is near zero (one `if (!retryable) return next()` branch).
 
-**Đã sửa — `isPrismaTransientError` chỉ còn khớp `P2034`:**
+**Fixed — `isPrismaTransientError` now matches only `P2034`:**
 ```typescript
 export function isPrismaTransientError(error: unknown): boolean {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
@@ -381,75 +377,75 @@ export function isPrismaTransientError(error: unknown): boolean {
   return false
 }
 ```
-`P2028` giờ fail-fast, trả lỗi thật về client thay vì tự retry mù server-side. Đánh đổi: mất khả năng tự phục hồi cho 1 số connection-blip ngắn thật sự transient (không phải pool cạn) — chấp nhận được, ưu tiên không làm nặng hệ thống hơn trong lúc DB đang stress.
+`P2028` now fails fast, returning a real error to the client instead of blindly retrying server-side. The trade-off: losing self-recovery for some genuinely transient short connection blips (not pool exhaustion) — acceptable, prioritising not making the system heavier while the DB is under stress.
 
-**Thêm metric quan sát** để quyết định này dựa trên dữ liệu thật, không phải đoán mãi: `RetryMiddleware` có thêm param cuối `onError?: (error, willRetry) => void` — **cố ý giữ ORM-agnostic** (chỉ nhận error thô + boolean đã tính sẵn), phần biết-Prisma nằm ở composition root (`recordDbTransientErrorObservation`, sống cạnh `isPrismaTransientError`). Counter `{service}_db_transient_error_total{code, retried}` — quan sát **cả P2028 lẫn P2034**, kể cả P2028 giờ không còn được retry, để trả lời "loại P2028 ra có đúng không" bằng tần suất thật thay vì phỏng đoán 1 lần.
+**Added an observation metric** so this decision can rest on real data rather than perpetual guessing: `RetryMiddleware` gained a final `onError?: (error, willRetry) => void` param — **deliberately kept ORM-agnostic** (it receives only the raw error + a pre-computed boolean), with the Prisma-aware part living at the composition root (`recordDbTransientErrorObservation`, sitting next to `isPrismaTransientError`). The counter `{service}_db_transient_error_total{code, retried}` observes **both P2028 and P2034**, including P2028 even though it is no longer retried, so that "was excluding P2028 correct?" can be answered by real frequency rather than a one-time guess.
 
-### ⚠️ Pivot (2026-07-14) — bỏ field `retryable`, retry P2034 tự động cho MỌI command transactional
+### ⚠️ Pivot (2026-07-14) — dropped the `retryable` field; P2034 is now retried automatically for EVERY transactional command
 
-Ngay sau finding P2028 ở trên, audit tiếp câu hỏi "middleware này có đáng giữ không, ít command dùng quá" lộ ra vấn đề sâu hơn: grep `transactional: true` toàn bộ 3 service ra **18 command**, nhưng chỉ **6** có `retryable: true`. **12 command transactional còn lại — `create-org`, `spend-credits`, `grant-credits`, `refund-credits`, `publish-knowledge`, `update-knowledge`, `follow-target`, `unfollow-target`, `accept-invite`, `accept-answer`, `delete-role`, `update-profile` — deadlock (P2034) xảy ra là fail thẳng, không hề retry**, dù đã verify từng command thoả đúng điều kiện an toàn (mọi side-effect nằm trong transaction, không external call giữa handler).
+Immediately after the P2028 finding above, auditing the follow-up question "is this middleware worth keeping, so few commands use it" exposed a deeper problem: grepping `transactional: true` across all 3 services found **18 commands**, but only **6** had `retryable: true`. **The other 12 transactional commands — `create-org`, `spend-credits`, `grant-credits`, `refund-credits`, `publish-knowledge`, `update-knowledge`, `follow-target`, `unfollow-target`, `accept-invite`, `accept-answer`, `delete-role`, `update-profile` — failed outright on a deadlock (P2034) with no retry at all**, even though each was verified to satisfy the safety conditions (every side effect inside the transaction, no external call mid-handler).
 
-Đây không phải lựa chọn rủi ro-cao-thì-bảo-vệ có chủ đích — nó là **bất đối xứng lịch sử**: 6 command đầu (path login/register auth-service) được gắn cờ sớm, phần còn lại không ai quay lại làm. `retryable` là 1 flag opt-in lặp lại đúng điều kiện mà `transactional: true` đã đảm bảo sẵn (side-effect rollback sạch) — tách nó thành field riêng chỉ tạo ra 1 chỗ để quên, không thêm được gì.
+This was not a deliberate protect-only-the-high-risk choice — it was a **historical asymmetry**: the first 6 commands (auth-service's login/register path) were flagged early, and nobody went back for the rest. `retryable` was an opt-in flag restating exactly the condition `transactional: true` already guarantees (side effects roll back cleanly) — splitting it into its own field only created somewhere to forget, adding nothing.
 
-**Đã sửa — bỏ hẳn field `retryable` khỏi `CommandOptions`.** `RetryMiddleware` giờ gate theo `command.options?.transactional` trực tiếp — **mọi command `transactional: true` tự động được retry P2034**, không cần opt-in riêng:
+**Fixed — the `retryable` field was removed from `CommandOptions` entirely.** `RetryMiddleware` now gates on `command.options?.transactional` directly — **every `transactional: true` command is automatically retried on P2034**, with no separate opt-in:
 ```typescript
 // shared-kernel/src/cqrs/middleware/retry.middleware.ts
 async execute<T extends ICommand, R = any>(command: T, next: NextFn<R>): Promise<R> {
   if (!command.options?.transactional) {
     return next()
   }
-  // ... vòng retry như cũ, không đổi backoff/jitter/onError
+  // ... the retry loop as before, unchanged backoff/jitter/onError
 }
 ```
-Kết quả: bảo vệ tăng từ 6 → 18 command, không cần sửa command nào ngoài xoá field. Command cần **loại trừ** retry dù transactional (ví dụ có external call giữa handler) buộc phải là `transactional: false` + saga bù trừ tường minh — xem `ProvisionOrgCommand` làm mẫu, comment tại chỗ giải thích vì sao.
+The result: protection rose from 6 → 18 commands, with no command changed beyond deleting the field. A command that must be **excluded** from retry despite being transactional (e.g. one making an external call mid-handler) must instead be `transactional: false` + an explicit compensating saga — see `ProvisionOrgCommand` as the model, with an in-place comment explaining why.
 
-> **Cập nhật (cùng ngày, sau đó):** `CommandSafetyMiddleware` (nhắc ở đoạn dưới đây) đã **bị xoá hoàn toàn** sau đó cùng ngày — không chỉ mất 1 invariant, cả middleware không còn tồn tại (xem §1.4). Lý do: đây là 1 phần của lớp "tự chế" bị gỡ khi audit lại thấy không khớp thực hành senior thật. Đoạn dưới giữ nguyên như 1 mốc lịch sử trong chuỗi quyết định, không mô tả code hiện tại.
+> **Update (later the same day):** `CommandSafetyMiddleware` (mentioned in the paragraph below) was **deleted entirely** later that same day — not just losing one invariant; the whole middleware no longer exists (see §1.4). The reason: it was part of the "invented here" layer removed once a re-audit found it didn't match real senior practice. The paragraph below is kept unchanged as a historical marker in the decision chain; it does not describe the current code.
 
-**Hệ quả cho `CommandSafetyMiddleware` (LỊCH SỬ, middleware này đã bị xoá — xem update ngay trên):** invariant `retryable ⟹ transactional` (đã thêm ở §1.4 hôm trước) bị xoá theo — không phải "không còn enforce", mà **không còn field để mâu thuẫn** nữa (structurally impossible, mạnh hơn cả 1 runtime check). Chỉ còn invariant `concurrency:'occ' ⟹ transactional`, độc lập hoàn toàn với quyết định retry, vẫn giữ nguyên giá trị.
+**The consequence for `CommandSafetyMiddleware` (HISTORICAL — this middleware has been deleted, see the update immediately above):** the `retryable ⟹ transactional` invariant (added in §1.4 the previous day) was removed along with it — not "no longer enforced", but **no longer having a field to contradict** (structurally impossible, stronger than any runtime check). Only the `concurrency:'occ' ⟹ transactional` invariant remains, entirely independent of the retry decision, and still valuable.
 
-**Điều kiện an toàn của retry** (không đổi, giờ áp cho cả 18 thay vì 6): chỉ an toàn khi mọi side-effect nằm TRONG transaction bị rollback. Không retry command có publish Kafka / gọi external trực tiếp giữa handler — đó là lý do Outbox (mục 2) là tiền đề để retry-safe khi có event.
+**The safety condition for retry** (unchanged, now applying to all 18 rather than 6): it is only safe when every side effect is inside the transaction that rolls back. Never retry a command that publishes to Kafka / makes a direct external call mid-handler — which is why the Outbox (§2) is a prerequisite for being retry-safe once events are involved.
 
 ### Rules
-- Retry chỉ cho **transient errors** (timeout, 503, connection reset)
-- KHÔNG retry **4xx errors** (validation, auth, not found) — những lỗi này retry vô nghĩa
+- Retry only **transient errors** (timeout, 503, connection reset)
+- Do NOT retry **4xx errors** (validation, auth, not found) — retrying those is meaningless
 - Max 3 attempts, exponential backoff
-- Luôn dùng Circuit Breaker bên ngoài Retry (xem `rag_ai_integration.md`)
-- ⛔ Chỉ retry lỗi có bằng chứng resolve nhanh + không cộng dồn tải khi hệ thống đang stress (P2034 đạt, P2028 không — xem "Tự phản biện" ở trên). Thêm mã lỗi mới vào transient set → tự hỏi "retry lỗi này lúc hệ thống đang yếu có làm nó yếu hơn không" trước khi thêm
-- ⛔ KHÔNG thêm field `retryable`/opt-in riêng cho retry — `transactional: true` đã LÀ điều kiện đủ và cần cho retry-safe; 1 command muốn KHÔNG được retry dù transactional thì đó là dấu hiệu nó không nên `transactional: true` (nên tách saga, xem `ProvisionOrgCommand`), không phải lý do thêm field mới
+- Always put a Circuit Breaker outside Retry (see `rag_ai_integration.md`)
+- ⛔ Only retry errors with evidence of resolving quickly AND not accumulating load while the system is stressed (P2034 qualifies, P2028 doesn't — see "Self-critique" above). Adding a new error code to the transient set → ask "does retrying this while the system is already weak make it weaker?" before adding it
+- ⛔ Do NOT add a separate `retryable`/opt-in field for retry — `transactional: true` IS already the necessary and sufficient condition for retry safety; a command that must NOT be retried despite being transactional is a sign it shouldn't be `transactional: true` (split it into a saga, see `ProvisionOrgCommand`), not a reason to add a new field
 
-### Cập nhật (2026-06-22)
-- **Jitter**: `RetryMiddleware` dùng *full jitter* — `delay = random(0, min(maxDelayMs, base·2^(n-1)))` thay backoff cố định, để các victim deadlock (P2034) không retry đồng pha rồi đâm lại nhau. Helper `withRetry` thủ công ở trên (ví dụ minh hoạ, **chưa có call site thật nào trong code** — nếu dùng thật cho 1 external call, áp dụng jitter tương tự).
-- **Seam mở rộng**: middleware KHÔNG biết "lỗi nào là transient" — nó nhận predicate `isPrismaTransientError` inject ở composition root (`cqrs.module.ts`). Thêm loại lỗi retry-able → compose predicate ở đó, KHÔNG sửa middleware (giữ ORM-agnostic).
+### Update (2026-06-22)
+- **Jitter**: `RetryMiddleware` uses *full jitter* — `delay = random(0, min(maxDelayMs, base·2^(n-1)))` instead of fixed backoff, so deadlock victims (P2034) don't retry in phase and collide again. The manual `withRetry` helper above is an illustrative example with **no real call site in the code yet** — if it is ever used for a real external call, apply jitter the same way.
+- **Extension seam**: the middleware does NOT know "which errors are transient" — it receives the `isPrismaTransientError` predicate injected at the composition root (`cqrs.module.ts`). Adding a new retryable error type → compose the predicate there, do NOT edit the middleware (keeping it ORM-agnostic).
 
-### ⚠️ Đính chính (2026-07-12) — OCC KHÔNG auto-retry qua middleware này, khác với những gì bản cũ của mục này viết
+### ⚠️ Correction (2026-07-12) — OCC is NOT auto-retried by this middleware, contrary to what an older version of this section said
 
-**[SUPERSEDED một phần bởi pivot 2026-07-14 ở trên]** — phần dưới đây mô tả field `retryable` (khi đó tồn tại trên `CommandOptions`), giờ **đã bị xoá hoàn toàn** — mọi command `transactional: true` tự động retry P2034, không còn opt-in per-command. Giữ lại nguyên văn vì lý do OCC-conflict (P2002) không được `isPrismaTransientError` coi là transient (chỉ khớp P2034) **vẫn đúng và không đổi** — `SpendCreditsCommand`/`GrantCreditsCommand` giờ CÓ được retry tự động (vì `transactional: true`), nhưng retry đó chỉ khớp P2034 (deadlock), KHÔNG khớp P2002 (OCC conflict) — 409 `CREDIT_CONCURRENCY_CONFLICT` vẫn trả thẳng ra client như mô tả dưới đây, không có gì đổi ở phần này.
+**[PARTIALLY SUPERSEDED by the 2026-07-14 pivot above]** — the text below describes the `retryable` field (which existed at the time) and which has since been **removed entirely** — every `transactional: true` command now retries P2034 automatically, with no per-command opt-in. It is kept verbatim because the reasoning about OCC conflicts (P2002) not being treated as transient by `isPrismaTransientError` (which only matches P2034) **remains correct and unchanged** — `SpendCreditsCommand`/`GrantCreditsCommand` now DO get automatic retry (being `transactional: true`), but that retry only matches P2034 (deadlock), NOT P2002 (an OCC conflict) — a 409 `CREDIT_CONCURRENCY_CONFLICT` still goes straight back to the client as described below, with nothing changed in this part.
 
-Bản trước ghi "GAP phải đóng khi làm OCC" như thể auto-retry OCC conflict là việc sẽ làm qua `RetryMiddleware`. Audit lại code thật (`retryable` option trên **mọi** `*.command.ts` ở core-api) cho thấy **quyết định thật đã khác hẳn**, và không phải gap — là lựa chọn có chủ đích:
+The previous version recorded "a GAP to close when doing OCC" as though auto-retrying OCC conflicts was something to be done through `RetryMiddleware`. Re-auditing the real code (the `retryable` option on **every** `*.command.ts` in core-api) showed **the real decision was quite different**, and was not a gap but a deliberate choice:
 
-- `RetryMiddleware.execute()` (`shared-kernel`) check `command.options?.retryable` **trước tiên** — sai thì `return next()` ngay, không vào vòng retry, bất kể predicate `isPrismaTransientError` có khớp hay không.
-- Grep toàn bộ `retryable` trong `apps/core-api/src/modules/**/*.command.ts` (2026-07-12): **chỉ đúng 1 command** có `retryable: true` (`UpdateRolePermissionsCommand` — ghi đè idempotent, không side-effect ngoài, an toàn tuyệt đối khi lặp lại). **Toàn bộ 23 command còn lại** — kể cả `SpendCreditsCommand`/`GrantCreditsCommand` (2 command có OCC thật) và `ProvisionOrgCommand` (có gọi gRPC ra ngoài) — đều `retryable: false`.
-- Hệ quả: khi OCC conflict xảy ra thật ở `spend-credits` (đã smoke-test: 12 request đồng thời → 9 ok + 3 `CREDIT_CONCURRENCY_CONFLICT`), **`RetryMiddleware` không retry** — lỗi trả thẳng ra client dưới dạng 409, client tự quyết định gọi lại (không phải tự động, âm thầm). Đây là lựa chọn AN TOÀN HƠN auto-retry mù (đặc biệt đúng cho `ProvisionOrgCommand`, nơi comment tại `provision-org.command.ts` ghi rõ: *"retrying blindly would double-provision the owner"*).
-- **`RetryMiddleware` vẫn đăng ký toàn cục** trên `CommandBus` (mọi command đều đi qua nó), nhưng vì cổng `retryable` chặn ở đầu, nó **chỉ thật sự retry cho 1/24 command**. Không phải dead code (vẫn chạy, vẫn có tác dụng cho command đó), nhưng phạm vi hẹp hơn rất nhiều so với việc "đăng ký toàn cục" gợi ý — đọc code 1 command bất kỳ không đủ để biết middleware này CÓ áp dụng hay KHÔNG, phải check field `options.retryable` trên chính command đó.
+- `RetryMiddleware.execute()` (`shared-kernel`) checks `command.options?.retryable` **first** — if false it `return next()`s immediately, never entering the retry loop, regardless of whether the `isPrismaTransientError` predicate would match.
+- Grepping every `retryable` in `apps/core-api/src/modules/**/*.command.ts` (2026-07-12): **exactly 1 command** has `retryable: true` (`UpdateRolePermissionsCommand` — an idempotent overwrite with no external side effect, absolutely safe to repeat). **All 23 remaining commands** — including `SpendCreditsCommand`/`GrantCreditsCommand` (the 2 with real OCC) and `ProvisionOrgCommand` (which makes an outbound gRPC call) — are `retryable: false`.
+- The consequence: when an OCC conflict genuinely occurs in `spend-credits` (smoke-tested: 12 concurrent requests → 9 ok + 3 `CREDIT_CONCURRENCY_CONFLICT`), **`RetryMiddleware` does not retry** — the error goes straight to the client as a 409, and the client decides whether to call again (not automatically and silently). This is SAFER than blind auto-retry (especially true for `ProvisionOrgCommand`, where the comment in `provision-org.command.ts` states: *"retrying blindly would double-provision the owner"*).
+- **`RetryMiddleware` is still registered globally** on the `CommandBus` (every command passes through it), but because the `retryable` gate blocks at the top, it **only actually retries 1 of 24 commands**. Not dead code (it runs, and does work for that one command), but its scope is far narrower than "registered globally" suggests — reading any single command isn't enough to know whether this middleware applies; you must check the `options.retryable` field on that command.
 
-**Quy tắc khi thêm command mới**: mặc định `retryable: false`. Chỉ đặt `true` khi chắc chắn: (a) toàn bộ side-effect nằm trong 1 transaction sẽ rollback sạch khi retry, VÀ (b) không có external call (Kafka publish, gRPC, HTTP) nào chạy giữa chừng handler mà không idempotent tự nhiên. OCC-conflict (P2025) và side-effect-ngoài (gRPC) đều KHÔNG thoả điều kiện này trong thiết kế hiện tại — client-visible error + tự retry ở tầng gọi là lựa chọn đúng cho cả 2 trường hợp.
-- **Điều kiện an toàn của retry**: chỉ an toàn khi mọi side-effect nằm TRONG transaction bị rollback. Không retry command có publish Kafka / gọi external trực tiếp giữa handler — đó là lý do Outbox (mục 2) là tiền đề để retry-safe khi có event.
+**The rule when adding a new command**: default to `retryable: false`. Only set `true` when certain that (a) every side effect is inside one transaction that rolls back cleanly on retry, AND (b) no external call (Kafka publish, gRPC, HTTP) runs mid-handler without being naturally idempotent. Neither an OCC conflict (P2025) nor an external side effect (gRPC) satisfies this in the current design — a client-visible error plus a retry decided by the caller is the right choice for both.
+- **The safety condition for retry**: it is only safe when every side effect is inside the transaction that rolls back. Never retry a command that publishes to Kafka / makes a direct external call mid-handler — which is why the Outbox (§2) is a prerequisite for being retry-safe once events are involved.
 
-### 3.1 Circuit Breaker — mở rộng ra ngoài AI (2026-07-12)
+### 3.1 Circuit Breaker — extended beyond AI (2026-07-12)
 
-`CircuitBreaker` **không còn** là 1 class riêng của search-service (từng nằm ở `search-service/infrastructure/ai/circuit-breaker.ts`, gắn với AI). Đã chuyển vào **`@distributed-social-platform/shared-kernel`** (`src/resilience/circuit-breaker.ts`) vì lý do khác hẳn với `OrgAwareThrottlerGuard` (§4.1.1) — đây là **thuật toán thuần túy, không phụ thuộc framework** (constructor chỉ cần `ILogger`, interface đã có sẵn trong `shared-kernel/logger`), và giờ có **2 consumer thật ở 2 service độc lập** (search-service: AI/ES/Ollama; core-api: gRPC) — khác `ThrottlerGuard` vốn chỉ NestJS mới cần và mỗi service NestJS chỉ dùng cục bộ.
+`CircuitBreaker` is **no longer** a search-service-private class (it used to live at `search-service/infrastructure/ai/circuit-breaker.ts`, tied to AI). It moved into **`@distributed-social-platform/shared-kernel`** (`src/resilience/circuit-breaker.ts`) for a reason quite unlike `OrgAwareThrottlerGuard` (§4.1.1) — this is a **pure, framework-independent algorithm** (its constructor only needs `ILogger`, an interface already in `shared-kernel/logger`), and it now has **two real consumers in two independent services** (search-service: AI/ES/Ollama; core-api: gRPC) — unlike `ThrottlerGuard`, which only NestJS needs and which each NestJS service uses locally.
 
-**Audit gap (2026-07-11, trước khi làm item này):** chỉ Claude/Gemini summarizer có breaker. 3 external call khác trong hot path KHÔNG có timeout lẫn breaker:
+**Audit gap (2026-07-11, before doing this item):** only the Claude/Gemini summarisers had a breaker. Three other external calls on the hot path had neither a timeout nor a breaker:
 
-| Call | Vị trí | Vấn đề trước khi vá |
+| Call | Location | The problem before the patch |
 |---|---|---|
-| Ollama embedding | `search-service` `HttpEmbeddingService.embedSlice()` | `fetch()` không giới hạn thời gian (Ollama treo là request treo vô hạn); không breaker; **và** `SearchKnowledgeService.search()` không `catch` lỗi embedding — 1 dependency lỗi làm chết cả search (bất đối xứng với nhánh ES vốn đã `.catch(() => [])`) |
-| Elasticsearch search | `search-service` `ElasticsearchKeywordRepository.search()` | Client mặc định `requestTimeout` 30s — quá dài cho hot path; không breaker |
-| gRPC provisioning | `core-api` `AuthProvisioningClient` | Đã có `deadline` (5s) chặn 1 call, nhưng KHÔNG có breaker — outage thật của auth-service vẫn khiến mỗi lần provision chờ đủ 5s rồi mới fail, không fail-fast |
+| Ollama embedding | `search-service` `HttpEmbeddingService.embedSlice()` | `fetch()` with no time limit (if Ollama hangs, the request hangs forever); no breaker; **and** `SearchKnowledgeService.search()` didn't `catch` embedding errors — one failing dependency killed the whole search (asymmetric with the ES branch, which already had `.catch(() => [])`) |
+| Elasticsearch search | `search-service` `ElasticsearchKeywordRepository.search()` | The client's default `requestTimeout` is 30s — far too long for a hot path; no breaker |
+| gRPC provisioning | `core-api` `AuthProvisioningClient` | Had a `deadline` (5s) bounding one call, but NO breaker — a real auth-service outage still meant every provision attempt waited the full 5s before failing, with no fail-fast |
 
-**Đã vá cả 3** (timeout + breaker theo đúng discipline của Claude/Gemini — cú pháp breaker dưới đây dùng SRP caller class, xem §3.1.2; lúc vá lần đầu dùng `new CircuitBreaker()` thủ công trong constructor, thử qua `@CircuitBreak` decorator, cuối cùng chốt SRP caller class sau khi thảo luận về discoverability):
+**All 3 patched** (timeout + breaker, following the same discipline as Claude/Gemini — the breaker syntax below uses the SRP caller class, see §3.1.2; the first patch used a manual `new CircuitBreaker()` in the constructor, then tried a `@CircuitBreak` decorator, and finally settled on the SRP caller class after discussing discoverability):
 ```typescript
-// Ollama — timeout qua AbortSignal (Node 18+ native, không cần polyfill) + breaker qua OllamaEmbeddingCaller
+// Ollama — timeout via AbortSignal (Node 18+ native, no polyfill needed) + breaker via OllamaEmbeddingCaller
 private async embedSlice(texts: string[]) {
   const res = await this.caller.call(() =>
     fetch(url, { ..., signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) }),
@@ -457,67 +453,68 @@ private async embedSlice(texts: string[]) {
   ...
 }
 
-// Elasticsearch — requestTimeout ở tầng Client (áp cho mọi call qua client này) + breaker qua ElasticsearchSearchCaller
+// Elasticsearch — requestTimeout at the Client layer (applying to every call through this client) + breaker via ElasticsearchSearchCaller
 new Client({ ..., requestTimeout: REQUEST_TIMEOUT_MS })
 async search(orgId: string, query: string, limit: number) {
   return this.caller.call(async () => { ... })
 }
 
-// gRPC — deadline đã có sẵn, breaker qua AuthProvisioningGrpcCaller
+// gRPC — the deadline already existed, breaker via AuthProvisioningGrpcCaller
 async provisionUser(email: string) {
   return this.caller.call(() => new Promise(...))
 }
 ```
 
-**Phần audit 2026-07-11 bỏ sót — Claude/Gemini "đã có breaker" KHÔNG có nghĩa là đã có timeout (2026-08-04, user tự audit tiếp sau khi tìm ra bug `fetch()`/breaker ở trên):**
+**What the 2026-07-11 audit missed — "Claude/Gemini already have a breaker" does NOT mean they have a timeout (2026-08-04, found by the user auditing further after the `fetch()`/breaker bug above):**
 
-| Call | Vấn đề |
+| Call | The problem |
 |---|---|
-| `GeminiSummarizer` (`fetch()` thô) | **Không có timeout nào cả** — không cả `AbortSignal.timeout` như Ollama đã có. Gemini treo = request treo tới giới hạn mặc định của Node/undici, dài hơn nhiều so với mọi call khác trong hệ thống |
-| `ClaudeSummarizer` (`new Anthropic({...})`) | Dùng nguyên default SDK: `timeout` 10 phút, `maxRetries` 2 — SDK tự retry ngầm BÊN TRONG 1 lần `caller.call()`, vừa kéo dài latency hot-path vượt xa mọi call khác (3-5s), vừa giấu bớt lỗi thật khỏi failure count của breaker (1 lần breaker thấy fail = tới 3 request thật đã fail) |
+| `GeminiSummarizer` (raw `fetch()`) | **No timeout at all** — not even the `AbortSignal.timeout` Ollama already had. If Gemini hangs, the request hangs until Node/undici's default limit, far longer than any other call in the system |
+| `ClaudeSummarizer` (`new Anthropic({...})`) | Using the SDK defaults: `timeout` 10 minutes, `maxRetries` 2 — the SDK silently retries INSIDE a single `caller.call()`, both stretching hot-path latency far beyond every other call (3-5s) and hiding real failures from the breaker's failure count (one failure the breaker sees = up to 3 real failed requests) |
 
-Lý do bị bỏ sót: audit 2026-07-11 chỉ liệt kê "có breaker hay chưa", không kiểm tra tiếp "có bound latency 1 call hay chưa" cho 2 cái đã sẵn có breaker — 2 rule (breaker + timeout) độc lập, có 1 không tự động có nốt cái kia, cùng bài học với vụ tách business-outcome/layering ở trên.
+Why it was missed: the 2026-07-11 audit only listed "has a breaker or not", without going on to check "is a single call's latency bounded" for the two that already had breakers — two independent rules (breaker + timeout); having one does not automatically give you the other, the same lesson as the business-outcome/layering split below.
 
-**Đã vá cả 2**, dùng chung `REQUEST_TIMEOUT_MS = 5000` (khớp giá trị Ollama/ES đang dùng):
+**Both patched**, sharing `REQUEST_TIMEOUT_MS = 5000` (matching the value already used by Ollama/ES):
 ```typescript
-// Gemini — thêm signal vào fetch(), y hệt Ollama
+// Gemini — add a signal to fetch(), exactly like Ollama
 fetch(url, { ..., signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
 
-// Claude — override cả 2 default của SDK
+// Claude — override both SDK defaults
 new Anthropic({ apiKey, timeout: REQUEST_TIMEOUT_MS, maxRetries: 0 })
-// maxRetries: 0 vì ClaudeApiCaller/CircuitBreaker đã là lớp retry/circuit-break
-// của hệ thống — SDK tự retry thêm là 2 cơ chế chồng nhau, khác semantics
-// (giống lý do KHÔNG bọc thêm breaker cho indexItem() đã retry→DLQ ở tầng khác)
+// maxRetries: 0 because ClaudeApiCaller/CircuitBreaker is already the system's
+// retry/circuit-break layer — the SDK retrying too is two overlapping mechanisms
+// with different semantics (same reason we do NOT wrap a breaker around
+// indexItem(), which already has retry→DLQ at another layer)
 ```
 
-**⚠️ Lỗi ngoài dự tính (business outcome ≠ fault) — phải tách trước khi vào breaker:** cả ES (404 = "org chưa index", bình thường) và gRPC (`ALREADY_EXISTS` = email đã tồn tại, bình thường) đều có 1 nhánh lỗi KHÔNG phải sự cố hạ tầng. Nếu để nhánh đó `throw`/`reject` **bên trong** `breaker.execute()`, breaker sẽ đếm nó như 1 failure thật — dùng hết `threshold` bởi chính traffic hợp lệ (nhiều user cố tạo org trùng email → breaker tự trip dù auth-service hoàn toàn khỏe). Cách xử lý đúng — bắt lỗi "bình thường" đó và `return`/`resolve` một giá trị (không `throw`) từ bên trong hàm được bọc, rồi map lại thành exception nghiệp vụ **sau khi** `breaker.execute()` đã trả về (xem `AuthProvisioningClient.provisionUser` — resolve tagged `{ alreadyExists: true }`, unwrap sau breaker). Suýt mắc lỗi này khi viết `provisionUser` — bản đầu để `reject(new OwnerEmailAlreadyExistsError())` ngay trong executor bọc bởi breaker, tự phát hiện và sửa trước khi commit.
+**⚠️ An unexpected error class (business outcome ≠ fault) — separate it before it reaches the breaker:** both ES (404 = "this org hasn't been indexed", normal) and gRPC (`ALREADY_EXISTS` = the email already exists, normal) have an error branch that is NOT an infrastructure fault. If that branch `throw`s/`reject`s **inside** `breaker.execute()`, the breaker counts it as a real failure — burning through `threshold` on legitimate traffic alone (many users trying to create an org with a duplicate email → the breaker trips even though auth-service is perfectly healthy). The correct handling — catch that "normal" error and `return`/`resolve` a value (never `throw`) from inside the wrapped function, then map it back into a business exception **after** `breaker.execute()` returns (see `AuthProvisioningClient.provisionUser` — resolving a tagged `{ alreadyExists: true }`, unwrapped after the breaker). This mistake was nearly made while writing `provisionUser` — the first version had `reject(new OwnerEmailAlreadyExistsError())` right inside the executor wrapped by the breaker; caught and fixed before committing.
 
-> **2026-08-04 — sửa tiếp 1 lỗi layering còn sót lại sau lần audit trên, do user review phát hiện:** dù đã tách `ALREADY_EXISTS` khỏi breaker đúng cách, `provisionUser` VẪN tự `throw new OwnerEmailAlreadyExistsError()` ngay trong `AuthProvisioningClient` (infra/gRPC adapter) trước khi trả về handler — một `ApplicationError` bị ném từ tầng infra, KHÔNG nhất quán với cách mọi `*AlreadyExists*Error`/`*AlreadyTaken*Error` khác trong repo được ném (`CreateOrgHandler`/`AcceptInviteHandler`: infra chỉ trả `existing` — data thô — handler ở APPLICATION layer mới `if (existing) throw ...`). Sửa: `provisionUser` giờ trả về union đã tag (`ProvisionedOwner | OwnerEmailAlreadyExists`, KHÔNG throw), `ProvisionOrgHandler.execute()` tự `if ('alreadyExists' in provisioned) throw new OwnerEmailAlreadyExistsError()` — đúng layer, đúng chỗ như 2 handler kia. Bài học: "business outcome không được trip breaker" và "adapter không được tự quyết định application error" là 2 rule tách biệt — sửa cái đầu không tự động sửa cái sau, dễ tưởng đã xong khi chỉ mới xong một nửa.
+> **2026-08-04 — one remaining layering error fixed after that audit, found by user review:** despite correctly separating `ALREADY_EXISTS` from the breaker, `provisionUser` STILL threw `new OwnerEmailAlreadyExistsError()` inside `AuthProvisioningClient` (an infra/gRPC adapter) before returning to the handler — an `ApplicationError` thrown from the infra layer, INCONSISTENT with how every other `*AlreadyExists*Error`/`*AlreadyTaken*Error` in the repo is thrown (`CreateOrgHandler`/`AcceptInviteHandler`: infra only returns `existing` — raw data — and the handler at the APPLICATION layer does `if (existing) throw ...`). Fixed: `provisionUser` now returns a tagged union (`ProvisionedOwner | OwnerEmailAlreadyExists`, no throw), and `ProvisionOrgHandler.execute()` does `if ('alreadyExists' in provisioned) throw new OwnerEmailAlreadyExistsError()` — the right layer, the same place as the other two handlers. The lesson: "a business outcome must not trip the breaker" and "an adapter must not decide application errors" are two separate rules — fixing the first doesn't automatically fix the second, and it's easy to think you're done when you're only halfway.
 
-**Sửa kèm 1 bug thật phát hiện trong lúc audit — bất đối xứng graceful-degrade:** `SearchKnowledgeService.search()` chạy semantic (embedding + pgvector) và keyword (Elasticsearch) song song; nhánh keyword đã `.catch(() => [])` từ trước nhưng nhánh semantic thì KHÔNG — embedding lỗi (giờ có breaker/timeout nên lỗi *nhanh hơn*, nhưng vẫn là lỗi) từng làm chết toàn bộ query. Bọc `embedBatch()` + `chunkRepo.semanticSearch()` vào 1 private method `semanticSearch()` có `.catch()` riêng — giờ cả 2 nhánh đối xứng, search chỉ thật sự rỗng khi **cả 2** dependency cùng chết.
+**One real bug fixed alongside the audit — asymmetric graceful degradation:** `SearchKnowledgeService.search()` runs semantic (embedding + pgvector) and keyword (Elasticsearch) in parallel; the keyword branch already had `.catch(() => [])` but the semantic branch did NOT — an embedding failure (now failing *faster* thanks to the breaker/timeout, but still a failure) used to kill the entire query. Wrapped `embedBatch()` + `chunkRepo.semanticSearch()` into a private `semanticSearch()` method with its own `.catch()` — both branches are now symmetric, and search only comes back genuinely empty when **both** dependencies are down.
 
-**Cố ý KHÔNG bọc breaker cho `ElasticsearchKeywordRepository.indexItem()`** (chỉ `search()`): indexing chạy trong Kafka consumer, đã retry→DLQ an toàn ở tầng message (`eventing_patterns.md §4`) — bọc thêm breaker ở đây là 2 cơ chế an toàn chồng lên nhau với ngữ nghĩa khác nhau, không tăng bảo vệ thật, chỉ thêm phức tạp.
+**Deliberately NOT wrapping a breaker around `ElasticsearchKeywordRepository.indexItem()`** (only `search()`): indexing runs inside a Kafka consumer and is already safely retry→DLQ at the message layer (`eventing_patterns.md` §4) — adding a breaker here would stack two safety mechanisms with different semantics, adding no real protection and only complexity.
 
-### 3.1.1 2 nâng cấp thêm sau khi audit lại chính `CircuitBreaker` (2026-07-12, cùng ngày)
+### 3.1.1 Two further upgrades after re-auditing `CircuitBreaker` itself (2026-07-12, same day)
 
-**A. Race condition ở HALF-OPEN — nhiều caller đồng thời tự coi mình là probe.** Bản đầu chỉ check `if (this.state === 'open')` khi vào `execute()`. Nếu N request đến đúng lúc `timeoutMs` vừa hết hạn, request đầu tiên đổi state sang `half-open` **trước khi** `await fn()` — nhưng vì đó là điểm `await` đầu tiên, N-1 request còn lại (đã gọi `execute()` trong cùng tick đồng bộ) chạy tiếp mà state đã là `half-open`, không còn khớp điều kiện `=== 'open'` nữa → **lọt qua luôn**, tất cả cùng gọi `fn()` thật — dội cả 1 chùm request vào dependency vừa mới hồi (yếu), có thể đánh sập nó lần nữa, phản tác dụng chính của circuit breaker.
+**A. A HALF-OPEN race condition — several concurrent callers each considering themselves the probe.** The first version only checked `if (this.state === 'open')` on entering `execute()`. If N requests arrive exactly as `timeoutMs` expires, the first changes state to `half-open` **before** `await fn()` — but since that is the first `await` point, the other N-1 requests (which already called `execute()` in the same synchronous tick) carry on with the state already `half-open`, no longer matching `=== 'open'` → **they all get through**, all calling the real `fn()` — dumping a whole burst of requests onto a dependency that has only just (weakly) recovered, potentially knocking it over again, defeating the circuit breaker's entire purpose.
 
-Sửa bằng cách dùng chính `state === 'half-open'` làm mutex (không cần thêm field `probing` riêng — thử thêm 1 field `probing: boolean` trước, phát hiện vẫn sai vì check `state==='open'` không bắt được N-1 request kia, nên bỏ field, gộp logic vào 1 check `if (this.state === 'half-open') throw` đặt TRƯỚC check `state === 'open'`):
+The fix uses `state === 'half-open'` itself as the mutex (with no extra `probing` field — an added `probing: boolean` field was tried first and found still wrong, because the `state==='open'` check doesn't catch those other N-1 requests, so the field was dropped and the logic merged into one `if (this.state === 'half-open') throw` placed BEFORE the `state === 'open'` check):
 ```typescript
 async execute<T>(fn: () => Promise<T>): Promise<T> {
-  if (this.state === 'half-open') throw new Error('Circuit open') // đã có 1 probe đang chạy
+  if (this.state === 'half-open') throw new Error('Circuit open') // a probe is already running
   if (this.state === 'open') {
     if (Date.now() - this.lastFailureTime <= this.timeoutMs) throw new Error('Circuit open')
-    this.setState('half-open') // claim probe slot — đồng bộ, trước await đầu tiên
+    this.setState('half-open') // claim the probe slot — synchronously, before the first await
   }
   // ...await fn()...
 }
 ```
-An toàn vì toàn bộ đoạn check-và-đổi-state chạy **đồng bộ** (không có `await` nào chen giữa) — trong Node (single-threaded, event loop), 1 khối code đồng bộ không bao giờ bị 1 lời gọi khác chen vào giữa chừng, nên không cần lock/atomic thật.
+This is safe because the whole check-and-change-state block runs **synchronously** (with no `await` in between) — in Node (single-threaded, event loop), a synchronous block can never be interleaved with another call, so no real lock/atomic is needed.
 
-Test cho case này (`circuit-breaker.spec.ts`): 1 probe chậm (chưa resolve) + 3 caller đến đồng thời → assert **chỉ 1** trong 4 thực sự gọi `fn()`, 3 còn lại fail fast với `'Circuit open'`.
+The test for this case (`circuit-breaker.spec.ts`): one slow probe (not yet resolved) + 3 concurrent callers → assert that **only 1** of the 4 actually calls `fn()`, with the other 3 failing fast with `'Circuit open'`.
 
-**B. Không quan sát được từ bên ngoài — thêm Prometheus metrics.** Trước đó chỉ log qua pino (`warn`/`error`) — muốn biết breaker nào đang `open` phải đọc log thủ công, không alert được. Thêm 2 metric module-level (theo đúng convention `search.metrics.ts`/`notification.metrics.ts` — Counter/Gauge singleton, tự surface qua `GET /metrics` có sẵn), gắn nhãn `name` để phân biệt breaker nào (mỗi consumer truyền tên riêng lúc `new CircuitBreaker(name, logger, ...)` — tham số MỚI, bắt buộc, đứng đầu):
+**B. Not externally observable — added Prometheus metrics.** Previously it only logged via pino (`warn`/`error`) — finding out which breaker was `open` meant reading logs by hand, with no possibility of alerting. Added 2 module-level metrics (following the `search.metrics.ts`/`notification.metrics.ts` convention — a Counter/Gauge singleton, surfacing automatically via the existing `GET /metrics`), labelled by `name` to distinguish breakers (each consumer passes its own name at `new CircuitBreaker(name, logger, ...)` — a NEW, mandatory, leading parameter):
 
 ```typescript
 const stateGauge = new Gauge({
@@ -530,18 +527,18 @@ const transitionsCounter = new Counter({
 })
 ```
 
-5 consumer hiện tại, mỗi cái 1 tên nhãn riêng: `claude-summarizer`, `gemini-summarizer`, `ollama-embedding`, `elasticsearch-search`, `auth-provisioning-grpc`. `circuit_breaker_state{name="ollama-embedding"} 2` → biết ngay breaker nào đang open mà không cần đọc log.
+The 5 current consumers each have their own label: `claude-summarizer`, `gemini-summarizer`, `ollama-embedding`, `elasticsearch-search`, `auth-provisioning-grpc`. `circuit_breaker_state{name="ollama-embedding"} 2` → you immediately know which breaker is open, without reading logs.
 
-### 3.1.2 SRP caller class — thay `new CircuitBreaker()` rải rác trong adapter (2026-07-12)
+### 3.1.2 The SRP caller class — replacing `new CircuitBreaker()` scattered through adapters (2026-07-12)
 
-**Vấn đề phát hiện qua thảo luận, không phải bug:** `new CircuitBreaker(...)` nằm trong constructor của adapter (`AuthProvisioningClient`, `ClaudeSummarizer`...) — nhìn vào `ProvisionOrgHandler` hay controller gọi nó, **không cách nào biết** có breaker hay không, phải lần xuống tận adapter mới thấy. So sánh với Kafka consumer: `KnowledgeIndexerConsumer` (`.../consumers/knowledge-indexer.consumer.ts`) bọc `ResilientEventConsumer` và nhìn rất rõ ràng — nhưng đào sâu thì `ResilientEventConsumer` cũng chỉ được `new` trong **body constructor**, hệt cơ chế cũ của Circuit Breaker, **không phải nhờ dependency injection**. Cái làm nó "lộ ra" là 2 thứ khác: **(a)** cả file `KnowledgeIndexerConsumer` chỉ làm đúng 1 việc (bọc resilient consumer), không có gì khác cạnh tranh sự chú ý, và **(b)** tên class tự mô tả (`Resilient...`, `...Indexer...`). Đây là bài học chính rút ra: **độ lộ ra không đến từ DI, đến từ "1 file/class chỉ làm đúng 1 việc + tên tự mô tả".**
+**A problem found through discussion, not a bug:** `new CircuitBreaker(...)` sat in the adapter's constructor (`AuthProvisioningClient`, `ClaudeSummarizer`, …) — looking at `ProvisionOrgHandler` or the controller calling it, there was **no way to tell** whether a breaker existed; you had to dig all the way down into the adapter. Compare with the Kafka consumer: `KnowledgeIndexerConsumer` (`.../consumers/knowledge-indexer.consumer.ts`) wraps `ResilientEventConsumer` and is very obvious about it — but digging in, `ResilientEventConsumer` is also merely `new`ed in the **constructor body**, exactly like the old Circuit Breaker mechanism, **not via dependency injection**. What actually made it "visible" were two other things: **(a)** the whole `KnowledgeIndexerConsumer` file does exactly one thing (wrapping the resilient consumer), with nothing else competing for attention, and **(b)** the class name describes itself (`Resilient...`, `...Indexer...`). This is the main lesson: **visibility doesn't come from DI, it comes from "one file/class doing exactly one thing + a self-describing name".**
 
-**Đã thử `@CircuitBreak` decorator trước, bỏ:** hoạt động đúng (đã build, test xanh), nhưng cần `experimentalDecorators`/`emitDecoratorMetadata` mới cho `shared-kernel` (trước đó chưa từng cần), đấu với TS về generic variance (`TypedPropertyDescriptor<T>`) và private-field nominal typing (`this.logger`) — friction thật, và **chỉ áp dụng được cho code kiểu OOP/class** (không gắn được vào Fastify thuần — decorator chỉ bám được vào class method, `auth-service` viết theo style hàm, không có class để gắn).
+**A `@CircuitBreak` decorator was tried first, and dropped:** it worked correctly (it built, tests were green), but it required `experimentalDecorators`/`emitDecoratorMetadata` newly enabled for `shared-kernel` (never needed before), fought TypeScript over generic variance (`TypedPropertyDescriptor<T>`) and private-field nominal typing (`this.logger`) — real friction, and it **only applies to OOP/class-style code** (it can't attach to plain Fastify — a decorator can only bind to a class method, and `auth-service` is written in a functional style with no class to attach to).
 
-**Giải pháp chốt — SRP caller class, đúng công thức đã chứng minh hiệu quả với `ResilientEventConsumer`:** tách phần "gọi external call qua breaker" ra **1 class riêng, nhỏ, chỉ làm đúng 1 việc, tên tự mô tả dependency nó bảo vệ** — rồi tiêm vào class nghiệp vụ như 1 dependency bình thường.
+**The settled solution — an SRP caller class, following the formula already proven by `ResilientEventConsumer`:** extract "calling the external service through a breaker" into **its own small class doing exactly one thing, named after the dependency it protects** — then inject it into the business class as an ordinary dependency.
 
 ```typescript
-// claude-api.caller.ts — CHỈ làm 1 việc, không có gì khác trong file này
+// claude-api.caller.ts — does ONE thing, with nothing else in the file
 @Injectable()
 export class ClaudeApiCaller {
   private readonly breaker: CircuitBreaker
@@ -553,7 +550,7 @@ export class ClaudeApiCaller {
   }
 }
 
-// claude-summarizer.ts — giữ nguyên logic nghiệp vụ (build prompt, parse response), tiêm caller
+// claude-summarizer.ts — keeps its business logic (building the prompt, parsing the response), injects the caller
 constructor(config: ConfigService, private readonly caller: ClaudeApiCaller) {}
 async summarize(query, context) {
   const response = await this.caller.call(() => this.client.messages.create({ ... }))
@@ -561,27 +558,27 @@ async summarize(query, context) {
 }
 ```
 
-5 caller class tương ứng 5 external call: `ClaudeApiCaller`, `GeminiApiCaller`, `OllamaEmbeddingCaller`, `ElasticsearchSearchCaller` (search-service), `AuthProvisioningGrpcCaller` (core-api). `AuthProvisioningClient.provisionUser`/`cancelProvisionedUser` cùng tiêm 1 instance `AuthProvisioningGrpcCaller` → chia sẻ đúng 1 breaker, y hệt hành vi trước đó.
+Five caller classes for five external calls: `ClaudeApiCaller`, `GeminiApiCaller`, `OllamaEmbeddingCaller`, `ElasticsearchSearchCaller` (search-service), `AuthProvisioningGrpcCaller` (core-api). `AuthProvisioningClient.provisionUser`/`cancelProvisionedUser` inject the same `AuthProvisioningGrpcCaller` instance → sharing exactly one breaker, identical to the previous behaviour.
 
-**3 lợi ích, đúng thứ tự ưu tiên khi thiết kế:**
-1. **Lộ ra tại chỗ dùng, đúng công thức Consumer** — `grep -rl "CircuitBreaker(" apps/*/src/**/*.caller.ts` (hoặc đơn giản là `ls *.caller.ts`) liệt kê toàn bộ dependency có breaker, mỗi file = 1 dependency, tên file tự nói lý do tồn tại.
-2. **Zero TS decorator friction** — không cần `experimentalDecorators`, không đấu generic variance/private-field typing. Áp dụng được cho cả style hàm (Fastify) lẫn OOP (NestJS) — chỉ đổi "vỏ" (class method vs closure), lõi `CircuitBreaker` vẫn 1 chỗ.
-3. **Đúng Clean Architecture / Hexagonal** — caller class là 1 adapter thật, tiêm vào class nghiệp vụ như mọi dependency khác (repository, service khác) — không phải const trần lơ lửng ngoài composition root.
+**Three benefits, in the priority order that mattered at design time:**
+1. **Visible at the point of use, following the Consumer formula** — `grep -rl "CircuitBreaker(" apps/*/src/**/*.caller.ts` (or simply `ls *.caller.ts`) lists every dependency with a breaker; one file per dependency, with the filename stating its reason to exist.
+2. **Zero TS decorator friction** — no `experimentalDecorators`, no fighting generic variance/private-field typing. It works for both a functional style (Fastify) and OOP (NestJS) — only the "shell" changes (class method vs closure), while the `CircuitBreaker` core stays in one place.
+3. **Correct Clean Architecture / Hexagonal** — the caller class is a genuine adapter, injected into the business class like any other dependency (a repository, another service) — not a bare `const` floating outside the composition root.
 
-**Đánh đổi chấp nhận được:** tăng số file (+5, mỗi file rất nhỏ, gần như khuôn mẫu lặp lại — cố ý, đổi lấy độ rõ ràng, không phải duplication code thật cần DRY hoá) so với decorator (0 file thêm) hoặc `new CircuitBreaker()` thủ công (0 file thêm nhưng ẩn hoàn toàn).
+**An acceptable trade-off:** more files (+5, each very small and nearly boilerplate — deliberately, traded for clarity, not genuine duplication needing DRYing) compared with the decorator (0 extra files) or a manual `new CircuitBreaker()` (0 extra files but completely hidden).
 
-**Quyết định "đổi lại từ decorator sau khi đã build/test xong" — cố ý, không phải lãng phí công:** ở giai đoạn build/development (khác với hệ thống production đang chạy thật), thiết kế tốt hơn được ưu tiên hơn "đã test xanh nên giữ nguyên cho đỡ tốn công sửa lại" — xem thêm nguyên tắc làm việc đã thống nhất, áp dụng cho toàn bộ curriculum này.
+**The decision to "change approach after already building and testing the decorator" was deliberate, not wasted effort:** during the build/development phase (unlike a real running production system), a better design takes priority over "the tests are green so leave it alone to save rework" — see also the agreed working principles applied across this whole curriculum.
 
-**⚠️ Lỗi ngược chiều phát hiện 2026-08-04 (user audit toàn bộ `*.caller.ts`) — `fetch()` không reject khi HTTP status lỗi, nên breaker không thấy được:** `GeminiSummarizer`/`HttpEmbeddingService` (Ollama) truyền `() => fetch(url, opts)` thẳng vào `caller.call()`, rồi check `if (!res.ok) throw` ở **BÊN NGOÀI**, sau khi `caller.call()` đã return. `fetch()` chỉ reject khi lỗi network thật (DNS/connection/abort) — 4xx/5xx vẫn resolve bình thường với `res.ok = false`. Kết quả: breaker thấy promise resolve → tính là `onSuccess()`, reset `failureCount = 0` — dù Gemini/Ollama trả 500 cho MỌI request liên tục, breaker **không bao giờ mở**. Đây là lỗi NGƯỢC với case `ALREADY_EXISTS` (2026-07-11: outcome bình thường bị tính nhầm là lỗi) — lần này lỗi THẬT không được tính là lỗi. So sánh với `ElasticsearchKeywordRepository.search()`/`ClaudeSummarizer` làm đúng: cả 2 dùng SDK/client tự `throw` khi non-2xx (ES client, Anthropic SDK), và toàn bộ try/catch nằm **TRONG** closure truyền cho `caller.call()`. Sửa: chuyển `if (!res.ok) throw` vào trong closure (`caller.call(async () => { const r = await fetch(...); if (!r.ok) throw ...; return r })`). Test thêm ở cả 2 spec: gọi trực tiếp `wrappedFn = mockCaller.call.mock.calls[0][0]` rồi assert `wrappedFn()` tự nó reject — chỉ assert `summarize()`/`embed()` reject ở tầng ngoài KHÔNG đủ để bắt bug này, vì throw ở ngoài `caller.call()` cũng làm hàm ngoài cùng reject y hệt, che mất việc breaker đã bị bỏ qua.
+**⚠️ The opposite error, found 2026-08-04 (the user auditing every `*.caller.ts`) — `fetch()` doesn't reject on an error HTTP status, so the breaker can't see it:** `GeminiSummarizer`/`HttpEmbeddingService` (Ollama) passed `() => fetch(url, opts)` straight into `caller.call()`, and then checked `if (!res.ok) throw` **OUTSIDE**, after `caller.call()` had already returned. `fetch()` only rejects on a genuine network error (DNS/connection/abort) — a 4xx/5xx still resolves normally with `res.ok = false`. The result: the breaker saw a resolved promise → counted it as `onSuccess()`, resetting `failureCount = 0` — so even if Gemini/Ollama returned 500 for EVERY consecutive request, the breaker would **never open**. This is the INVERSE of the `ALREADY_EXISTS` case (2026-07-11: a normal outcome wrongly counted as an error) — here a REAL error wasn't counted as one. Compare with `ElasticsearchKeywordRepository.search()`/`ClaudeSummarizer`, which do it correctly: both use an SDK/client that `throw`s on non-2xx (the ES client, the Anthropic SDK), with the whole try/catch INSIDE the closure passed to `caller.call()`. Fix: move `if (!res.ok) throw` inside the closure (`caller.call(async () => { const r = await fetch(...); if (!r.ok) throw ...; return r })`). Extra tests in both specs: grab `wrappedFn = mockCaller.call.mock.calls[0][0]` directly and assert `wrappedFn()` itself rejects — asserting only that `summarize()`/`embed()` rejects at the outer layer is NOT enough to catch this bug, because a throw outside `caller.call()` makes the outer function reject identically, masking the fact that the breaker was bypassed.
 
 ### Rules (Circuit Breaker)
-- Mỗi external call cần bảo vệ → 1 SRP caller class riêng (`XCaller`), tên mô tả đúng dependency, chỉ chứa `CircuitBreaker` + method `call<T>(fn) => Promise<T>` — không thêm logic nghiệp vụ vào caller class
-- Caller class tiêm vào class nghiệp vụ qua constructor (NestJS DI hoặc composition root thủ công như `auth-service`) — KHÔNG khai báo `const` trần ở module scope với logger "từ đâu đó"
-- 2 method cùng bảo vệ 1 dependency (như `provisionUser`/`cancelProvisionedUser`) → tiêm CÙNG 1 caller instance, chia sẻ breaker — có chủ đích, không phải lỗi
-- Bọc ở **call synchronous/hot-path** (user đang chờ response) — không bọc call đã an toàn nhờ cơ chế khác (Kafka retry→DLQ, background job)
-- Lỗi nghiệp vụ bình thường (404 index-not-found, `ALREADY_EXISTS`...) phải được bắt và trả về **bên trong** hàm truyền vào `caller.call(fn)`, KHÔNG để lọt ra ngoài như 1 failure — nếu không breaker sẽ trip vì traffic hợp lệ
-- Nếu dùng `fetch()` thô (không phải SDK/client tự throw khi non-2xx) — check `res.ok` và `throw` PHẢI nằm **bên trong** closure truyền cho `caller.call(fn)`, không phải sau khi nó return — nếu không breaker không bao giờ thấy lỗi HTTP status thật, chỉ thấy lỗi network
-- Threshold/timeout mặc định (5 lỗi liên tiếp / 60s) đủ dùng cho mọi consumer hiện tại — chỉ đổi khi có lý do cụ thể (đo được, không đoán)
+- Every external call needing protection → its own SRP caller class (`XCaller`), named after the exact dependency, containing only a `CircuitBreaker` + a `call<T>(fn) => Promise<T>` method — no business logic in the caller class
+- Inject the caller class into the business class via the constructor (NestJS DI, or a manual composition root as in `auth-service`) — do NOT declare a bare module-scope `const` with a logger "from somewhere"
+- Two methods protecting the same dependency (like `provisionUser`/`cancelProvisionedUser`) → inject the SAME caller instance, sharing the breaker — deliberate, not a mistake
+- Wrap **synchronous/hot-path calls** (where a user is waiting for the response) — do not wrap calls already made safe by another mechanism (Kafka retry→DLQ, background jobs)
+- Ordinary business errors (a 404 index-not-found, `ALREADY_EXISTS`, …) must be caught and returned **inside** the function passed to `caller.call(fn)`, never allowed to escape as a failure — otherwise the breaker trips on legitimate traffic
+- If using raw `fetch()` (rather than an SDK/client that throws on non-2xx) — the `res.ok` check and the `throw` MUST be **inside** the closure passed to `caller.call(fn)`, not after it returns — otherwise the breaker never sees real HTTP-status errors, only network errors
+- The default threshold/timeout (5 consecutive failures / 60s) is adequate for every current consumer — change it only for a specific, measured reason, never a guess
 
 ---
 
@@ -589,60 +586,60 @@ async summarize(query, context) {
 
 ### 4.1 HTTP rate limiting — per-route + per-org
 
-**Có 2 trục phải phân biệt, không phải 1:**
+**There are 2 axes to distinguish, not 1:**
 
-| Trục | Cơ chế | Trạng thái |
+| Axis | Mechanism | Status |
 |---|---|---|
-| **Per-route** — route nhạy cảm (login, tạo org, spend credit) cần limit chặt hơn CRUD thường | `@Throttle({ default: { ttl, limit } })` per-method, override default của `ThrottlerModule.forRoot()` | Đã có sẵn — xem `org.controller.ts`, `knowledge.controller.ts`, `credit.controller.ts`, `engagement.controller.ts`, `platform-admin.controller.ts` |
-| **Per-org** — request từ org A không được ăn hết quota của org B | Tracking key (bucket) phải theo `orgId`, không phải IP | ⛔ Thiếu — mặc định `ThrottlerGuard` track theo IP, mọi org đứng sau cùng NAT/proxy công ty dùng chung 1 bucket, và ngược lại không cô lập được org này khỏi traffic của org khác |
+| **Per-route** — sensitive routes (login, creating an org, spending credits) need a tighter limit than ordinary CRUD | `@Throttle({ default: { ttl, limit } })` per method, overriding `ThrottlerModule.forRoot()`'s default | Already in place — see `org.controller.ts`, `knowledge.controller.ts`, `credit.controller.ts`, `engagement.controller.ts`, `platform-admin.controller.ts` |
+| **Per-org** — requests from org A must not consume org B's quota | The tracking key (bucket) must be `orgId`, not the IP | ⛔ Missing — `ThrottlerGuard` tracks by IP by default, so every org behind a shared corporate NAT/proxy shares one bucket, and conversely one org can't be isolated from another's traffic |
 
-**Fix per-org: `OrgAwareThrottlerGuard`** (`infrastructure/http/guards/org-aware-throttler.guard.ts`) — override `getTracker()`:
+**The per-org fix: `OrgAwareThrottlerGuard`** (`infrastructure/http/guards/org-aware-throttler.guard.ts`) — overriding `getTracker()`:
 ```typescript
 protected async getTracker(req: FastifyRequest): Promise<string> {
   const orgId = req.headers['x-org-id']
   if (typeof orgId === 'string' && orgId.length > 0) return `org:${orgId}:ip:${req.ip}`
-  return `ip:${req.ip}`  // route chưa có org (login/register) → rơi về IP như cũ
+  return `ip:${req.ip}`  // routes without an org yet (login/register) → fall back to IP as before
 }
 ```
-Đăng ký thay `ThrottlerGuard` ở `APP_GUARD` trong `app.module.ts`.
+Registered in place of `ThrottlerGuard` at `APP_GUARD` in `app.module.ts`.
 
-**Về mặt cơ chế:** `getTracker()` **không phải** hàm quyết định pass/fail (không phải `canActivate()`, mình không override nó). Nó chỉ là 1 hook mà `canActivate()` gốc (kế thừa nguyên, không đổi) gọi để lấy `tracker: string`, sau đó `generateKey(context, tracker, throttlerName)` tự nối thêm `ClassName-MethodName` vào key rồi hash — nghĩa là **per-route và per-org tự kết hợp**, không cần tự ghép chuỗi route vào tracker. `handleRequest()` mới là nơi thật sự tăng counter trong storage và so với `limit` để quyết định 429. 2 request cho ra cùng 1 chuỗi `getTracker()` → cùng 1 key → dùng chung 1 bucket đếm quota.
+**On the mechanism:** `getTracker()` is **not** the function deciding pass/fail (that's `canActivate()`, which we do not override). It is only a hook that the inherited `canActivate()` (unchanged) calls to obtain a `tracker: string`; `generateKey(context, tracker, throttlerName)` then appends `ClassName-MethodName` to the key and hashes it — meaning **per-route and per-org combine automatically**, with no need to splice the route into the tracker yourself. `handleRequest()` is where the counter is actually incremented in storage and compared against `limit` to decide on a 429. Two requests producing the same `getTracker()` string → the same key → sharing one quota bucket.
 
-**⚠️ Vì sao đọc `X-Org-Id` thô (chưa qua guard xác thực membership) mà vẫn đúng:** `ThrottlerGuard` là `APP_GUARD` — chạy **trước** mọi guard cấp controller (`JwtAuthGuard`, `OrgGuard`), nên `request.user`/`request.org` (được set sau khi xác thực) chưa tồn tại ở thời điểm này. Đây là giới hạn thật của Nest guard ordering (global guard luôn chạy trước route-level guard), không phải sơ suất. Chấp nhận được vì mục đích của rate-limiting là **công bằng/chống lạm dụng**, không phải authorization — request có header `X-Org-Id` giả vẫn bị lớp sau (membership check, hoặc chính domain logic) chặn như cũ; hậu quả tệ nhất của việc track theo header chưa xác thực chỉ là bucket sai (không phải data leak). Các route đọc chính header này thô để lấy `orgId` phục vụ query (search-service/notification-service không có `OrgGuard`, đọc thẳng `@Headers('x-org-id')`) — cùng 1 tin cậy biên đã có sẵn trong codebase, không phải trust boundary mới.
+**⚠️ Why reading the raw `X-Org-Id` (before membership has been authenticated) is still correct:** `ThrottlerGuard` is an `APP_GUARD` — it runs **before** every controller-level guard (`JwtAuthGuard`, `OrgGuard`), so `request.user`/`request.org` (set after authentication) don't exist yet at this point. That is a real constraint of Nest's guard ordering (a global guard always runs before route-level guards), not an oversight. It is acceptable because the purpose of rate limiting is **fairness/abuse prevention**, not authorization — a request with a forged `X-Org-Id` header is still blocked by the later layer (the membership check, or the domain logic itself); the worst consequence of tracking on an unauthenticated header is a wrong bucket, not a data leak. Several routes read this same header raw to obtain `orgId` for queries (search-service/notification-service have no `OrgGuard` and read `@Headers('x-org-id')` directly) — the same trust boundary already present in the codebase, not a new one.
 
-**⚠️ Rủi ro thật đã tìm ra và vá (2026-07-11) — griefing 1 tenant cụ thể bằng header giả:** vì `ThrottlerGuard` chạy trước `JwtAuthGuard`, request **không cần token hợp lệ** vẫn tiêu tốn quota. Kẻ tấn công ẩn danh gửi hàng loạt request với `X-Org-Id: <org-nạn-nhân>` (orgId không bí mật — lộ qua URL/response body) tới 1 route bất kỳ có thể cố ý burn hết quota của org đó dù request sau đó bị 401 — user thật của org bị 429 oan. Đây không phải rủi ro lý thuyết vì trước khi có `OrgAwareThrottlerGuard`, tấn công tương tự khó nhắm đúng 1 org (chỉ nhắm được theo IP). **Vá bằng cách ghép thêm IP vào tracker: `org:{orgId}:ip:{ip}`** thay vì chỉ `org:{orgId}`. Không chặn tuyệt đối (kẻ tấn công vẫn xoay IP được) nhưng nâng chi phí tấn công đáng kể — mỗi IP chỉ burn được bucket riêng của chính nó, không cộng dồn phá 1 bucket chung cho cả org.
+**⚠️ A real risk found and patched (2026-07-11) — griefing a specific tenant with a forged header:** because `ThrottlerGuard` runs before `JwtAuthGuard`, a request **without a valid token** still consumes quota. An anonymous attacker sending a flood of requests with `X-Org-Id: <victim-org>` to any route could deliberately burn that org's quota even though the requests are subsequently 401'd — real users of that org get an unfair 429. This isn't a theoretical risk, because before `OrgAwareThrottlerGuard` existed a similar attack couldn't target one specific org (only an IP). **Patched by adding the IP to the tracker: `org:{orgId}:ip:{ip}`** instead of just `org:{orgId}`. Not an absolute block (an attacker can still rotate IPs) but it raises the attack cost considerably — each IP can only burn its own bucket, rather than accumulating against one shared bucket for the whole org.
 
-**Cố ý CHƯA làm — per-org configurable limit** (số request/phút khác nhau theo org, kiểu tier/pricing): mọi org hiện dùng chung ngưỡng số (per-route) như nhau, chỉ khác nhau ở *bucket* (cô lập lẫn nhau), không khác nhau ở *số*. Thêm cột limit-per-org configurable là một tính năng riêng (đọc từ DB mỗi request hoặc cache) — chưa có nhu cầu thật (chưa có tier/pricing phân biệt), YAGNI cho đến khi có. **Đừng lặp lại bài học `aiRateLimitPerMin`** (xoá 2026-07-12 — field tồn tại nhiều tháng nhưng không nơi nào enforce nó) — nếu làm, field DB và code enforce phải đi cùng nhau trong 1 lần, không thêm field "cho tương lai" trước.
+**Deliberately NOT done yet — configurable per-org limits** (different requests-per-minute per org, a tier/pricing model): every org currently shares the same numeric threshold (per-route), differing only in *bucket* (isolated from each other), not in the *number*. Adding a configurable per-org limit column is its own feature (reading from the DB on every request, or caching) — there is no real need yet (no differentiated tier/pricing), so YAGNI until there is. **Don't repeat the `aiRateLimitPerMin` lesson** (deleted 2026-07-12 — the field existed for months but nothing anywhere enforced it) — if it is built, the DB field and the enforcing code must land together, never a field added "for the future" first.
 
-**Đường lùi khi horizontal-scale (nhiều instance 1 service):** `ThrottlerStorageService` mặc định là in-memory — đúng cho 1 process. Khi có >1 replica, bucket không share giữa các instance → limit thực tế bị nhân lên theo số replica. Lúc đó đổi sang `ThrottlerStorageRedisService` (cần Redis, hiện dự án **chưa deploy** — xem `docker-compose.yml`). Tripwire: revisit khi service nào đó chạy >1 instance thật (K8s replica > 1 hoặc PM2 cluster mode).
+**The fallback for horizontal scaling (several instances of one service):** `ThrottlerStorageService` is in-memory by default — correct for one process. With more than one replica, buckets aren't shared between instances → the effective limit is multiplied by the replica count. At that point, switch to `ThrottlerStorageRedisService` (which needs Redis, **not currently deployed** in this project — see `docker-compose.yml`). Tripwire: revisit when any service genuinely runs more than 1 instance (a K8s replica count > 1, or PM2 cluster mode).
 
-#### 4.1.1 Audit toàn dự án (2026-07-11) — service nào chuẩn, service nào không áp dụng được
+#### 4.1.1 Project-wide audit (2026-07-11) — which services are compliant, and which the pattern doesn't apply to
 
-Rate limiting không phải 1 cơ chế dùng chung — mỗi service có transport/trust-model khác nhau, áp máy móc y hệt là sai:
+Rate limiting is not one shared mechanism — each service has a different transport/trust model, and applying it mechanically everywhere would be wrong:
 
-| Service | Cơ chế | Per-route | Per-org | Trạng thái |
+| Service | Mechanism | Per-route | Per-org | Status |
 |---|---|---|---|---|
-| `auth-service` | Fastify thuần + `@fastify/rate-limit` (KHÔNG dùng NestJS) | ✅ có sẵn (`login` 5/5min, `register` 5/5min, `refresh` 10/1min) | N/A — **đúng** là IP-based, vì auth-service xử lý request **trước khi có identity/org** (chính nó là nơi tạo ra identity) | ✅ Chuẩn, không sửa |
-| `core-api` | NestJS `@nestjs/throttler` | ✅ có sẵn (5 controller) | ✅ `OrgAwareThrottlerGuard` | ✅ Chuẩn |
-| `search-service` | NestJS `@nestjs/throttler` | ✅ thêm `@Throttle` 20/60s cho `POST /search` (chạm Elasticsearch + có thể Claude summarize — đắt hơn CRUD) | ✅ `OrgAwareThrottlerGuard` | ✅ Chuẩn (vá cùng đợt với per-org) |
-| `notification-service` | NestJS `@nestjs/throttler` | Không thêm — route chỉ là CRUD nhẹ (list/mark-read), không có chi phí AI/external, giữ mức global 100/60s là đủ | ✅ `OrgAwareThrottlerGuard` | ✅ Chuẩn |
-| `worker-service` | `NestFactory.createApplicationContext` — **không có HTTP server**, chỉ consume Kafka | N/A | N/A | ✅ Đúng bản chất, không áp dụng |
-| `chat-service` | `src/` chưa tồn tại — chưa build | N/A | N/A | Chưa tới lượt, không áp dụng |
+| `auth-service` | Plain Fastify + `@fastify/rate-limit` (NOT NestJS) | ✅ present (`login` 5/5min, `register` 5/5min, `refresh` 10/1min) | N/A — being IP-based is **correct**, because auth-service handles requests **before any identity/org exists** (it is what creates identity) | ✅ Compliant, no change |
+| `core-api` | NestJS `@nestjs/throttler` | ✅ present (5 controllers) | ✅ `OrgAwareThrottlerGuard` | ✅ Compliant |
+| `search-service` | NestJS `@nestjs/throttler` | ✅ added `@Throttle` 20/60s for `POST /search` (hits Elasticsearch and may summarise via Claude — more expensive than CRUD) | ✅ `OrgAwareThrottlerGuard` | ✅ Compliant (patched in the same pass as per-org) |
+| `notification-service` | NestJS `@nestjs/throttler` | Not added — its routes are lightweight CRUD (list/mark-read) with no AI/external cost, so the global 100/60s is enough | ✅ `OrgAwareThrottlerGuard` | ✅ Compliant |
+| `worker-service` | `NestFactory.createApplicationContext` — **no HTTP server**, only consumes Kafka | N/A | N/A | ✅ Correct by nature, doesn't apply |
+| `chat-service` | `src/` doesn't exist yet — not built | N/A | N/A | Not yet reached, doesn't apply |
 
-`OrgAwareThrottlerGuard` **không** đưa vào `shared-kernel` dù trùng lặp 3 lần (core-api/search-service/notification-service) — `shared-kernel` framework-agnostic (không phụ thuộc `@nestjs/*`, dùng chung cho cả `auth-service` là Fastify thuần), thêm dependency NestJS vào đó phá vỡ ranh giới đó chỉ để tiết kiệm 10 dòng lặp lại. Mỗi service NestJS giữ bản sao riêng trong `infrastructure/http/guards/`, đúng convention hiện có (`health.controller.ts` + `@SkipThrottle()` cũng lặp lại y hệt ở cả 3 service).
+`OrgAwareThrottlerGuard` was deliberately **not** moved into `shared-kernel` despite being duplicated 3 times (core-api/search-service/notification-service) — `shared-kernel` is framework-agnostic (it doesn't depend on `@nestjs/*` and is shared with `auth-service`, which is plain Fastify), and adding a NestJS dependency there would break that boundary just to save 10 duplicated lines. Each NestJS service keeps its own copy in `infrastructure/http/guards/`, matching the existing convention (`health.controller.ts` + `@SkipThrottle()` is duplicated identically across all 3 services too).
 
-### 4.2 Throttle (AI / Embedding workload)
+### 4.2 Throttle (AI / embedding workload)
 
-### Vấn đề
-User upload 500 documents cùng lúc → 500 embedding requests → pgvector / Claude API quá tải.
+### The problem
+A user uploads 500 documents at once → 500 embedding requests → pgvector / the Claude API is overwhelmed.
 
-### Giải pháp — xử lý theo batch với delay
+### The solution — process in batches with a delay
 ```typescript
 // infrastructure/ai/throttled-embedder.ts
 @Injectable()
 export class ThrottledEmbedder {
   private readonly BATCH_SIZE = 10
-  private readonly DELAY_MS = 100  // 100ms giữa các batch = 100 embeddings/giây max
+  private readonly DELAY_MS = 100  // 100ms between batches = 100 embeddings/second max
 
   async embedMany(items: { id: string; text: string }[]): Promise<void> {
     const batches = chunk(items, this.BATCH_SIZE)
@@ -657,31 +654,31 @@ export class ThrottledEmbedder {
 }
 ```
 
-### ⛔ Per-org AI rate limit — ĐÃ XOÁ (2026-07-12), không dựng lại mẫu này nếu chưa có nhu cầu thật
+### ⛔ Per-org AI rate limit — DELETED (2026-07-12); don't rebuild this pattern without a real need
 
-Từng có `Organization.aiRateLimitPerMin` (cột DB + domain field, default 20) với ý định enforce như code mẫu cũ ở đây. Audit toàn dự án phát hiện: field tồn tại nhưng **không có bất kỳ nơi nào đọc/enforce nó** — cấu hình được nhưng đổi giá trị không ảnh hưởng gì thật. Đã xoá field khỏi schema/domain/mapper/repository (migration `prisma db push --accept-data-loss`, 8 org có giá trị cũ, không quan trọng vì chưa từng có hiệu ứng).
+There used to be an `Organization.aiRateLimitPerMin` (a DB column + domain field, default 20) intended to be enforced like the old sample code here. A project-wide audit found: the field existed but **nothing anywhere read or enforced it** — it was configurable, but changing the value had no real effect. The field was deleted from the schema/domain/mapper/repository (migration `prisma db push --accept-data-loss`; 8 orgs had old values, unimportant since they never had any effect).
 
-**Tripwire — chỉ dựng lại khi có nhu cầu thật** (tier/pricing phân biệt theo org cho AI usage): lúc đó cần cả field DB **và** 1 nơi enforce thật (ví dụ Redis counter như code mẫu cũ, nhưng dự án hiện chưa deploy Redis — xem `§4.1` tripwire tương tự). Đừng thêm field cấu hình trước khi có code dùng nó — bài học từ chính field này.
+**Tripwire — only rebuild it when there is a real need** (differentiated tier/pricing per org for AI usage): at that point you need both the DB field **and** a real enforcement point (e.g. a Redis counter as in the old sample code, though Redis is not currently deployed in this project — see the similar tripwire in `§4.1`). Don't add a configuration field before there is code using it — the lesson from this very field.
 
 ### Rules
-- Throttle áp dụng cho: embedding generation, Claude RAG calls, re-indexing jobs
-- KHÔNG throttle CRUD operations — chỉ AI workload
-- Dùng cùng với Circuit Breaker (`rag_ai_integration.md`) — Throttle kiểm soát tốc độ, Circuit Breaker kiểm soát health
+- Throttle applies to: embedding generation, Claude RAG calls, re-indexing jobs
+- Do NOT throttle CRUD operations — AI workloads only
+- Use it together with the Circuit Breaker (`rag_ai_integration.md`) — Throttle controls rate, the Circuit Breaker controls health
 
 ---
 
 ## 5. Graceful Shutdown
 
-### Vấn đề
-Process bị dừng đột ngột (deploy mới, container restart, autoscale scale-down, `docker stop`) trong lúc đang xử lý dở:
-- Request HTTP đang chạy bị cắt ngang → client nhận connection reset thay vì response.
-- Cuộc gọi gRPC đang chạy bị cắt ngang giữa chừng — **nguy hiểm hơn HTTP thường** khi RPC đó là 1 bước trong saga cross-service: ví dụ `ProvisionUser` (xem `microservice_architecture.md`/org-provisioning saga) đã tạo xong user ở `auth_db` nhưng response chưa kịp về tới core-api — core-api coi như fail, chạy compensation, nhưng user vừa tạo có thể đã "kịp" trả lời trước khi process chết → race hiếm nhưng có thật.
-- Connection pool Postgres bị ngắt đột ngột thay vì đóng sạch (Prisma không kịp `$disconnect()`).
+### The problem
+A process stopped abruptly (a new deploy, a container restart, an autoscale scale-down, `docker stop`) while work is in flight:
+- An in-flight HTTP request is cut off → the client gets a connection reset instead of a response.
+- An in-flight gRPC call is cut off mid-way — **more dangerous than plain HTTP** when that RPC is one step of a cross-service saga: e.g. `ProvisionUser` (see `microservice_architecture.md`/the org-provisioning saga) may have finished creating the user in `auth_db` while the response hadn't yet reached core-api — core-api treats it as a failure and runs compensation, but the just-created user may have "made it" before the process died → a rare but real race.
+- The Postgres connection pool is severed abruptly instead of closing cleanly (Prisma never gets to `$disconnect()`).
 
-### Giải pháp
-Bắt tín hiệu dừng (`SIGTERM`/`SIGINT`) → **ngừng nhận việc mới** trên mọi transport (HTTP, gRPC...) nhưng **cho việc đang chạy dở hoàn tất** (giới hạn bởi 1 timeout) → sau đó mới đóng kết nối DB → thoát process sạch.
+### The solution
+Catch the stop signal (`SIGTERM`/`SIGINT`) → **stop accepting new work** on every transport (HTTP, gRPC, …) but **let in-flight work finish** (bounded by a timeout) → only then close the DB connection → exit the process cleanly.
 
-### Implement — ví dụ thật từ `auth-service/src/main.ts`
+### Implementation — a real example from `auth-service/src/main.ts`
 ```typescript
 const SHUTDOWN_TIMEOUT_MS = 10_000
 
@@ -696,13 +693,13 @@ async function bootstrap() {
       logger.error('Graceful shutdown timed out, forcing exit')
       process.exit(1)
     }, SHUTDOWN_TIMEOUT_MS)
-    forceExit.unref() // timer này không được giữ process sống nếu shutdown xong sớm
+    forceExit.unref() // this timer must not keep the process alive if shutdown finishes early
 
     Promise.all([
-      app.close(),                                                       // 1. ngừng nhận HTTP mới, đợi request dở xong
-      new Promise<void>((resolve) => grpcServer.tryShutdown(() => resolve())), // 2. tương tự cho gRPC
+      app.close(),                                                       // 1. stop accepting new HTTP, wait for in-flight requests
+      new Promise<void>((resolve) => grpcServer.tryShutdown(() => resolve())), // 2. the same for gRPC
     ])
-      .then(() => prismaService.disconnect())                            // 3. CHỈ đóng DB sau khi cả 2 transport đã đóng sạch
+      .then(() => prismaService.disconnect())                            // 3. ONLY close the DB after both transports have closed cleanly
       .then(() => {
         clearTimeout(forceExit)
         logger.info('Shutdown complete')
@@ -719,126 +716,126 @@ async function bootstrap() {
 }
 ```
 
-### ⚠️ Gotcha Windows (dev machine, không phải bug code)
-Windows **không có tín hiệu POSIX thật**. `SIGTERM`/`SIGINT` trên Node-Windows chỉ giả lập qua console-control-handler, **chỉ hoạt động khi tự bấm Ctrl+C trên đúng terminal** đang chạy process đó. Gửi tín hiệu từ ngoài (`taskkill` không `/F`, hoặc `process.kill(otherPid, 'SIGINT')` từ process khác) trên Windows hầu như luôn hành xử như giết cứng (bỏ qua handler đã đăng ký) — đã verify thực tế: cả 2 cách đều KHÔNG kích hoạt được log `"...shutting down gracefully"`. Muốn tự mắt thấy code này chạy trên Windows: mở terminal, `npm run dev`, tự bấm Ctrl+C. Trong Docker/Linux (nơi code này thực sự phục vụ) thì `docker stop`/Kubernetes gửi `SIGTERM` thật theo chuẩn POSIX, handler chạy đúng như thiết kế — đây là target thật của pattern này, không phải dev loop trên Windows.
+### ⚠️ Windows gotcha (dev machine, not a code bug)
+Windows has **no real POSIX signals**. `SIGTERM`/`SIGINT` on Node-Windows are only emulated via the console-control-handler, and **only work when you press Ctrl+C yourself in the exact terminal** running that process. Sending a signal externally (`taskkill` without `/F`, or `process.kill(otherPid, 'SIGINT')` from another process) on Windows almost always behaves like a hard kill (bypassing the registered handler) — genuinely verified: neither method triggered the `"...shutting down gracefully"` log. To see this code run on Windows yourself: open a terminal, `npm run dev`, and press Ctrl+C. In Docker/Linux (where this code genuinely serves its purpose), `docker stop`/Kubernetes sends a real POSIX `SIGTERM` and the handler runs exactly as designed — that is this pattern's real target, not the Windows dev loop.
 
 ### Rules
-- ⛔ KHÔNG đóng DB trước khi đóng transport — request/RPC đang dở sẽ crash giữa chừng thay vì hoàn tất
-- Đăng ký handler **ở đúng 1 nơi** (composition root của `main.ts`, xem `microservice_architecture.md` phần Composition Root) — không rải rác nhiều nơi trong app
-- Timeout ép buộc (`forceExit`) là bắt buộc — nếu 1 request/RPC treo vô hạn (deadlock, external call không timeout), graceful shutdown phải có đường thoát cứng sau N giây, không được chờ mãi
-- `forceExit.unref()` — nếu shutdown xong sớm hơn timeout, timer đó không được giữ process sống thêm
-- Entry point khác (`main.lambda.ts`, cron job, worker consumer...) có process lifecycle khác hẳn (serverless không có "process sống lâu" để graceful shutdown) — pattern này chỉ áp dụng cho service chạy dài hạn (long-running), không áp máy móc cho mọi entrypoint
+- ⛔ Do NOT close the DB before closing the transports — in-flight requests/RPCs would crash mid-way instead of completing
+- Register the handler **in exactly one place** (the composition root in `main.ts`, see the Composition Root section of `microservice_architecture.md`) — never scattered around the app
+- The forced timeout (`forceExit`) is mandatory — if a request/RPC hangs indefinitely (a deadlock, an external call without a timeout), graceful shutdown must have a hard exit after N seconds rather than waiting forever
+- `forceExit.unref()` — if shutdown finishes before the timeout, that timer must not keep the process alive
+- Other entry points (`main.lambda.ts`, cron jobs, worker consumers, …) have quite different process lifecycles (serverless has no "long-lived process" to shut down gracefully) — this pattern applies only to long-running services, and must not be applied mechanically to every entrypoint
 
 ---
 
-## 6. Background Jobs — index tập trung
+## 6. Background Jobs — a central index
 
-**✅ 2026-07-31: tripwire đã chạm (7 job class, 8 lượt `@Cron`/`@Interval`) — đã dựng `infrastructure/scheduled-jobs/`** (`ScheduledJobRegistry`), thay vì tiếp tục dựa vào bảng tay bên dưới. Mỗi job tự `register()` trong constructor của chính nó (`register()` ném khi trùng tên — cùng kiểu guard `EventRouter.register()`).
+**✅ 2026-07-31: the tripwire has been hit (7 job classes, 8 `@Cron`/`@Interval` registrations) — `infrastructure/scheduled-jobs/` was built** (`ScheduledJobRegistry`) instead of continuing to rely on the manual table below. Each job `register()`s itself in its own constructor (`register()` throws on a duplicate name — the same guard style as `EventRouter.register()`).
 
-**Sửa lại 2 lần cùng ngày sau khi bị bắt lỗi thiết kế:**
-1. Bản đầu lưu CẢ live-health (lần chạy/lỗi gần nhất, số lỗi liên tiếp) trong RAM của registry, đọc qua 1 REST endpoint `GET /jobs` riêng. Sai 2 điểm — (a) app này đã tự giả định multi-replica chạy song song (xem "HA-safe claim" bên dưới, `FOR UPDATE SKIP LOCKED`), nên state RAM theo từng process cho câu trả lời khác nhau tuỳ replica nào trả lời request, không phải sự thật chung; (b) health chỉ xem được khi CHỦ ĐỘNG gọi API — không có gì tự động scrape/alert, quay lại đúng vấn đề "phải nhớ để kiểm tra" mà cả cụm việc này sinh ra để giải quyết.
-2. Sau đó phát hiện thêm: `GET /jobs` (bản đã tách metadata tĩnh ra khỏi live-health ở bước 1) **vẫn là 1 REST endpoint không ai gọi tự động** — Prometheus chỉ scrape `/metrics`, không tự khám phá route JSON tuỳ ý; con người cũng không có lý do gọi tay khi code/bảng doc đã sẵn đó. Bỏ hẳn `ScheduledJobsController` + `GET /jobs`. Thay bằng **info metric** `core_api_scheduled_job_info{job,schedule,file,purpose}` (giá trị luôn = 1, set 1 lần trong `register()`) — cùng pattern `kube_pod_info`/`node_uname_info` của các exporter Prometheus phổ biến. Giờ "job nào tồn tại" nằm chung 1 nguồn với health (`core_api_scheduled_job_last_success_timestamp_seconds`/`..._last_failure_timestamp_seconds`/`..._failures_total`, `scheduled-jobs.metrics.ts` — cùng cơ chế `outbox.metrics.ts`), join được với nhau trong 1 query Grafana, không phải 2 hệ thống tách rời.
+**Revised twice the same day after design flaws were caught:**
+1. The first version stored BOTH live health (last run/last error, consecutive failure count) in the registry's RAM, readable through a dedicated `GET /jobs` REST endpoint. Wrong on two counts — (a) this app already assumes multiple replicas running in parallel (see "HA-safe claim" below, `FOR UPDATE SKIP LOCKED`), so per-process RAM state gives a different answer depending on which replica serves the request, rather than a shared truth; (b) health was only visible when someone ACTIVELY called the API — nothing scraped or alerted automatically, returning to exactly the "you have to remember to check" problem this whole piece of work existed to solve.
+2. Then a further realisation: `GET /jobs` (the version with static metadata split out from live health in step 1) **was still a REST endpoint nobody called automatically** — Prometheus only scrapes `/metrics` and doesn't discover arbitrary JSON routes; and a human has no reason to call it by hand when the code/doc table is right there. `ScheduledJobsController` + `GET /jobs` were dropped entirely. Replaced by an **info metric** `core_api_scheduled_job_info{job,schedule,file,purpose}` (value always = 1, set once in `register()`) — the same pattern as `kube_pod_info`/`node_uname_info` in common Prometheus exporters. Now "which jobs exist" lives in the same place as health (`core_api_scheduled_job_last_success_timestamp_seconds`/`..._last_failure_timestamp_seconds`/`..._failures_total`, in `scheduled-jobs.metrics.ts` — the same mechanism as `outbox.metrics.ts`), joinable in a single Grafana query rather than being two separate systems.
 
-Bảng dưới đây (metadata) giữ lại làm tài liệu tường thuật đọc offline; nếu lệch với `core_api_scheduled_job_info` trên `/metrics` thì sửa bảng theo đó, không phải ngược lại.
+The table below (metadata) is kept as narrative documentation for offline reading; if it diverges from `core_api_scheduled_job_info` on `/metrics`, fix the table to match, not the other way round.
 
-⚠️ **Gap đã biết, chưa giải quyết:** 1 job KHÔNG BAO GIỜ chạy (misconfig `@Cron`, lỗi wiring lúc boot) sẽ không tăng cả success lẫn failure — im lặng hoàn toàn, không rơi vào alert "failure rate > 0" ở trên. Cần alert kiểu "last-success-timestamp quá cũ" (dead man's switch) mới bắt được ca này, nhưng mỗi job có chu kỳ khác nhau tới 3 bậc độ lớn (2s vs hằng ngày) nên 1 ngưỡng chung không hợp — chưa làm, ghi lại để không quên.
+⚠️ **Known gap, unresolved:** a job that NEVER runs (a misconfigured `@Cron`, a wiring error at boot) increments neither success nor failure — completely silent, and not caught by the "failure rate > 0" alert above. Catching that case needs a "last-success-timestamp is too old" alert (a dead man's switch), but each job's period differs by up to 3 orders of magnitude (2s vs daily), so a single shared threshold doesn't fit — not done, recorded so it isn't forgotten.
 
-Lý do vẫn KHÔNG dời code từng job vào 1 thư mục `jobs/` vật lý chung (chỉ đăng ký tập trung, không di chuyển code): mỗi job vẫn cần domain knowledge riêng của module nó thuộc về (outbox cần biết `OutboxStatus`, saga cần biết claim/INFLIGHT semantics...) — tách code sang thư mục trung lập chỉ thêm gián tiếp, không giảm coupling thật. Đăng ký tập trung (biết "có gì đang chạy") và code tập trung (chỗ code nằm) là 2 việc khác nhau — việc trước đáng làm, việc sau không.
+Why the jobs' code is still NOT moved into one physical `jobs/` directory (only registration is centralised, not the code): each job still needs the domain knowledge of the module it belongs to (outbox needs `OutboxStatus`, the saga needs claim/INFLIGHT semantics, …) — moving the code into a neutral directory only adds indirection without reducing real coupling. Central registration (knowing "what is running") and central code (where the code lives) are two different things — the former is worth doing, the latter isn't.
 
-| Job | Lịch | File |
+| Job | Schedule | File |
 |---|---|---|
 | `PollingPublisherService` | `@Interval(2000)` | `infrastructure/outbox/polling-publisher.service.ts` |
 | `OutboxReaperService` | `@Interval(30000)` | `infrastructure/outbox/outbox-reaper.service.ts` |
 | `OutboxMetricsReporter` | `@Interval(30000)` | `infrastructure/outbox/outbox-metrics-reporter.service.ts` |
 | `OutboxCleanupService` | `@Cron('0 3 * * *')` | `infrastructure/outbox/outbox-cleanup.service.ts` |
-| `SagaCompensationReaperService` (2 job: `.poll` + `.reapStaleClaims`) | `@Interval(5000)` + `@Interval(30000)` | `infrastructure/saga-compensation/saga-compensation-reaper.service.ts` |
+| `SagaCompensationReaperService` (2 jobs: `.poll` + `.reapStaleClaims`) | `@Interval(5000)` + `@Interval(30000)` | `infrastructure/saga-compensation/saga-compensation-reaper.service.ts` |
 | `SagaCompensationCleanupService` | `@Cron('0 3 * * *')` | `infrastructure/saga-compensation/saga-compensation-cleanup.service.ts` |
 | `IdempotencyCleanupService` | `@Cron('0 3 * * *')` | `infrastructure/http/idempotency/idempotency-cleanup.service.ts` |
 
-**Lỗi âm thầm đã sửa cùng lúc:** trước đây `PollingPublisherService.poll()` và `SagaCompensationReaperService.poll()` chỉ có `try/finally`, KHÔNG có `catch` ở tầng ngoài — nếu `claimPendingBatch` tự nó throw (vd DB blip), lỗi trôi thành unhandled rejection, không log, không ai biết job vừa "chết lặng" 1 tick. Cả 7 job giờ đều có `catch` tầng ngoài: ghi `jobRegistry.recordFailure()` + log lỗi rõ ràng, rồi **swallow** (không rethrow) — 1 job nền lỗi 1 tick không được phép làm crash cả process; tick sau vẫn chạy bình thường.
+**A silent bug fixed at the same time:** previously `PollingPublisherService.poll()` and `SagaCompensationReaperService.poll()` had only `try/finally`, with NO outer `catch` — if `claimPendingBatch` itself threw (e.g. a DB blip), the error drifted off as an unhandled rejection, unlogged, with nobody knowing the job had just "died quietly" for a tick. All 7 jobs now have an outer `catch`: recording `jobRegistry.recordFailure()` + logging the error clearly, then **swallowing** it (not rethrowing) — one background job failing for one tick must not crash the whole process; the next tick runs normally.
 
-**2026-07-31 (trước đó cùng ngày):** `modules/outbox/` → `infrastructure/outbox/` — outbox không có domain layer thật (không entity, không business rule), bị đặt nhầm vào `modules/` từ trước khi ranh giới "business module vs infra thuần" rõ ràng như `saga-compensation` (viết sau, đã đúng vị trí từ đầu). Xem `folder_structure_sop.md`: `modules/` = "business logic theo từng domain" — outbox không khớp định nghĩa này. Lúc dời, cấu trúc con `domain/repositories/` + `infrastructure/{cleanup,publishers,reapers,reporters,repositories}/` được giữ nguyên — **sai, sửa tiếp ngay sau đó cùng ngày**: một khi đã xác nhận outbox không phải business module, không còn lý do giữ khuôn `domain/`+`infrastructure/` lồng nhau (khuôn đó chỉ có ý nghĩa cho module có tầng DDD thật) trong khi `saga-compensation` — cùng loại, viết sau — phẳng hoàn toàn. Đã dẹp phẳng `infrastructure/outbox/` xuống 8 file ngang hàng, khớp `saga-compensation` 100%; tên file (`outbox-cleanup.service.ts`, `prisma-outbox.repository.ts`...) đã đủ tự mô tả, không cần subfolder phân loại thêm.
+**2026-07-31 (earlier the same day):** `modules/outbox/` → `infrastructure/outbox/` — the outbox has no real domain layer (no entity, no business rule) and had been misplaced in `modules/` from before the "business module vs pure infra" boundary was as clear as it is for `saga-compensation` (written later, correctly placed from the start). See `folder_structure_sop.md`: `modules/` = "business logic per domain" — the outbox doesn't match that definition. During the move, the `domain/repositories/` + `infrastructure/{cleanup,publishers,reapers,reporters,repositories}/` substructure was preserved — **wrong, corrected immediately afterwards the same day**: once it was established that the outbox is not a business module, there was no longer any reason to keep the nested `domain/`+`infrastructure/` shape (which only means something for a module with real DDD layers) while `saga-compensation` — the same kind of thing, written later — is completely flat. `infrastructure/outbox/` was flattened to 8 sibling files, matching `saga-compensation` 100%; the filenames (`outbox-cleanup.service.ts`, `prisma-outbox.repository.ts`, …) are already self-describing and need no extra classifying subfolders.
 
-### 6.1 Port hoá driven-side khi nào đáng, khi nào là ceremony
+### 6.1 When port-ifying the driven side is worth it, and when it's ceremony
 
-2 job outbox trên (`poll()`, `reapStaleClaims()`) trước đây gọi thẳng `PrismaService.$queryRaw`/`$executeRaw` — vi phạm đúng quy tắc `cqrs_pattern.md` đã có sẵn ("Application layer dùng Domain Repository qua Interface, không biết ORM"). Đã sửa: `IOutboxRepository` (đã có, dùng cho `append()`) mở rộng thêm `claimPendingBatch`/`markProcessed`/`markFailed`/`reapStaleInflight` — thuật toán HA-safe (`FOR UPDATE SKIP LOCKED`) giờ nằm sau 1 interface có tên, đổi ORM bắt buộc phải implement lại đủ (TypeScript ép, không dựa trí nhớ).
+The two outbox jobs above (`poll()`, `reapStaleClaims()`) previously called `PrismaService.$queryRaw`/`$executeRaw` directly — violating the existing rule in `cqrs_pattern.md` ("the Application layer uses a Domain Repository through an interface and knows nothing about the ORM"). Fixed: `IOutboxRepository` (already present for `append()`) gained `claimPendingBatch`/`markProcessed`/`markFailed`/`reapStaleInflight` — the HA-safe algorithm (`FOR UPDATE SKIP LOCKED`) now sits behind a named interface, so swapping ORMs forces a complete reimplementation (TypeScript enforces it, rather than relying on memory).
 
-**Từng làm sai 1 lần trong lúc sửa cùng đợt này, ghi lại để không lặp lại:** áp y hệt pattern đó cho `IdempotencyCleanupService`/`IdempotencyInterceptor` — dựng `IIdempotencyRepository` port. Sai, vì thiếu điều kiện tiên quyết: `IOutboxRepository` đúng là port vì nằm ở `domain/repositories/` và được **command handler thật ở tầng Application** (`publish-knowledge.handler.ts` và nhiều handler khác) inject — dependency đi từ Application vào Domain, Infrastructure implement. `IIdempotencyRepository` thì interface + implementation + 2 consumer duy nhất **đều nằm trong `infrastructure/`** — không tầng Application nào phụ thuộc vào nó, không có ranh giới kiến trúc nào bị cắt qua. Đó là infra gọi infra qua 1 lớp gián tiếp, không phải Hexagonal port — đã revert.
+**One mistake made during that same pass, recorded so it isn't repeated:** the identical pattern was applied to `IdempotencyCleanupService`/`IdempotencyInterceptor` — creating an `IIdempotencyRepository` port. Wrong, because a prerequisite was missing: `IOutboxRepository` genuinely is a port because it lives in `domain/repositories/` and is injected by **real command handlers in the Application layer** (`publish-knowledge.handler.ts` and several others) — the dependency runs from Application into Domain, with Infrastructure implementing it. For `IIdempotencyRepository`, the interface + implementation + its only 2 consumers **all live inside `infrastructure/`** — no Application layer depends on it, and no architectural boundary is crossed. That is infra calling infra through a layer of indirection, not a Hexagonal port — it was reverted.
 
-**Câu hỏi để tự kiểm tra trước khi port hoá 1 thứ:** *"Bên kia interface có phải Application/Domain layer thật không, hay cũng là Infrastructure?"* Nếu cả 2 đầu đều là Infrastructure → không cần interface, gọi thẳng. Câu hỏi phụ: *"Logic phía sau có đủ 'khó, đáng bảo vệ' để mất công port hoá không?"* (`FOR UPDATE SKIP LOCKED` đáng; 1 dòng `deleteMany` thì không).
+**The self-check question before port-ifying something:** *"Is the other side of this interface genuinely the Application/Domain layer, or is it also Infrastructure?"* If both ends are Infrastructure → no interface needed, call it directly. A secondary question: *"Is the logic behind it hard enough and worth protecting enough to justify port-ifying it?"* (`FOR UPDATE SKIP LOCKED` is; a one-line `deleteMany` isn't.)
 
 ---
 
-## 7. Correlation-id — W3C Trace Context xuyên HTTP/gRPC/Kafka (2026-07-21)
+## 7. Correlation-id — W3C Trace Context across HTTP/gRPC/Kafka (2026-07-21)
 
-### Vấn đề
-`requestId` trước đây chỉ sống trong 1 service, 1 request HTTP (Fastify `req.id` / nestjs-pino per-request child logger). Request fan-out ra gRPC (core-api → auth-service) hoặc Kafka (outbox → consumer) mất hoàn toàn correlation — không cách nào nối log của 3 service lại thành 1 request logic khi debug.
+### The problem
+`requestId` previously lived only within one service and one HTTP request (Fastify's `req.id` / nestjs-pino's per-request child logger). A request fanning out to gRPC (core-api → auth-service) or Kafka (outbox → consumer) lost correlation entirely — there was no way to stitch three services' logs into one logical request when debugging.
 
-### Giải pháp — W3C Trace Context (`traceparent`), KHÔNG phải full OpenTelemetry SDK
-User chọn chuẩn thật (`00-{traceId}-{spanId}-{flags}`) thay vì tự chế field `requestId` riêng — lý do: nếu sau này cần OTel SDK/APM thật, chỉ cần đổi propagation layer, không phải đổi tên field log ở mọi nơi. **Cố ý KHÔNG** kéo theo `@opentelemetry/api`/SDK/exporter — chỉ lấy đúng format header + 1 ALS mang `{traceId, spanId}`, phục vụ mục đích duy nhất là nối log, chưa cần span timing/exporter thật.
+### The solution — W3C Trace Context (`traceparent`), NOT the full OpenTelemetry SDK
+The user chose the real standard (`00-{traceId}-{spanId}-{flags}`) over inventing a bespoke `requestId` field — the reasoning: if a real OTel SDK/APM is needed later, only the propagation layer changes, rather than renaming a log field everywhere. **Deliberately NOT** pulling in `@opentelemetry/api`/the SDK/an exporter — only the header format + one ALS carrying `{traceId, spanId}`, serving the single purpose of stitching logs together, with no need yet for real span timing/exporters.
 
-`packages/shared-kernel/src/tracing/trace-context.ts` — public API chỉ 4 hàm + 1 type (đã audit lại ai thực sự import gì trước khi quyết định export gì, 2026-07-21): `runWithTraceContext`/`startTraceContext(inbound?)`/`getCurrentTraceparent()`/`traceLogFields(ctx?)` + type `TraceContext`. Phần còn lại (`generateTraceId`/`generateSpanId`/`formatTraceparent`/`parseInboundTraceparent`/`getTraceContext`) là helper nội bộ, cố ý **không export** — không cho code ngoài gọi thẳng, ví dụ gọi `generateTraceId()` tại 1 SEND boundary sẽ phá vỡ invariant RECEIVE/SEND ở dưới.
+`packages/shared-kernel/src/tracing/trace-context.ts` — the public API is only 4 functions + 1 type (after auditing who actually imports what before deciding what to export, 2026-07-21): `runWithTraceContext`/`startTraceContext(inbound?)`/`getCurrentTraceparent()`/`traceLogFields(ctx?)` + the `TraceContext` type. The rest (`generateTraceId`/`generateSpanId`/`formatTraceparent`/`parseInboundTraceparent`/`getTraceContext`) are internal helpers, deliberately **not exported** — external code must not call them directly; for example calling `generateTraceId()` at a SEND boundary would break the RECEIVE/SEND invariant below.
 
-### ⚠️ Quy tắc cốt lõi — RECEIVE luôn tự sinh, SEND không bao giờ tự sinh
+### ⚠️ The core rule — RECEIVE always generates, SEND never generates
 
-Mọi boundary chỉ đóng đúng 1 trong 2 vai trò, không lẫn lộn trong cùng 1 lời gọi:
+Every boundary plays exactly one of two roles, never both in the same call:
 
-| Vai trò | Hàm dùng | Khi thiếu/hỏng input |
+| Role | Function to use | When the input is missing/broken |
 |---|---|---|
-| **RECEIVE** (HTTP middleware, gRPC server handler, Kafka consumer) | `startTraceContext(inbound)` | **Luôn tự sinh trace mới** — không bao giờ để downstream chạy mà thiếu `trace_id` |
-| **SEND** (gắn vào gRPC outbound, ghi vào outbox để publish Kafka sau) | `getCurrentTraceparent()` | Trả `undefined` — **không bịa ra trace mới**, để phía RECEIVE bên kia tự quyết định |
+| **RECEIVE** (HTTP middleware, gRPC server handler, Kafka consumer) | `startTraceContext(inbound)` | **Always generates a new trace** — never let downstream run without a `trace_id` |
+| **SEND** (attaching to an outbound gRPC call, writing to the outbox for later Kafka publication) | `getCurrentTraceparent()` | Returns `undefined` — **never invents a new trace**, leaving the RECEIVE side to decide |
 
-**Điểm dễ hiểu lầm:** ranh giới KHÔNG phải "HTTP = entry point thật, gRPC/Kafka = giữa nên không cần fallback" — cả 4 điểm RECEIVE (kể cả gRPC server và Kafka consumer, vốn không phải entry point thật của hệ thống) đều dùng `startTraceContext` và **đều tự sinh trace mới nếu thiếu**. Đây là thiết kế phòng thủ có chủ đích: 1 request/event tới bất kỳ RECEIVE boundary nào cũng đảm bảo có `trace_id` dùng được, kể cả khi caller quên gắn (bug) hoặc row Kafka cũ (trước khi có cột `traceparent`) không có giá trị. Ngược lại, SEND-side không tự sinh vì bịa trace ngay lúc gửi không có ý nghĩa — chỉ nơi THẬT SỰ khởi tạo công việc mới có 1 trace đáng để propagate.
+**An easy misunderstanding:** the boundary is NOT "HTTP = a real entry point, gRPC/Kafka = intermediate so no fallback needed" — all 4 RECEIVE points (including the gRPC server and the Kafka consumer, which are not real system entry points) use `startTraceContext` and **all generate a new trace when one is missing**. This is deliberate defensive design: a request/event arriving at any RECEIVE boundary is guaranteed a usable `trace_id`, even when the caller forgot to attach one (a bug) or an old Kafka row (from before the `traceparent` column existed) has no value. Conversely, the SEND side never generates one, because inventing a trace at send time is meaningless — only the place that GENUINELY initiates work has a trace worth propagating.
 
-4 điểm RECEIVE hiện có: `TraceContextMiddleware` (core-api HTTP), `onRequest` hook (auth-service HTTP), `auth-provisioning.grpc-service.ts` (auth-service gRPC server), `resilient-consumer.ts` (Kafka consumer, shared-kernel). 2 điểm SEND: `auth-provisioning.client.ts.metadata()` (gRPC client), `prisma-outbox.repository.ts.append()` (ghi cột DB).
+The 4 current RECEIVE points: `TraceContextMiddleware` (core-api HTTP), the `onRequest` hook (auth-service HTTP), `auth-provisioning.grpc-service.ts` (the auth-service gRPC server), and `resilient-consumer.ts` (the Kafka consumer, in shared-kernel). The 2 SEND points: `auth-provisioning.client.ts.metadata()` (the gRPC client) and `prisma-outbox.repository.ts.append()` (writing the DB column).
 
-### ⚠️ `parentSpanId` — vì sao thêm lại sau khi từng cố ý bỏ
+### ⚠️ `parentSpanId` — why it was added back after deliberately being dropped
 
-Bản đầu `TraceContext` chỉ có `{traceId, spanId}` — field `spanId` parse được từ header inbound (tên gọi đúng chuẩn W3C là "parent-id", xem giải thích dưới) bị vứt bỏ hoàn toàn sau khi dùng xong `traceId`. Lý do lúc đó: hệ thống chỉ cần "các dòng log này có cùng thuộc 1 request không" (trả lời được bằng `trace_id`), chưa cần "span nào gọi span nào".
+The first version of `TraceContext` had only `{traceId, spanId}` — the `spanId` field parsed from the inbound header (whose correct W3C name is "parent-id", explained below) was discarded entirely once `traceId` had been extracted. The reasoning at the time: the system only needed "do these log lines belong to the same request?" (answerable with `trace_id`), not yet "which span called which".
 
-**Câu hỏi buộc quay lại thêm:** nếu 1 request có core-api gọi CẢ auth-service LẪN search-service, cả 2 đều log cùng `trace_id` — nhưng không có cách nào từ log biết "cả 2 đều do đúng 1 lời gọi từ core-api sinh ra, độc lập với nhau" nếu không giữ lại quan hệ cha-con. Field `serviceContext` (đã có sẵn, `logging_standard.md`) trả lời được "dòng log này của service nào", nhưng KHÔNG trả lời được "theo thứ tự/quan hệ nào" — 2 câu hỏi khác nhau.
+**The question that forced a revisit:** if one request has core-api calling BOTH auth-service AND search-service, both log the same `trace_id` — but nothing in the logs reveals "both were spawned by the same single call from core-api, independently of each other" unless the parent-child relationship is preserved. The `serviceContext` field (already present, `logging_standard.md`) answers "which service is this log line from", but NOT "in what order/relationship" — two different questions.
 
-**Giải pháp — `TraceContext` có thêm `parentSpanId?: string`:**
+**The solution — `TraceContext` gains `parentSpanId?: string`:**
 ```ts
 export interface TraceContext {
   traceId: string
-  spanId: string          // span CỦA CHÍNH service này
-  parentSpanId?: string   // span của caller — cùng bit với "parent-id" trong header, đổi tên
-                           // theo góc nhìn nội bộ; undefined nếu là root span (không ai gọi)
+  spanId: string          // THIS service's own span
+  parentSpanId?: string   // the caller's span — the same bits as "parent-id" in the header,
+                           // renamed from the local point of view; undefined for a root span (nobody called us)
 }
 ```
-`startTraceContext` parse cả `traceId` lẫn `parentSpanId` từ header inbound (hàm nội bộ `parseInboundTraceparent`), tự sinh `spanId` MỚI cho chính nó như cũ (không đổi), gán `parentSpanId` = giá trị vừa parse được. `traceLogFields` thêm `parent_span_id` vào output khi có (bỏ qua nếu là root span, không log field rỗng).
+`startTraceContext` parses both `traceId` and `parentSpanId` from the inbound header (via the internal `parseInboundTraceparent`), generates a NEW `spanId` for itself as before (unchanged), and sets `parentSpanId` to the parsed value. `traceLogFields` adds `parent_span_id` to its output when present (omitting it for a root span, so no empty field is logged).
 
-**Vì sao 1 vị trí bit lại có 2 tên ("parent-id" trong spec, `spanId`/`parentSpanId` trong code):** wire format `traceparent` chỉ có 1 ô 16-hex ở giữa. Lúc 1 service GỬI đi, nó nhét `spanId` CỦA CHÍNH NÓ vào đó — với người gửi, đây là "tôi tự giới thiệu mình". Lúc service kế tiếp NHẬN được đúng chuỗi đó, cùng giá trị ấy giờ có nghĩa "đây là id của thằng đã gọi tôi" — với người nhận, đây là "parent-id". Không phải 2 giá trị khác nhau, chỉ là tên gọi đổi theo góc nhìn gửi/nhận. Code đặt tên `spanId` (của chính mình) và `parentSpanId` (của caller) là 2 field RIÊNG BIỆT trong cùng object, phản ánh đúng 2 vai trò đó tồn tại đồng thời trong 1 `TraceContext`.
+**Why one bit position has two names ("parent-id" in the spec, `spanId`/`parentSpanId` in the code):** the `traceparent` wire format has only one 16-hex slot in the middle. When a service SENDS, it puts ITS OWN `spanId` there — from the sender's perspective this is "introducing myself". When the next service RECEIVES that same string, the same value now means "this is the id of whoever called me" — from the receiver's perspective this is the "parent-id". Not two different values, just a name that changes with the send/receive perspective. The code names them `spanId` (its own) and `parentSpanId` (the caller's) as two SEPARATE fields in the same object, reflecting the fact that both roles exist simultaneously in one `TraceContext`.
 
-**Vẫn KHÔNG phải OTel SDK thật:** không có object "span" với duration/start-end time, không export ra collector nào — chỉ thêm đúng 1 field vào log line để công cụ (Kibana/ES) hoặc script sau này có thể tự dựng lại cây quan hệ từ dữ liệu log thô, nếu cần. Nhược điểm đã chấp nhận: vẫn phải tự viết logic dựng cây đó, không có UI visualize sẵn như Jaeger.
+**Still NOT a real OTel SDK:** there is no "span" object with duration/start-end times, and nothing is exported to any collector — only one extra field on a log line, so a tool (Kibana/ES) or a later script can reconstruct the relationship tree from raw log data if needed. The accepted downside: you still have to write that tree-building logic yourself, with no ready-made visualisation UI like Jaeger.
 
-### 3 điểm chạm
+### The 3 touchpoints
 
-| Boundary | Cách propagate |
+| Boundary | How it propagates |
 |---|---|
-| **HTTP entry** | `TraceContextMiddleware` (core-api, đăng ký TRƯỚC `TenantContextMiddleware` trong `app.module.ts`) / `onRequest` hook đăng ký đầu tiên trong `auth-service/bootstrap/server.ts` (trước `setupFastify()`) — đọc header `traceparent` inbound (nếu có) hoặc tự sinh trace mới |
-| **gRPC** | `shared-kernel/grpc/trace-propagation.ts` (`attachTraceparent`/`readTraceparent`, cùng convention với `internal-grpc-auth.ts`) — client (`AuthProvisioningClient.metadata()`) gắn vào metadata, server (`auth-provisioning.grpc-service.ts`) đọc + `runWithTraceContext` bọc quanh handler |
-| **Kafka** | **Không** dùng kafkajs message headers — dùng CloudEvents extension attribute chính thức `traceparent` (CloudEvents Distributed Tracing Extension) ngay trên envelope, vì CloudEvent đã serialize structured-mode vào message value sẵn rồi, không cần đụng `MinimalKafkaMessage`/kafkajs headers. `OutboxEvent.traceparent` (cột nullable) capture từ ALS bên trong `PrismaOutboxRepository.append()` (không cần sửa call site nào gọi `append()`) → `PollingPublisherService` copy sang CloudEvent → `ResilientEventConsumer.eachMessage` đọc lại, `runWithTraceContext` bọc quanh `routeWithRetry()` mỗi message |
+| **HTTP entry** | `TraceContextMiddleware` (core-api, registered BEFORE `TenantContextMiddleware` in `app.module.ts`) / the `onRequest` hook registered first in `auth-service/bootstrap/server.ts` (before `setupFastify()`) — reads the inbound `traceparent` header (if present) or generates a new trace |
+| **gRPC** | `shared-kernel/grpc/trace-propagation.ts` (`attachTraceparent`/`readTraceparent`, following the same convention as `internal-grpc-auth.ts`) — the client (`AuthProvisioningClient.metadata()`) attaches it to the metadata, the server (`auth-provisioning.grpc-service.ts`) reads it and wraps the handler in `runWithTraceContext` |
+| **Kafka** | **Not** using kafkajs message headers — using the official CloudEvents extension attribute `traceparent` (the CloudEvents Distributed Tracing Extension) directly on the envelope, since the CloudEvent is already serialised in structured mode into the message value, so there's no need to touch `MinimalKafkaMessage`/kafkajs headers. `OutboxEvent.traceparent` (a nullable column) is captured from the ALS inside `PrismaOutboxRepository.append()` (requiring no change at any `append()` call site) → `PollingPublisherService` copies it onto the CloudEvent → `ResilientEventConsumer.eachMessage` reads it back and wraps `routeWithRetry()` in `runWithTraceContext` per message |
 
 ### Rules
-- ⛔ KHÔNG dùng field tự chế (`requestId` string trần) cho cross-service correlation mới — dùng `traceparent` (format chuẩn W3C) qua các helper trên
-- Mỗi hop LUÔN mint `spanId` mới (`startTraceContext`), giữ nguyên `traceId` — không tái dùng `spanId` của caller
-- RECEIVE boundary mới (thêm gRPC server / consumer mới) → luôn dùng `startTraceContext(inbound)`, không tự viết logic "nếu thiếu thì bỏ qua trace" — phá vỡ guarantee "downstream luôn có trace_id"
-- SEND boundary mới (thêm outbound call mới) → dùng `getCurrentTraceparent()`, không tự sinh trace mới ở đây dù tiện — sinh sai chỗ sẽ làm mất liên kết với trace gốc thật
-- Không thêm OTel SDK thật (spans/exporter) trừ khi có nhu cầu APM thật — tripwire khi cần visualize distributed trace, không chỉ nối log
+- ⛔ Do NOT use a bespoke field (a bare `requestId` string) for new cross-service correlation — use `traceparent` (the standard W3C format) via the helpers above
+- Every hop ALWAYS mints a new `spanId` (`startTraceContext`) while preserving `traceId` — never reuse the caller's `spanId`
+- A new RECEIVE boundary (a new gRPC server / consumer) → always use `startTraceContext(inbound)`, never hand-write "skip the trace if it's missing" logic — that breaks the "downstream always has a trace_id" guarantee
+- A new SEND boundary (a new outbound call) → use `getCurrentTraceparent()`, never generate a new trace here however convenient — generating one in the wrong place severs the link with the real original trace
+- Don't add a real OTel SDK (spans/exporters) unless there is a genuine APM need — the tripwire is needing to visualise a distributed trace, not merely stitch logs together
 
 ---
 
-## Tóm tắt — Pattern nào dùng khi nào
+## Summary — which pattern, when
 
 ```
-User gửi request có thể retry → Idempotency
-Route cần giới hạn theo org, không phải chung 1 bucket IP → Rate Limiting (§4.1)
-Sau domain write cần notify service khác → Transactional Outbox
-External service fail tạm thời → Retry (+ Circuit Breaker)
-Xử lý nhiều item AI cùng lúc → Throttle
-External service fail liên tục → Circuit Breaker (xem rag_ai_integration.md)
-Service chạy dài hạn cần dừng sạch (deploy/restart/scale-down) → Graceful Shutdown
-Cần nối log 1 request xuyên HTTP/gRPC/Kafka → Correlation-id (§7, W3C traceparent)
+A user sends a request that might be retried → Idempotency
+A route needing a per-org limit rather than one shared IP bucket → Rate Limiting (§4.1)
+Another service must be notified after a domain write → Transactional Outbox
+An external service fails temporarily → Retry (+ Circuit Breaker)
+Processing many AI items at once → Throttle
+An external service fails continuously → Circuit Breaker (see rag_ai_integration.md)
+A long-running service must stop cleanly (deploy/restart/scale-down) → Graceful Shutdown
+Stitching one request's logs across HTTP/gRPC/Kafka → Correlation-id (§7, W3C traceparent)
 ```

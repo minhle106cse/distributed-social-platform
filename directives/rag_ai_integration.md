@@ -1,12 +1,12 @@
 # SOP: RAG & AI Integration Standard
 
-> ✅ **TRẠNG THÁI: LIVE ở search-service (Phase 4, 2026-07-02, smoke-tested).** C1 semantic (pgvector embed-on-publish) + C2 hybrid (ES BM25 + RRF) + C3 RAG summary (Claude + circuit breaker). Consumer #2 (`KnowledgeIndexerConsumer`, group `search-service-indexer-group`). Còn: happy-path summary cần `ANTHROPIC_API_KEY` hợp lệ; search-service chưa versioned (chờ GitHub repo).
+> ✅ **STATUS: LIVE in search-service (Phase 4, 2026-07-02, smoke-tested).** C1 semantic (pgvector embed-on-publish) + C2 hybrid (ES BM25 + RRF) + C3 RAG summary (Claude + circuit breaker). Consumer #2 (`KnowledgeIndexerConsumer`, group `search-service-indexer-group`). Outstanding: the happy-path summary needs a valid `ANTHROPIC_API_KEY`; search-service isn't versioned yet (waiting on the GitHub repo).
 
 > [!NOTE]
-> Directive này quy định cách tích hợp AI (RAG, Hybrid Search, Embeddings) vào Cortex.
-> Áp dụng cho **search-service** — microservice own `search_db` (pgvector), consume `knowledge-events` (embed-on-publish), expose Search + AI Query. (Trước đây ghi "core-api"; đã tách theo microservice trajectory — Phase 4, xem `.ai/plans/phase4-rag-search.plan.md`.)
+> This directive defines how AI (RAG, Hybrid Search, Embeddings) is integrated into Cortex.
+> It applies to **search-service** — the microservice owning `search_db` (pgvector), consuming `knowledge-events` (embed-on-publish), and exposing Search + AI Query. (It previously said "core-api"; split out along the microservice trajectory — Phase 4, see `.ai/plans/phase4-rag-search.plan.md`.)
 >
-> ⚠️ **Claude KHÔNG có embeddings API.** Không có model `claude-embed-*`; `messages.create` trả TEXT, không phải vector. Embeddings PHẢI qua provider ngoài (self-hosted local / Voyage / OpenAI) sau `IEmbeddingService`. Claude chỉ dùng cho **summarization** (§3+RAG).
+> ⚠️ **Claude has NO embeddings API.** There is no `claude-embed-*` model; `messages.create` returns TEXT, not a vector. Embeddings MUST come from an external provider (self-hosted local / Voyage / OpenAI) behind `IEmbeddingService`. Claude is used only for **summarization** (§3 + RAG).
 
 ---
 
@@ -30,11 +30,11 @@ SearchResult { chunks, summary, sources }
 
 ---
 
-## 📜 Kiến Trúc Bắt Buộc
+## 📜 The Mandatory Architecture
 
-### 1. Embedding Generation — provider NGOÀI Claude, sau `IEmbeddingService`
+### 1. Embedding generation — a provider OTHER than Claude, behind `IEmbeddingService`
 
-Claude không sinh embedding. Dùng port `IEmbeddingService` + adapter tới provider embedding thật. **Chốt Cortex (Phase 4): self-hosted local** (miễn phí, không key ngoài, launchable) — một service nhỏ trong Docker (khuyến nghị Text-Embeddings-Inference `BAAI/bge-base-en-v1.5`, **dim 768**, hoặc Ollama `nomic-embed-text`). Swap Voyage/OpenAI = đổi 1 adapter (đổi dim ⇒ migrate cột `vector`).
+Claude does not generate embeddings. Use the `IEmbeddingService` port + an adapter to a real embedding provider. **The Cortex decision (Phase 4): self-hosted local** (free, no external key, launchable) — a small service in Docker (recommended: Text-Embeddings-Inference with `BAAI/bge-base-en-v1.5`, **dim 768**, or Ollama's `nomic-embed-text`). Swapping to Voyage/OpenAI = changing one adapter (a change of dimension ⇒ migrating the `vector` column).
 
 ```typescript
 // search-service: application/ports/embedding.service.ts
@@ -45,23 +45,23 @@ export interface IEmbeddingService {
 
 // search-service: infrastructure/embedding/http-embedding.service.ts
 export class HttpEmbeddingService implements IEmbeddingService {
-  // POST EMBEDDING_SERVICE_URL/embed { inputs } → number[][]. KHÔNG gọi Anthropic.
+  // POST EMBEDDING_SERVICE_URL/embed { inputs } → number[][]. Does NOT call Anthropic.
   async embedBatch(texts: string[]): Promise<number[][]> { /* fetch → vectors */ }
 }
 ```
 
-> **Model embedding**: provider ngoài (local `bge-base-en-v1.5` dim 768). **KHÔNG phải Claude.**
-> **Model RAG summarization (§3)**: `claude-opus-4-8` (default, mạnh nhất) hoặc `claude-sonnet-4-6` (rẻ, volume cao). Dùng alias — **KHÔNG date-suffix**. Model 4.6+: `thinking:{type:'adaptive'}`, KHÔNG `budget_tokens`.
+> **The embedding model**: an external provider (local `bge-base-en-v1.5`, dim 768). **NOT Claude.**
+> **The RAG summarization model (§3)**: `claude-opus-4-8` (the default, most capable) or `claude-sonnet-4-6` (cheap, high volume). Use the alias — **NOT a date suffix**. Models 4.6+: `thinking:{type:'adaptive'}`, NOT `budget_tokens`.
 
 ---
 
-### 2. Database Schema — pgvector
+### 2. Database schema — pgvector
 
 ```prisma
-// Cần enable pgvector extension trong prisma/migrations/
+// The pgvector extension must be enabled in prisma/migrations/
 // CREATE EXTENSION IF NOT EXISTS vector;
 
-// ⬇️ Actual (search-service own search_db). NO relation to KnowledgeItem — that
+// ⬇️ Actual (search-service owns search_db). NO relation to KnowledgeItem — that
 // lives in core_db; search-service snapshots title+content from the event (no
 // cross-DB join). dim = 768 (nomic-embed-text), not 1536.
 model KnowledgeChunk {
@@ -81,7 +81,7 @@ model KnowledgeChunk {
 }
 ```
 
-**Migration để tạo HNSW index** (phải chạy thủ công sau generate):
+**The migration creating the HNSW index** (must be run manually after generate):
 ```sql
 CREATE INDEX knowledge_chunks_embedding_idx
 ON knowledge_chunks
@@ -91,21 +91,21 @@ WITH (m = 16, ef_construction = 64);
 
 ---
 
-### 3. Circuit Breaker — Bắt Buộc cho mọi AI call
+### 3. Circuit Breaker — mandatory for every AI call
 
-Mọi call đến Claude/Gemini API phải đi qua Circuit Breaker để tránh cascade failure khi AI service down.
+Every call to the Claude/Gemini API must go through a Circuit Breaker to avoid cascading failure when the AI service is down.
 
-> **Cập nhật (2026-07-12):** `CircuitBreaker` không còn là class riêng của search-service — đã chuyển vào `@distributed-social-platform/shared-kernel` (`src/resilience/circuit-breaker.ts`) vì giờ được dùng chung bởi cả AI call (search-service) lẫn Elasticsearch/Ollama/gRPC (core-api). Import từ shared-kernel, không viết lại cục bộ. Chi tiết đầy đủ + audit + rules: `resilience_patterns.md §3.1`.
+> **Update (2026-07-12):** `CircuitBreaker` is no longer a search-service-private class — it moved into `@distributed-social-platform/shared-kernel` (`src/resilience/circuit-breaker.ts`) because it is now shared between AI calls (search-service) and Elasticsearch/Ollama/gRPC (core-api). Import it from shared-kernel; don't rewrite it locally. Full detail + audit + rules: `resilience_patterns.md §3.1`.
 
 ```typescript
 import { CircuitBreaker } from '@distributed-social-platform/shared-kernel'
 
-// ClaudeSummarizer/GeminiSummarizer — mỗi adapter giữ 1 instance riêng
-this.breaker = new CircuitBreaker(logger) // threshold=5, timeoutMs=60_000 (default)
+// ClaudeSummarizer/GeminiSummarizer — each adapter holds its own instance
+this.breaker = new CircuitBreaker(logger) // threshold=5, timeoutMs=60_000 (defaults)
 
 async summarize(query: string, context: SummaryContext[]): Promise<RagSummary> {
   return this.breaker.execute(async () => {
-    // gọi Claude/Gemini thật ở đây
+    // the real Claude/Gemini call goes here
   })
 }
 ```
@@ -114,11 +114,11 @@ async summarize(query: string, context: SummaryContext[]): Promise<RagSummary> {
 
 ### 4. Hybrid Search — RRF Merge
 
-**Vì sao search-service không có CommandBus/QueryBus — SỬA LẠI 2026-07-25, bản trước lý luận sai:** bản đầu viết ở đây lý luận "chỉ 1 query/1 write nên không đáng dựng bus" — **sai, đã bị chỉ ra và sửa.** CommandBus/QueryBus gắn với HTTP dispatch (command từ 1 route HTTP cụ thể), KHÔNG phải điều kiện để có consistency. Đúng bản chất: search-service **không có write nào là HTTP Command** — write duy nhất là 1 Kafka event (`IndexKnowledgeHandler implements IIntegrationEventHandler`), và dispatch cho event KHÔNG đi qua CommandBus mà qua `EventRouter` (shared-kernel) — cơ chế route theo `event.type`, transport-agnostic, dùng CHUNG với core-api/notification-service, không phải thứ riêng của search-service.
+**Why search-service has no CommandBus/QueryBus — CORRECTED 2026-07-25; the previous version reasoned wrongly:** the first version here argued "there's only 1 query and 1 write, so a bus isn't worth building" — **wrong, it was pointed out and fixed.** CommandBus/QueryBus is tied to HTTP dispatch (a command from a specific HTTP route), and is NOT a precondition for consistency. The real reason: search-service **has no write that is an HTTP Command** — its only write is a Kafka event (`IndexKnowledgeHandler implements IIntegrationEventHandler`), and event dispatch does NOT go through the CommandBus but through `EventRouter` (shared-kernel) — a `event.type`-based routing mechanism, transport-agnostic, SHARED with core-api/notification-service, not something specific to search-service.
 
-**Vậy setup có đồng bộ không? CÓ — đúng yêu cầu "setup phải giống nhau bất kể dùng gì":** `EventRouter.route()` (2026-07-25) giờ tự log dispatch (`info` lúc bắt đầu route + `info`+`durationMs` lúc xong) — **đúng ngay tại điểm dùng chung này**, không phải viết tay riêng ở `IndexKnowledgeHandler`. Nghĩa là search-service, notification-service, và bất kỳ consumer nào dùng `EventRouter` sau này (kể cả worker-service khi có consumer đầu tiên) đều nhận log dispatch giống hệt nhau tự động — đúng tinh thần `LoggingMiddleware` của CommandBus, chỉ khác chỗ đặt (tại `EventRouter`, không phải tại 1 bus tách riêng cho search-service). Bug thật tìm ra khi sửa: `notification-service` có 3 event handler (`item-published`, `follow-removed`, `follow-created`) **hoàn toàn không có business-layer log** — không phải vì "không có bus" mà vì log trước đó bị viết tay per-handler (search-service) hoặc quên hẳn (notification-service), chưa từng có ở tầng dùng chung. Giờ đã có.
+**So is the setup consistent? YES — meeting the requirement that "the setup must be the same regardless of what's used":** `EventRouter.route()` (2026-07-25) now logs dispatch itself (`info` when routing starts + `info`+`durationMs` when it finishes) — **right at this shared point**, rather than hand-written separately in `IndexKnowledgeHandler`. That means search-service, notification-service, and any future consumer using `EventRouter` (including worker-service once it gains its first consumer) all get identical dispatch logging automatically — the same spirit as the CommandBus's `LoggingMiddleware`, differing only in placement (at `EventRouter`, not at a separate bus for search-service). A real bug found while fixing this: `notification-service`'s 3 event handlers (`item-published`, `follow-removed`, `follow-created`) had **no business-layer logging at all** — not because "there's no bus" but because logging had previously been hand-written per handler (search-service) or forgotten entirely (notification-service), never existing at the shared layer. It does now.
 
-**Cái search-service THẬT SỰ không có, và đúng là không cần:** CommandBus/QueryBus — vì không có route HTTP nào dispatch qua đó (search() gọi trực tiếp qua NestJS DI, đây là quyết định HTTP-layer, không phải logging-layer). Đây KHÔNG phải lý do để logging/dispatch setup khác đi — 2 việc tách biệt, bản trước gộp nhầm.
+**What search-service GENUINELY doesn't have, and correctly doesn't need:** CommandBus/QueryBus — because no HTTP route dispatches through them (`search()` is called directly via NestJS DI; that is an HTTP-layer decision, not a logging-layer one). This is NOT a reason for the logging/dispatch setup to differ — two separate concerns, which the previous version wrongly conflated.
 
 ```typescript
 // search-service: modules/search/application/queries/search-knowledge.service.ts
@@ -153,18 +153,18 @@ private rrfMerge(semantic: RankedItem[], keyword: KeywordHit[]): RankedItem[] {
   return [...scores.entries()].sort(([, a], [, b]) => b - a).map(([id, score]) => ({ knowledgeItemId: id, score, ...repr.get(id)! }))
 }
 ```
-> **Đã LIVE (Phase 4, 2026-07-02):** RRF fusion ở `SearchKnowledgeService`. `rank` bắt đầu từ 0 (`1/(60+rank)`). Smoke: keyword-exact → ES top, semantic → pgvector top, item ở CẢ hai list → điểm cao nhất (2×1/60).
+> **Already LIVE (Phase 4, 2026-07-02):** RRF fusion in `SearchKnowledgeService`. `rank` starts at 0 (`1/(60+rank)`). Smoke test: keyword-exact → ES on top, semantic → pgvector on top, an item in BOTH lists → the highest score (2×1/60).
 
 ---
 
-### 5. Chunking Strategy
+### 5. Chunking strategy
 
-Khi index một KnowledgeItem:
+When indexing a KnowledgeItem:
 
 ```typescript
 // infrastructure/ai/text-chunker.ts
 export class TextChunker {
-  // Fixed-size với overlap để giữ context liên tục
+  // Fixed-size with overlap, to preserve continuous context
   chunk(text: string, chunkSize = 512, overlap = 64): string[] {
     const words = text.split(/\s+/)
     const chunks: string[] = []
@@ -173,18 +173,18 @@ export class TextChunker {
     while (start < words.length) {
       const end = Math.min(start + chunkSize, words.length)
       chunks.push(words.slice(start, end).join(' '))
-      start += chunkSize - overlap  // slide window với overlap
+      start += chunkSize - overlap  // slide the window with overlap
     }
     return chunks
   }
 }
 ```
 
-> Chunk size 512 tokens (≈ 400 words) với 64 token overlap. Điều chỉnh nếu content domain là code (nên chunk theo function boundary thay vì word count).
+> Chunk size 512 tokens (≈ 400 words) with a 64-token overlap. Adjust if the content domain is code (chunk on function boundaries rather than word count).
 
 ---
 
-### 6. Elasticsearch Integration
+### 6. Elasticsearch integration
 
 ```typescript
 // infrastructure/search/elasticsearch.repository.ts
@@ -198,7 +198,7 @@ export class ElasticsearchKnowledgeRepository implements IKeywordSearchRepositor
         query: {
           multi_match: {
             query: text,
-            fields: ['title^3', 'content'],  // boost title
+            fields: ['title^3', 'content'],  // boost the title
             type: 'best_fields',
             fuzziness: 'AUTO',
           },
@@ -226,27 +226,27 @@ export class ElasticsearchKnowledgeRepository implements IKeywordSearchRepositor
     })
   }
 }
-// search(): index-not-found (org chưa index) → catch statusCode 404 → return []
+// search(): index-not-found (the org hasn't been indexed) → catch statusCode 404 → return []
 ```
 
-> **Per-tenant index** (`knowledge-{orgId}`) — isolation tự nhiên, không cần filter trong query.
-> **Đã LIVE (Phase 4):** `ElasticsearchKeywordRepository` + `ElasticsearchClientService` (singleton, http+basic auth, security-on/TLS-off local). Indexing per-item trong `IndexKnowledgeHandler` (song song pgvector). ES down lúc index → handler throw → retry → DLQ (cả 2 store idempotent). ES down lúc search → degrade semantic-only.
+> **A per-tenant index** (`knowledge-{orgId}`) — natural isolation, with no need for a filter in the query.
+> **Already LIVE (Phase 4):** `ElasticsearchKeywordRepository` + `ElasticsearchClientService` (a singleton, http+basic auth, security-on/TLS-off locally). Per-item indexing in `IndexKnowledgeHandler` (in parallel with pgvector). ES down during indexing → the handler throws → retry → DLQ (both stores are idempotent). ES down during search → degrade to semantic-only.
 
 ---
 
 ## ⚠️ Gotchas
 
-- **Circuit Breaker là bắt buộc** — không call Claude API trực tiếp. Search vẫn trả về kết quả khi AI down, chỉ không có summary.
-- **pgvector HNSW index** phải được tạo qua raw SQL migration, không thể qua Prisma schema attributes.
-- **Embedding dimensions**: theo provider (Cortex local `bge-base` → **768**). Cột `vector(N)` phải khớp; đổi provider/dim ⇒ migrate cột `embedding` + re-embed toàn bộ.
-- **Elasticsearch index per tenant**: Xóa index khi org bị deleted. Đừng dùng shared index với filter — cross-tenant data risk.
-- **Chunking trước embedding**: Không embed toàn bộ document — chunk trước, embed từng chunk.
+- **The Circuit Breaker is mandatory** — never call the Claude API directly. Search still returns results when the AI is down, only without a summary.
+- **The pgvector HNSW index** must be created through a raw SQL migration; it cannot be expressed as Prisma schema attributes.
+- **Embedding dimensions**: determined by the provider (Cortex local `bge-base` → **768**). The `vector(N)` column must match; changing provider/dimension ⇒ migrate the `embedding` column + re-embed everything.
+- **A per-tenant Elasticsearch index**: delete the index when an org is deleted. Don't use a shared index with a filter — a cross-tenant data risk.
+- **Chunk before embedding**: never embed a whole document — chunk first, embed each chunk.
 
 ---
 
-## 🔗 Liên quan
+## 🔗 Related
 
-- `directives/cqrs_pattern.md` — SearchKnowledgeQuery là Query handler
-- `directives/multi_tenancy.md` — orgId isolation trong Elasticsearch + pgvector
-- `directives/event_sourcing.md` — Knowledge indexing trigger có thể là Domain Event
-- `docs/03_system_architecture_diagrams.md` — system data flow diagrams
+- `directives/cqrs_pattern.md` — SearchKnowledgeQuery is a Query handler
+- `directives/multi_tenancy.md` — orgId isolation in Elasticsearch + pgvector
+- `directives/event_sourcing.md` — the knowledge indexing trigger may be a Domain Event
+- `docs/03_system_architecture_diagrams.md` — system data-flow diagrams

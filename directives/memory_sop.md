@@ -54,6 +54,16 @@ Log after solving something non-obvious (anything that took >10 min, a gotcha, a
 - `architecture.jsonl` — architecture decision (reactive **or** proactive "chose A over B")
 - `conventions.jsonl` — a new coding convention
 
+**`errors` vs `gotchas`, concretely** (the two get conflated otherwise — almost every gotcha is
+*found* via some error message, so "did an error appear" doesn't distinguish anything):
+`errors.jsonl` is for a terse, mechanical **error → solution** pair — one or two sentences, no
+root-cause narrative, the kind of thing anyone hitting the identical message can copy-paste and
+move on (see `.ai/memory/errors.jsonl` in a repo that has real entries for the shape). `gotchas.jsonl`
+is for an entry with an actual **lesson**: root cause explained, why it's non-obvious, how to
+recognize/avoid it next time — regardless of whether an error message happened to appear while
+finding it. When in doubt: if writing it as one line would lose the reason the entry is worth
+having, it's a gotcha, not an error.
+
 **CANONICAL entry format** — one shape for every category (2026-08-07):
 
 ```json

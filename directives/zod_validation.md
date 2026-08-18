@@ -1,23 +1,32 @@
 # SOP: Validation & Swagger Standards
 
 > [!NOTE]
-> Directive này quy định chuẩn thiết kế Schema Validation và tự động tạo Swagger API Documentation bằng Zod cho toàn bộ Monorepo.
+> This directive sets the schema-validation standard and the automatic Swagger API documentation
+> generated from Zod, across the whole monorepo.
 
 ## 🎯 Goal
-Đảm bảo 100% các API đều được validate đầu vào/ra một cách chặt chẽ (Type-safe) và tài liệu Swagger luôn đồng bộ với code thật. Không viết Swagger thủ công.
 
-## 📜 Luật Lệ (Rules)
+Every API validates its input/output strictly (type-safe), and the Swagger documentation always
+stays in sync with the real code. Never hand-write Swagger.
 
-### 1. Luôn sử dụng Zod làm Single Source of Truth
-Bất kể microservice dùng Fastify thuần hay NestJS, Zod là thư viện duy nhất được phép dùng để định nghĩa Data Schema.
-- Không dùng `class-validator` (chậm và cấu hình lằng nhằng).
-- Không dùng `typebox` (đã thống nhất chuyển sang Zod).
+## 📜 Rules
 
-### 2. Định dạng file Schema
-- Nơi lưu trữ: `src/modules/<module-name>/presentation/schemas/<action>.schema.ts`
-- Phải gom nhóm cả `body`, `querystring`, `params` và `response` vào chung một cấu hình lớn (Route Schema).
+### 1. Zod is always the single source of truth
 
-**Ví dụ chuẩn (Fastify):**
+Whether a microservice uses plain Fastify or NestJS, Zod is the only library allowed for defining
+data schemas.
+
+- Do not use `class-validator` (slow, and fiddly to configure).
+- Do not use `typebox` (already standardised on Zod).
+
+### 2. Schema file format
+
+- Location: `src/modules/<module-name>/presentation/schemas/<action>.schema.ts`
+- `body`, `querystring`, `params` and `response` must be grouped into one larger configuration
+  object (the route schema).
+
+**Standard example (Fastify):**
+
 ```typescript
 export const loginSchema = {
   body: z.object({
@@ -33,20 +42,25 @@ export const loginSchema = {
 }
 ```
 
-### 3. Cách cắm Schema vào Routes / Controller
-- **Fastify**: Sử dụng object spreading (`...loginSchema`)
+### 3. Wiring the schema into routes / controllers
+
+- **Fastify**: use object spreading (`...loginSchema`)
+
 ```typescript
 fastify.post('/login', {
   schema: {
     description: 'Login to app',
     tags: ['auth'],
-    ...loginSchema // TRICK: Trải mảng để nạp toàn bộ body/response vào
+    ...loginSchema // TRICK: spread it to load the whole body/response set at once
   }
 }, handler)
 ```
-- **NestJS**: Sử dụng thư viện `nestjs-zod` để tạo DTO (`createZodDto`) và `ZodValidationPipe` (global).
 
-**Ví dụ chuẩn (NestJS):**
+- **NestJS**: use the `nestjs-zod` library to build the DTO (`createZodDto`) plus a global
+  `ZodValidationPipe`.
+
+**Standard example (NestJS):**
+
 ```typescript
 // modules/knowledge/presentation/schemas/create-knowledge-item.schema.ts
 import { z } from 'zod'
@@ -59,37 +73,48 @@ export const CreateKnowledgeItemSchema = z.object({
   tags: z.array(z.string()).optional().default([]),
 })
 
-// DTO dùng trong Controller — tự động validate bởi ZodValidationPipe global
+// The DTO used in the controller — validated automatically by the global ZodValidationPipe
 export class CreateKnowledgeItemDto extends createZodDto(CreateKnowledgeItemSchema) {}
 ```
 
 ```typescript
-// Controller — KHÔNG cần @UsePipes hay @Body() với type thủ công
+// Controller — no @UsePipes needed, and no hand-written type on @Body()
 @Post()
 async create(@Body() dto: CreateKnowledgeItemDto) {
-  // dto đã được validate và typed đúng
+  // dto is already validated and correctly typed
 }
 ```
 
-> `ZodValidationPipe` được đăng ký global trong `server.ts` (`app.useGlobalPipes(new ZodValidationPipe())`).
-> Không cần thêm `@UsePipes` ở từng controller.
+> `ZodValidationPipe` is registered globally in `server.ts`
+> (`app.useGlobalPipes(new ZodValidationPipe())`). No per-controller `@UsePipes` required.
 
-### 4. Zod là nơi DUY NHẤT validate input — domain/entity KHÔNG validate input
+### 4. Zod is the ONLY place input is validated — domain/entity does NOT validate input
 
-> ⛔ **RULE (đã chốt):** Mọi validation đầu vào (presence, format, length, range, non-blank) **chỉ** nằm ở Zod tại **input boundary**. **Cấm** `if (!x.trim()) throw` hay bất kỳ kiểm tra input nào trong entity factory / domain.
+> ⛔ **RULE (settled):** all input validation (presence, format, length, range, non-blank) lives
+> **only** in Zod, at the **input boundary**. **Forbidden**: `if (!x.trim()) throw`, or any input
+> check inside an entity factory / domain code.
 
-- **Lý do:** một nguồn sự thật duy nhất cho input validation → không drift, không validate 2 nơi. Domain **TIN** rằng input đã sạch khi tới tay nó.
-- **Mọi cửa nhận input đều có Zod**, không chỉ HTTP: HTTP body/params/query, **event consumer** (Kafka), command — validate bằng Zod *trước* khi dựng entity. (Nhờ vậy domain không cần tự thủ cho path non-HTTP.)
-- Factory chỉ giữ **bất biến type/structural** (vd `ManageableOrgRole = Exclude<OrgRole,'OWNER'>` compile-time) + intention-revealing — KHÔNG validate giá trị input. Xem `domain_modeling.md` §1.
-- **DB constraint** (`NOT NULL`, unique, FK, enum) là lưới cuối cùng, không thay cho Zod.
+- **Why:** one source of truth for input validation → no drift, no validating in two places. The
+  domain **TRUSTS** that input is already clean by the time it arrives.
+- **Every input door has Zod**, not just HTTP: HTTP body/params/query, **event consumers** (Kafka),
+  and commands — validated with Zod *before* an entity is constructed. (That is what lets the
+  domain avoid defending itself on non-HTTP paths.)
+- A factory only enforces **type/structural invariants** (e.g. the compile-time
+  `ManageableOrgRole = Exclude<OrgRole,'OWNER'>`) plus intention-revealing construction — it does
+  NOT validate input values. See `domain_modeling.md` §1.
+- **DB constraints** (`NOT NULL`, unique, FK, enum) are the final net, not a substitute for Zod.
 
-> ⚠️ **Gotchá non-blank — thứ tự `.trim()` quan trọng:**
-> - `z.string()` chấp nhận cả `""` lẫn `"   "`. `z.string().min(1)` vẫn cho `"   "` lọt (length 3 ≥ 1).
-> - ✅ Đúng: `z.string().trim().min(1)` — `.trim()` biến đổi TRƯỚC → `"   "` → `""` → fail. Bonus: chuẩn hoá khoảng trắng đầu/cuối khi lưu.
-> - ❌ Sai: `z.string().min(1).trim()` — check trên chuỗi gốc (pass) rồi mới trim → lưu `""`.
+> ⚠️ **Non-blank gotcha — `.trim()` ordering matters:**
+> - `z.string()` accepts both `""` and `"   "`. `z.string().min(1)` still lets `"   "` through
+>   (length 3 ≥ 1).
+> - ✅ Correct: `z.string().trim().min(1)` — `.trim()` transforms FIRST → `"   "` → `""` → fails.
+>   Bonus: normalises leading/trailing whitespace before storage.
+> - ❌ Wrong: `z.string().min(1).trim()` — checks the raw string (passes), then trims, storing `""`.
 
-## 🛠️ Execution & Tự động hoá
-Nếu viết API mới:
-1. Tạo schema file trước.
-2. Dùng Execution script (nếu có) hoặc copy cú pháp chuẩn từ các API hiện tại.
-3. Test Swagger `/docs` bằng tay hoặc qua Unit Test để đảm bảo schema hiển thị đúng.
+## 🛠️ Execution & Automation
+
+When writing a new API:
+
+1. Create the schema file first.
+2. Use the execution script (if one exists) or copy the standard syntax from an existing API.
+3. Check Swagger `/docs` by hand or via a unit test to confirm the schema renders correctly.

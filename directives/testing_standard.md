@@ -1,19 +1,31 @@
 # SOP: Unit Testing & Coverage Standard
 
 > [!NOTE]
-> Directive này quy định chuẩn viết Unit Test áp dụng cho toàn bộ các Microservices trong dự án, đảm bảo Code Coverage, kiến trúc thống nhất và vượt qua các trở ngại về TypeScript/ESM. Được đúc kết sau vòng lặp Self-Annealing từ Auth Service.
+> This directive sets the unit-testing standard for every microservice in the project — code
+> coverage, a consistent architecture, and the TypeScript/ESM obstacles you have to get past.
+> Distilled after a self-annealing loop on Auth Service.
 
 ## 🎯 Goal
-Thống nhất phương pháp tổ chức file test, cách giả lập (mock) Object, Path Aliases và cách xử lý thư viện ESM để tránh các lỗi kỹ thuật phát sinh khi chạy Jest, giúp AI Agent và Developer luôn đồng bộ cách làm.
 
-## 📜 Kiến Trúc Test Bắt Buộc
+One agreed way to organise test files, mock objects, path aliases, and handle ESM libraries, so the
+technical errors that show up when running Jest don't have to be rediscovered — and so an AI agent
+and a developer stay in sync on how it's done.
 
-### 1. Chiến lược Co-location
-- Bắt buộc đặt file test (`*.spec.ts`) **ngay cạnh** file source logic (ví dụ `login.handler.ts` thì test phải nằm tại `login.handler.spec.ts`).
-- **Nghiêm cấm** gom các file Unit Test vào folder `test/` hoặc `tests/` ở root của service. Các folder `test/` sinh ra mặc định từ CLI của framework sẽ bị xóa đi hoặc chỉ dành riêng cho E2E Testing (nếu có).
+## 📜 Required Test Architecture
 
-### 2. Chuẩn mực Mocking với TypeScript
-- Khi mock các Dependencies (ví dụ Repositories, Services) để test Handler/Usecase, bắt buộc sử dụng cơ chế ép kiểu an toàn:
+### 1. Co-location strategy
+
+- A test file (`*.spec.ts`) MUST sit **directly next to** its source file (e.g. `login.handler.ts`
+  → `login.handler.spec.ts`).
+- **Forbidden**: collecting unit tests into a `test/` or `tests/` folder at the service root. A
+  `test/` folder scaffolded by a framework CLI is deleted, or kept exclusively for E2E tests
+  (if any).
+
+### 2. TypeScript mocking standard
+
+- When mocking dependencies (repositories, services) to test a handler/use-case, use the
+  type-safe cast:
+
 ```typescript
 let mockPasswordService: jest.Mocked<PasswordService>;
 
@@ -24,11 +36,16 @@ beforeEach(() => {
   } as unknown as jest.Mocked<PasswordService>;
 });
 ```
-- Điều này khắc phục triệt để lỗi TypeScript khắt khe cảnh báo thiếu các private/inherited properties của Interface hoặc Class gốc.
 
-### 3. Quy tắc Import Path Alias (`@/`)
-- Cấm sử dụng Relative Path dài (ví dụ: `../../../../errors/auth.error`). Mọi import trỏ ra khỏi cụm thư mục nội bộ bắt buộc phải dùng alias `@/`.
-- File `package.json` trong service phải cấu hình Jest để nhận dạng:
+- This fully avoids strict TypeScript complaining about missing private/inherited properties of the
+  real interface or class.
+
+### 3. Import path alias rule (`@/`)
+
+- Long relative paths are forbidden (e.g. `../../../../errors/auth.error`). Any import reaching
+  outside the local directory cluster MUST use the `@/` alias.
+- The service's `package.json` must configure Jest to resolve it:
+
 ```json
 "jest": {
   "moduleNameMapper": {
@@ -37,19 +54,27 @@ beforeEach(() => {
 }
 ```
 
-### 4. Xử lý Thư viện Native ESM (e.g., `uuid`)
-- Rất nhiều thư viện hiện đại đã chuyển hoàn toàn sang ESM. Jest (dùng Node/CommonJS) sẽ báo lỗi `SyntaxError: Unexpected token 'export'`.
-- **Cách xử lý**: Không tốn thời gian đổi loader, bắt buộc dùng `jest.mock` ở cấp module ngay trên đầu các file spec:
+### 4. Native ESM libraries (e.g. `uuid`)
+
+- Many modern libraries have moved fully to ESM. Jest (running Node/CommonJS) then throws
+  `SyntaxError: Unexpected token 'export'`.
+- **Fix**: don't waste time swapping loaders — use `jest.mock` at module level, at the top of the
+  spec file:
+
 ```typescript
 jest.mock('uuid', () => ({
   v7: jest.fn(() => 'mock-uuid-v7')
 }));
 ```
 
-### 5. Test cho package ESM (shared-kernel) — khác service
-- Các service (`apps/*`) là CommonJS → ts-jest dùng config mặc định OK.
-- `packages/shared-kernel` là **ESM** (`"type": "module"` + `tsconfig` NodeNext + import có đuôi `.js`). Jest chạy CJS runtime → phải ép ts-jest emit CommonJS, nếu không sẽ lỗi `SyntaxError: Cannot use import statement`.
-- Config bắt buộc trong `package.json` của shared-kernel:
+### 5. Testing the ESM package (`shared-kernel`) — different from a service
+
+- Services (`apps/*`) are CommonJS → ts-jest's default config is fine.
+- `packages/shared-kernel` is **ESM** (`"type": "module"` + NodeNext `tsconfig` + `.js`-suffixed
+  imports). Jest runs a CJS runtime → ts-jest must be forced to emit CommonJS, otherwise you get
+  `SyntaxError: Cannot use import statement`.
+- Required config in shared-kernel's `package.json`:
+
 ```json
 "jest": {
   "transform": {
@@ -61,13 +86,22 @@ jest.mock('uuid', () => ({
   "moduleNameMapper": { "^(\\.{1,2}/.*)\\.js$": "$1" }
 }
 ```
-  - `tsconfig` override ép CommonJS (phải đổi cả `moduleResolution` sang `node`, nếu không TS5110 vì NodeNext đòi module=NodeNext).
-  - `moduleNameMapper` strip `.js` để ts-jest resolve sang `.ts` nguồn.
-- **Tách spec khỏi build**: thêm `"exclude": ["**/*.spec.ts"]` vào `tsconfig.json` của package published, tránh ship test code vào `dist/`.
 
-### 6. Jest config bắt buộc cho MỌI service tiêu thụ `shared-kernel` (core-api, notification-service, search-service...)
-- `shared-kernel` là ESM (NodeNext, import `.js`-suffixed). Bất kỳ class dùng decorator `@CommandHandler`/`@QueryHandler` đều import RUNTIME (không phải `import type`) một hằng số từ `shared-kernel` — viết test cho handler đó sẽ trigger `SyntaxError: Unexpected token 'export'` nếu jest config thiếu 2 phần dưới. Đây là gap config có sẵn, không phải lỗi code test.
-- Bắt buộc trong `package.json` → `jest`:
+  - The `tsconfig` override forces CommonJS (you must switch `moduleResolution` to `node` as well,
+    or TS5110 fires because NodeNext requires `module: NodeNext`).
+  - `moduleNameMapper` strips the `.js` so ts-jest resolves to the `.ts` source.
+- **Keep specs out of the build**: add `"exclude": ["**/*.spec.ts"]` to the published package's
+  `tsconfig.json` so test code never ships into `dist/`.
+
+### 6. Required Jest config for EVERY service that consumes `shared-kernel` (core-api, notification-service, search-service, …)
+
+- `shared-kernel` is ESM (NodeNext, `.js`-suffixed imports). Any class using the
+  `@CommandHandler`/`@QueryHandler` decorators imports a constant from `shared-kernel` at
+  **runtime** (not `import type`) — so writing a test for that handler triggers
+  `SyntaxError: Unexpected token 'export'` if the Jest config is missing the two pieces below. This
+  is a pre-existing config gap, not a bug in the test.
+- Required in `package.json` → `jest`:
+
 ```json
 "transform": {
   "^.+\\.(t|j)s$": ["ts-jest", {
@@ -83,5 +117,7 @@ jest.mock('uuid', () => ({
 },
 "transformIgnorePatterns": ["node_modules/(?!uuid)"]
 ```
-- `resolvePackageJsonExports: false` chỉ cần nếu tsconfig gốc của service có `resolvePackageJsonExports: true` (TS5098 khi ép `moduleResolution: node`).
-- Chi tiết + lý do đầy đủ: `.ai/memory/gotchas.jsonl` "core-api had zero working Jest config...".
+
+- `resolvePackageJsonExports: false` is only needed if the service's own tsconfig sets
+  `resolvePackageJsonExports: true` (TS5098 when forcing `moduleResolution: node`).
+- Full detail and reasoning: `.ai/memory/gotchas.jsonl`, "core-api had zero working Jest config…".

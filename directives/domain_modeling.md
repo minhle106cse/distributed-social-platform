@@ -1,125 +1,195 @@
 # SOP: Domain Modeling — Entity Factories & Persistence Boundary
 
-> Áp cho **mọi domain entity** ở cả 2 service. Mục tiêu: entity luôn **valid-by-construction**,
-> và phân định rõ **nơi validate (WRITE)** vs **nơi tin tưởng (READ)**.
+> Applies to **every domain entity** in both services. Goal: entities are always
+> **valid-by-construction**, with a clear split between **where to validate (WRITE)** and
+> **where to trust (READ)**.
 
 ## 0. Entity = mutable + individual `_fields` (canonical style)
 
-> Đây là style ĐÃ CHỐT cho cả 2 service. Tham chiếu gốc: `auth-service` (`role.entity.ts`, `refresh-token.entity.ts`). core-api (`modules/tenant`) đã realign theo style này.
+> This is the SETTLED style for both services. Reference implementation: `auth-service`
+> (`role.entity.ts`, `refresh-token.entity.ts`). core-api (`modules/tenant`) has been realigned to
+> match it.
 
-- Entity là **mutable**, lưu **từng field private** (`private _id: string`, `private _role: OrgRole`), gán trong constructor (`this._id = props.id`). **KHÔNG** dùng props-bag (`private readonly props: Props`).
-- **Behavior method MUTATE in-place + enforce rule trên cùng identity**, trả `void` — KHÔNG `return new Entity(...)`:
-  - ✅ `changeRole(role: ManageableOrgRole) { this._role = role }`, `invite.accept(userId)`, `token.revoke()`, `role.assignPermissions()` (dedupe).
-  - ❌ `changeRole(role): Entity { return new Entity({ ...this.props, role }) }` (immutable "clone-on-change").
-- Field kiểu **mutable** (`Date`, array) → **clone phòng thủ MỌI CỬA VÀO/RA**: constructor, getter, **và mutator nhận collection** (`assignRoles(roles) { this._roles = [...roles] }` — không `this._roles = roles`). Clone-in mà getter trả thẳng `this._x` (hoặc setter lưu thẳng reference của caller) là **nửa vời** — caller vẫn mutate được state nội bộ.
-  - `Date`: `this._x = new Date(props.x.getTime())` / `return new Date(this._x.getTime())` (null-safe).
-  - **Array = clone VỎ container, KHÔNG deep-clone phần tử** → `return [...this._arr]` (shallow). Mục đích là chặn `getter.push()/splice()/sort()` sửa cấu trúc collection nội bộ (thêm/bớt phần tử), KHÔNG phải bảo vệ từng phần tử. Vì phần tử là **VO/child immutable** (`AuthIdentity` readonly fields, `UserProfile` đóng kín) nên chia sẻ reference phần tử là an toàn — chỉ vỏ array mới cần clone.
-- **Quy tắc thực sự = theo HÌNH DẠNG trả về, không phải "mutable hay không":**
+- An entity is **mutable** and stores **individual private fields** (`private _id: string`,
+  `private _role: OrgRole`), assigned in the constructor (`this._id = props.id`). Do **NOT** use a
+  props-bag (`private readonly props: Props`).
+- **Behaviour methods MUTATE in-place and enforce a rule on the same identity**, returning `void` —
+  never `return new Entity(...)`:
+  - ✅ `changeRole(role: ManageableOrgRole) { this._role = role }`, `invite.accept(userId)`,
+    `token.revoke()`, `role.assignPermissions()` (dedupes).
+  - ❌ `changeRole(role): Entity { return new Entity({ ...this.props, role }) }` (immutable
+    "clone-on-change").
+- **Mutable-typed** fields (`Date`, arrays) → **defensively clone at EVERY entry/exit point**:
+  constructor, getter, **and any mutator that receives a collection**
+  (`assignRoles(roles) { this._roles = [...roles] }` — not `this._roles = roles`). Cloning on the
+  way in while the getter returns `this._x` directly (or a setter stores the caller's reference
+  directly) is **half a measure** — the caller can still mutate internal state.
+  - `Date`: `this._x = new Date(props.x.getTime())` / `return new Date(this._x.getTime())`
+    (null-safe).
+  - **Array = clone the container SHELL, do NOT deep-clone the elements** → `return [...this._arr]`
+    (shallow). The point is to stop `getter.push()/splice()/sort()` from changing the internal
+    collection's structure (adding/removing elements), NOT to protect each element. Because the
+    elements are **immutable VOs/children** (`AuthIdentity` readonly fields, `UserProfile` sealed),
+    sharing element references is safe — only the array shell needs cloning.
+- **The real rule is about the SHAPE returned, not "mutable or not":**
 
-  | Trả về | Xử lý | Vì sao |
+  | Returns | Handling | Why |
   |---|---|---|
-  | Array (collection) | clone vỏ `[...this._x]` | array là container mutable → chặn add/remove, dù phần tử immutable |
-  | `Date` | clone `new Date(...)` | Date là object mutable |
-  | Single child entity (`profile`) | trả thẳng | 1 reference, không có container để thủ; cần đúng identity để `assignProfile`/`profile.update()` compose |
-  | Primitive (`string`/`number`/`boolean`) | trả thẳng | bất biến sẵn, copy-by-value |
+  | Array (collection) | clone the shell `[...this._x]` | an array is a mutable container → block add/remove, even if elements are immutable |
+  | `Date` | clone `new Date(...)` | `Date` is a mutable object |
+  | Single child entity (`profile`) | return directly | one reference, no container to guard; the exact identity is needed for `assignProfile`/`profile.update()` to compose |
+  | Primitive (`string`/`number`/`boolean`) | return directly | already immutable, copy-by-value |
 
-  > ⚠️ Một mảng **child entity** (vd `profiles: UserProfile[]`) **vẫn** `return [...]` — dù `UserProfile` immutable — vì lý do là bảo vệ *mảng*, không phải phần tử. "Single child entity trả thẳng" chỉ áp cho **một** reference đơn.
-- **Định danh: entity SỞ HỮU id của chính nó — factory sinh `v7()`, KHÔNG nhận `id` từ caller.** (Rule nền: "không sentinel, `entity.id == row.id`"; cách đạt = factory sinh v7.)
-  - ✅ Dùng `v7()` (package `uuid`) trong factory — time-ordered, tốt cho B-tree index locality. Mapper persist chính id đó lúc INSERT. VD: cả auth (`User`/`Role`/`Permission`) lẫn core-api (`Organization`/`Space`/`Membership`/`OrgInvite`).
-  - ❌ **CẤM sinh id ở controller / caller** (`crypto.randomUUID()` trong controller rồi truyền vào command/factory). Vừa lệch tầng (presentation quyết identity của domain), vừa hay dùng sai version (v4 random thay vì v7).
-  - ❌ **CẤM sentinel `id: ''`** "để DB thay sau" (divergence entity↔row).
-  - **Client cần id ngay?** → **handler TRẢ `entity.id` về**, controller dùng giá trị đó (`const id = await commandBus.execute<Cmd, string>(...)`). CQRS handler trả giá trị là pattern đã dùng sẵn (createInvite trả token). **Idempotency** dùng `IdempotencyRecord` (Idempotency-Key header), KHÔNG dựa vào id-upfront.
-- **Lý do:** đây là DDD chính thống (Evans — entity mutable + identity/continuity; chỉ Value Object mới immutable) và đồng bộ với `event_sourcing.md` (`apply` mutate: `this.balance += amount`). Immutable + props-bag là **lựa chọn style gây tranh cãi, KHÔNG phải "best practice" mặc định** — đừng tự dán nhãn vậy.
-- Mapper `toPersistence` đọc qua **getter** (`org.id`, `org.name`), KHÔNG cần `toSnapshot()`/props-bag.
+  > ⚠️ An array of **child entities** (e.g. `profiles: UserProfile[]`) **still** does `return [...]`
+  > — even though `UserProfile` is immutable — because the point is protecting the *array*, not the
+  > elements. "Return a single child entity directly" applies only to **one** single reference.
+- **Identity: the entity OWNS its own id — the factory generates `v7()`, it does NOT accept an `id`
+  from the caller.** (Underlying rule: "no sentinel, `entity.id == row.id`"; the way to get there is
+  factory-generated v7.)
+  - ✅ Use `v7()` (the `uuid` package) in the factory — time-ordered, good for B-tree index
+    locality. The mapper persists that same id on INSERT. Examples: auth
+    (`User`/`Role`/`Permission`) and core-api (`Organization`/`Space`/`Membership`/`OrgInvite`).
+  - ❌ **FORBIDDEN: generating the id in the controller / caller** (`crypto.randomUUID()` in the
+    controller, then passed into the command/factory). It's both the wrong layer (presentation
+    deciding domain identity) and commonly the wrong version (random v4 instead of v7).
+  - ❌ **FORBIDDEN: a sentinel `id: ''`** "for the DB to fill in later" (entity↔row divergence).
+  - **Client needs the id immediately?** → the **handler RETURNS `entity.id`**, and the controller
+    uses that value (`const id = await commandBus.execute<Cmd, string>(...)`). A CQRS handler
+    returning a value is an established pattern here (`createInvite` returns a token).
+    **Idempotency** uses `IdempotencyRecord` (the `Idempotency-Key` header), not an upfront id.
+- **Why:** this is mainstream DDD (Evans — entities are mutable with identity/continuity; only
+  Value Objects are immutable) and consistent with `event_sourcing.md` (`apply` mutates:
+  `this.balance += amount`). Immutable + props-bag is a **debatable style choice, NOT a default
+  "best practice"** — don't label it as one.
+- The mapper's `toPersistence` reads through **getters** (`org.id`, `org.name`) — no
+  `toSnapshot()`/props-bag needed.
 
-## 0.1 `entities/` vs `aggregates/` — khi nào rẽ nhánh
+## 0.1 `entities/` vs `aggregates/` — when to branch
 
-> **Không có folder `aggregates/` riêng — tất cả nằm chung `domain/entities/`.** Lý do (chốt sau khi
-> đối chiếu lại thuật ngữ DDD): "aggregate root" là một **vai trò** (consistency boundary + cửa duy
-> nhất để mutate), không phải một loại object khác biệt — `Organization`/`Membership` cũng là
-> aggregate root dù không event-sourced. Cái thật sự khác nhau giữa `CreditAccount` và phần còn lại
-> là **trục thứ 2, độc lập với trục "có phải aggregate root không"**: cơ chế lưu trữ — state được
-> lưu trực tiếp (1 row) hay được suy ra từ lịch sử (fold event). Đặt tên folder theo "aggregates" đã
-> gán nhầm trục 1 trong khi thứ cần đánh dấu là trục 2 → sửa: **đánh dấu trục 2 bằng hậu tố file**
-> (`.aggregate.ts`), không bằng folder. Ví dụ thật: `modules/credit/domain/entities/credit-account.aggregate.ts`.
+> **There is no separate `aggregates/` folder — everything lives in `domain/entities/`.** The
+> reasoning (settled after re-checking the DDD terminology): "aggregate root" is a **role**
+> (consistency boundary + the single door for mutation), not a distinct kind of object —
+> `Organization`/`Membership` are aggregate roots too, even though they aren't event-sourced. What
+> genuinely differs between `CreditAccount` and the rest is a **second axis, independent of the
+> "is it an aggregate root?" axis**: the storage mechanism — is state stored directly (one row) or
+> derived from history (folding events)? Naming the folder "aggregates" tagged axis 1 when the
+> thing that needed marking was axis 2 → the fix: **mark axis 2 with a file suffix**
+> (`.aggregate.ts`), not with a folder. Real example:
+> `modules/credit/domain/entities/credit-account.aggregate.ts`.
 >
-> **2 trục, độc lập nhau — đừng gộp lại khi suy luận:**
-> | Trục | Câu hỏi | Giá trị |
+> **Two axes, independent of each other — don't conflate them when reasoning:**
+> | Axis | Question | Value |
 > |---|---|---|
-> | 1. Vai trò DDD | "Đây có phải aggregate root không?" | Luôn ĐÚNG cho mọi entity trong `entities/` — không phân biệt |
-> | 2. Cơ chế lưu trữ | "State lưu trực tiếp hay suy ra từ lịch sử?" | entity thường = trực tiếp; entity event-sourced (hậu tố `.aggregate.ts`) = suy ra từ event |
+> | 1. DDD role | "Is this an aggregate root?" | Always YES for every entity in `entities/` — not a distinguishing factor |
+> | 2. Storage mechanism | "Is state stored directly, or derived from history?" | Ordinary entity = directly; event-sourced entity (`.aggregate.ts` suffix) = derived from events |
 >
-> Quy tắc áp dụng: **chỉ dùng hậu tố `.aggregate.ts`/pattern event-sourced khi module thật sự
-> event-sourced** theo scope đã chốt ở `event_sourcing.md` (hiện: Credit Economy; tương lai:
-> Reputation). Đừng chọn event-sourcing cho module CRUD chỉ vì nó "quan trọng"/"phức tạp" — độ quan
-> trọng nghiệp vụ không phải điều kiện, cần replay-lịch-sử-làm-nguồn-sự-thật mới là điều kiện.
+> Applied rule: **only use the `.aggregate.ts` suffix / the event-sourced pattern when the module is
+> genuinely event-sourced** per the scope settled in `event_sourcing.md` (currently: Credit Economy;
+> future: Reputation). Don't choose event-sourcing for a CRUD module just because it feels
+> "important"/"complex" — business importance is not the criterion; needing
+> replay-history-as-source-of-truth is.
 
-Khác biệt cụ thể ở trục 2 (đã verify khớp code thật, không phải lý thuyết):
+The concrete differences on axis 2 (verified against the real code, not theory):
 
-| | Entity thường (state-based) | Entity event-sourced (hậu tố `.aggregate.ts`) |
+| | Ordinary entity (state-based) | Event-sourced entity (`.aggregate.ts` suffix) |
 |---|---|---|
-| State lưu thế nào | field hiện tại, ghi đè trực tiếp (`UPDATE`) | fold từ chuỗi event, không ghi đè (`INSERT`-only) |
-| `rehydrate()` nghĩa là gì | dựng entity từ **1 row DB** (nhận `props` đầy đủ) | **replay** — fold qua `apply(event)` cho từng event trong stream |
-| `version` dùng để làm gì | OCC row-level, tùy chọn (`UPDATE ... WHERE version = expectedVersion`) | **bắt buộc** — là sequence number của event, OCC qua `@@unique([aggregateId, version])` khi INSERT |
-| Method mutate | mutate field trực tiếp, `void` (`changeRole()`) | gọi nội bộ `raise()` → tạo event mới → `apply()` fold vào state, đồng thời đẩy vào `uncommitted[]` |
-| Cần thêm | không | `getUncommittedEvents()` (repository đọc để persist), factory `open()` thay vì `create()` (mở ví rỗng, không phải "tạo" theo nghĩa business) |
+| How state is stored | current fields, overwritten in place (`UPDATE`) | folded from an event stream, never overwritten (`INSERT`-only) |
+| What `rehydrate()` means | build the entity from **one DB row** (receives complete `props`) | **replay** — fold via `apply(event)` over each event in the stream |
+| What `version` is for | row-level OCC, optional (`UPDATE ... WHERE version = expectedVersion`) | **mandatory** — it is the event's sequence number; OCC via `@@unique([aggregateId, version])` on INSERT |
+| Mutating methods | mutate the field directly, `void` (`changeRole()`) | internally call `raise()` → create a new event → `apply()` folds it into state, and push it onto `uncommitted[]` |
+| Extra requirements | none | `getUncommittedEvents()` (the repository reads it to persist), and an `open()` factory instead of `create()` (opening an empty wallet, not "creating" in the business sense) |
 
-Cái **giống nhau tuyệt đối** giữa 2 kiểu — trục 1 không đổi dù trục 2 thế nào (đây mới là phần
-"chuẩn chung" thật sự, áp dụng cho MỌI entity trong `domain/entities/` bất kể có hậu tố `.aggregate.ts`
-hay không): private constructor, khởi tạo qua static factory (không `new` trực tiếp từ ngoài),
-**không setter** (mutate qua method đặt tên rõ ý định), business logic nằm trong instance method,
-`id` do domain tự sinh (không nhận từ caller, không sentinel).
+What is **absolutely identical** between the two — axis 1 doesn't change no matter what axis 2 does
+(this is the genuinely "shared standard" part, applying to EVERY entity in `domain/entities/`
+whether or not it carries the `.aggregate.ts` suffix): a private constructor, construction through a
+static factory (never `new` from outside), **no setters** (mutate through intention-revealing
+methods), business logic inside instance methods, and an `id` the domain generates itself (never
+accepted from the caller, never a sentinel).
 
-## 1. Factory enforce invariant lúc tạo (Intention-Revealing)
+## 1. The factory enforces invariants at creation (Intention-Revealing)
 
-- `create()` **KHÔNG** được là pass-through nhận discriminator tự do (role/type/status). Tách factory theo **biến thể**, baked rule vào:
-  - ✅ `Membership.createOwner()` (cửa DUY NHẤT ra OWNER) vs `Membership.createMember(role: ManageableOrgRole)`
-  - ❌ `Membership.create({ role?: OrgRole })` — caller tự quyết role, không rule → leo thang quyền.
-- **Bất biến bảo mật → ưu tiên TYPE (compile-time) hơn runtime guard.** `ManageableOrgRole = Exclude<OrgRole, 'OWNER'>` khiến "tạo/đổi sang OWNER" thành **lỗi biên dịch**, không cần `if (role === OWNER) throw`.
-- **Input validation (presence / format / length / range) KHÔNG nằm trong factory/entity.** ⛔ **RULE:** toàn bộ validate input là việc của **Zod ở MỌI input boundary** (HTTP, event consumer, command) — xem `zod_validation.md`. Factory **không** `if (!x.trim()) throw`; nó chỉ giữ **bất biến cấu trúc / type** (vd `ManageableOrgRole` compile-time) + intention-revealing. Mỗi cửa nhận input validate bằng Zod **TRƯỚC** khi dựng entity → domain **TIN** input đã sạch (single source of truth = Zod, không validate 2 nơi).
+- `create()` must **NOT** be a pass-through accepting a free discriminator (role/type/status). Split
+  the factory by **variant**, baking the rule in:
+  - ✅ `Membership.createOwner()` (the ONLY door to OWNER) vs
+    `Membership.createMember(role: ManageableOrgRole)`
+  - ❌ `Membership.create({ role?: OrgRole })` — the caller decides the role with no rule →
+    privilege escalation.
+- **Security-relevant invariant → prefer a TYPE (compile-time) over a runtime guard.**
+  `ManageableOrgRole = Exclude<OrgRole, 'OWNER'>` makes "create/change to OWNER" a **compile error**,
+  with no need for `if (role === OWNER) throw`.
+- **Input validation (presence / format / length / range) does NOT belong in the factory/entity.**
+  ⛔ **RULE:** all input validation is **Zod's job at EVERY input boundary** (HTTP, event consumer,
+  command) — see `zod_validation.md`. The factory does **not** `if (!x.trim()) throw`; it only holds
+  **structural/type invariants** (e.g. the compile-time `ManageableOrgRole`) plus
+  intention-revealing construction. Every input door validates with Zod **BEFORE** an entity is
+  built → the domain **TRUSTS** that input is already clean (single source of truth = Zod, never
+  validated in two places).
 
-### Naming factory — MỘT luật duy nhất: `create<Variant>`, KHÔNG `createFor<UseCase>`
+### Naming the factory — ONE rule: `create<Variant>`, never `createFor<UseCase>`
 
-> Tên factory mô tả **biến thể của entity** (cái gì được tạo), KHÔNG mô tả **use-case của caller** (tạo để làm gì). Use-case là việc của application layer; entity không được biết tới nó.
+> The factory name describes the **entity's variant** (what is created), NOT the **caller's
+> use-case** (what it's created for). Use-case is the application layer's business; the entity must
+> not know about it.
 
-- **Chỉ 1 đường tạo → `create()` trơn.** Đừng bịa suffix khi không có biến thể thứ 2 để phân biệt (speculative generality). VD: `Organization.create`, `Space.create`, `Permission.create`, `User.create`, `RefreshToken.create`, `AuthIdentity.create`.
-- **Có ≥2 đường tạo → đặt tên HẾT theo biến thể, BỎ `create` trơn.** Để lẫn một `create` trơn cạnh các factory có tên = "default ngầm" mơ hồ. VD đúng: `Membership.createOwner` / `createMember` (không có `Membership.create`).
-- ❌ **Cấm `createFor<UseCase>`** (`createForRegister`, `createForLogin`). Use-case không phải biến thể — `RefreshToken` chỉ có một cách tạo nhưng được dùng ở cả login lẫn refresh-rotation, nên gắn "ForLogin" vừa thừa vừa sai. Khi có biến thể thật, đặt theo **trục biến thiên của entity**: vd theo cơ chế auth → `User.createWithPassword` / `User.createWithOAuth`.
-- **Phép thử trước khi đặt tên `create*`:** "Lời gọi này có sinh ra một identity MỚI chưa từng tồn tại không?" — Không (đang load/đọc) → đó là `rehydrate`/query, đừng gọi là `create`.
+- **Only one creation path → plain `create()`.** Don't invent a suffix when there is no second
+  variant to distinguish from (speculative generality). Examples: `Organization.create`,
+  `Space.create`, `Permission.create`, `User.create`, `RefreshToken.create`, `AuthIdentity.create`.
+- **Two or more creation paths → name them ALL by variant, and DROP the plain `create`.** Leaving a
+  bare `create` next to named factories reads as an ambiguous "implicit default". Correct example:
+  `Membership.createOwner` / `createMember` (with no `Membership.create`).
+- ❌ **FORBIDDEN: `createFor<UseCase>`** (`createForRegister`, `createForLogin`). A use-case is not
+  a variant — `RefreshToken` has only one way to be created but is used in both login and
+  refresh-rotation, so tagging it "ForLogin" is both redundant and wrong. When a real variant
+  exists, name it along the **entity's own axis of variation**: e.g. by auth mechanism →
+  `User.createWithPassword` / `User.createWithOAuth`.
+- **Test before naming something `create*`:** "Does this call produce a NEW identity that never
+  existed before?" — No (you're loading/reading) → that's `rehydrate`/a query, don't call it
+  `create`.
 
-## 2. Validate khi GHI — TIN khi ĐỌC (the boundary)
+## 2. Validate on WRITE — TRUST on READ (the boundary)
 
-> Đây là ranh giới hay bị làm sai nhất.
+> This is the boundary most often gotten wrong.
 
-- Data được validate **một lần ở WRITE-side**: **Zod ở input boundary** (HTTP + event consumer) + **DB constraint** (enum / unique / FK / NOT NULL). Factory **KHÔNG** validate input — chỉ giữ bất biến type/structural (§1).
-- **READ-side (`rehydrate` / `mapper.toDomain`) phải TIN persistence — KHÔNG re-validate logic.**
-  - Data "sai logic" khi đọc ra là **bất khả thi** (write-side + DB enum đã đảm bảo).
-  - Nếu data thật sự corrupt → đó là **sự cố hạ tầng (ACID)**, KHÔNG phải việc domain re-check mỗi lần read.
-- ❌ Sai: `role: toOrgRole(row.role)` — throwing validator on read (over-engineering, chạy mỗi read, phòng thứ không xảy ra).
-- ✅ Đúng: `role: row.role` (Prisma enum type đã đảm bảo), hoặc narrow `row.role as ManageableOrgRole` (tin write-invariant) **có comment**.
-- **Type row của mapper = Prisma enum type**, KHÔNG hạ xuống `string` rồi cast. (Chính việc hạ xuống `string` mới tạo ra cast nguy hiểm — sửa gốc là dùng đúng type, không phải thêm validator.)
+- Data is validated **once, on the WRITE side**: **Zod at the input boundary** (HTTP + event
+  consumer) + **DB constraints** (enum / unique / FK / NOT NULL). The factory does **NOT** validate
+  input — it only holds type/structural invariants (§1).
+- **The READ side (`rehydrate` / `mapper.toDomain`) must TRUST persistence — do NOT re-validate
+  logic.**
+  - "Logically invalid" data on read is **impossible** (the write side + DB enums already guarantee
+    it).
+  - If data really is corrupt → that is an **infrastructure incident (ACID)**, not something the
+    domain should re-check on every read.
+- ❌ Wrong: `role: toOrgRole(row.role)` — a throwing validator on read (over-engineering, runs on
+  every read, guards against something that can't happen).
+- ✅ Right: `role: row.role` (the Prisma enum type already guarantees it), or narrowing with
+  `row.role as ManageableOrgRole` (trusting the write-side invariant) **with a comment**.
+- **The mapper's row type is the Prisma enum type** — don't downcast it to `string` and cast back.
+  (Downcasting to `string` is exactly what creates the dangerous cast — fix the root by using the
+  right type, don't add a validator on top of a wrong one.)
 
-## 3. Mỗi entity có Mapper riêng
+## 3. Every entity has its own Mapper
 
-- `infrastructure/mappers/<entity>.mapper.ts` với `toDomain` + `toPersistence`. Repository **delegate** vào mapper, KHÔNG `rehydrate(...)` inline.
+- `infrastructure/mappers/<entity>.mapper.ts` with `toDomain` + `toPersistence`. The repository
+  **delegates** to the mapper — no inline `rehydrate(...)`.
 
 ## ⚠️ Forbidden
 
-| Sai | Đúng |
+| Wrong | Right |
 |---|---|
-| Props-bag `private readonly props` + `return new Entity(...)` mỗi lần đổi | Field private riêng + behavior mutate in-place (`this._x = ...`) |
-| `create()` pass-through nhận role/type tự do, không rule | Factory chuyên biệt theo biến thể + type constraint |
-| `createFor<UseCase>` (`createForRegister`, `createForLogin`) | `create()` (1 đường tạo) hoặc `create<Variant>` (≥2, đặt tên hết) |
-| `if (role === OWNER) throw` cho bất biến tĩnh | `Exclude<OrgRole,'OWNER'>` (compile-time) |
-| `if (!x.trim()) throw` / validate input trong entity/factory | Validate input ở **Zod schema** (boundary); factory chỉ giữ bất biến type |
-| Sinh id ở controller/caller (`randomUUID()` truyền vào command) | Factory sinh `v7()`; handler `return entity.id` nếu client cần |
-| Validate-on-read trong `mapper.toDomain` / `rehydrate` | Tin persistence; narrow bằng typed cast |
-| Mapper type row là `string` rồi `as OrgRole` | Type row bằng Prisma enum, gán thẳng |
-| `rehydrate(...)` inline trong repository | Tách `<entity>.mapper.ts` |
+| Props-bag `private readonly props` + `return new Entity(...)` on every change | Individual private fields + in-place behaviour mutation (`this._x = ...`) |
+| `create()` pass-through accepting a free role/type, with no rule | Variant-specific factories + type constraints |
+| `createFor<UseCase>` (`createForRegister`, `createForLogin`) | `create()` (one path) or `create<Variant>` (≥2, all named) |
+| `if (role === OWNER) throw` for a static invariant | `Exclude<OrgRole,'OWNER'>` (compile-time) |
+| `if (!x.trim()) throw` / validating input inside the entity/factory | Validate input in the **Zod schema** (boundary); the factory only holds type invariants |
+| Generating the id in the controller/caller (`randomUUID()` passed into a command) | The factory generates `v7()`; the handler does `return entity.id` if the client needs it |
+| Validate-on-read inside `mapper.toDomain` / `rehydrate` | Trust persistence; narrow with a typed cast |
+| Mapper types the row as `string` then does `as OrgRole` | Type the row with the Prisma enum and assign directly |
+| Inline `rehydrate(...)` inside the repository | A separate `<entity>.mapper.ts` |
 
-## 🔗 Liên quan
+## 🔗 Related
 
 - `directives/folder_structure_sop.md` — layer boundaries (lint-enforced).
 - `directives/multi_tenancy.md` — Org RBAC, OWNER implicit-all.
-- `directives/event_sourcing.md` — rehydrate từ event stream (cùng nguyên tắc: apply event = trust, không re-validate).
-- `.ai/memory/conventions.jsonl` — các lesson cụ thể (#47 layering, #48 write-validate/read-trust).
+- `directives/event_sourcing.md` — rehydrating from an event stream (same principle: applying an
+  event = trust, don't re-validate).
+- `.ai/memory/conventions.jsonl` — the specific lessons (#47 layering, #48 write-validate/read-trust).

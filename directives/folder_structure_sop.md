@@ -1,8 +1,8 @@
 # Folder Structure SOP — Distributed Social Platform
 
-> **Đây là tài liệu bất biến (Immutable Directive).**
-> Mọi service trong monorepo này PHẢI tuân thủ cấu trúc này.
-> Agent KHÔNG ĐƯỢC phép tự ý tạo file/folder lệch khỏi cấu trúc mà không có sự chấp thuận của owner.
+> **This is an immutable directive.**
+> Every service in this monorepo MUST follow this structure.
+> The agent MUST NOT create files/folders that deviate from it without the owner's approval.
 
 ## Canonical `src/` Structure
 
@@ -14,7 +14,7 @@ src/
 │   ├── server.ts                    # listen(), graceful shutdown
 │   └── swagger.ts                   # OpenAPI / Swagger setup
 ├── common/                          # Cross-cutting ABSTRACTIONS only — NO infrastructure code
-│   │                                # ⚠️ Error base classes KHÔNG nằm ở đây — dùng packages/shared-kernel/src/errors/
+│   │                                # ⚠️ Error base classes do NOT live here — use packages/shared-kernel/src/errors/
 │   ├── cqrs/                        # Command/Query bus abstractions & middlewares (PURE POJO ONLY)
 │   │   ├── index.ts                 # ICommand, ICommandHandler, CommandBus, IEvent, EventBus
 │   │   └── middlewares/             # NO @Injectable or NestJS decorators allowed here
@@ -25,10 +25,10 @@ src/
 │       ├── transaction-manager.interface.ts
 │       └── transaction.context.ts
 ├── config/                          # Environment config loading & validation
-├── container/                       # Manual DI wiring (bắt buộc vì Fastify không có DI)
+├── container/                       # Manual DI wiring (required — Fastify has no DI)
 │   ├── infra.ts                     # Wires infrastructure deps (repositories, services, logger)
 │   └── application.ts               # Wires application layer (CommandBus, QueryBus, Handlers)
-├── infrastructure/                  # Concrete implementations — framework-specific code ĐI VÀO ĐÂY
+├── infrastructure/                  # Concrete implementations — framework-specific code GOES HERE
 │   ├── database/
 │   │   └── prisma/
 │   │       ├── prisma.client.ts
@@ -65,14 +65,14 @@ src/
 │           ├── routes/              # HTTP Routes (Fastify) / controllers (NestJS)
 │           └── schemas/             # Zod Validation Schemas
 
-# † Mở rộng owner-approved 2026-07-02 cho service consumer/AI (notification, search):
-#   - application/events/     : handler cho integration event (IIntegrationEventHandler)
-#   - domain/services/        : domain service THUẦN (vd TextChunker — KHÔNG @Injectable/NestJS)
-#                               + PORT dịch vụ outbound (interface: IEmbeddingService, ISummarizerService)
-#   - infrastructure/services/: adapter cụ thể của port (HttpEmbedding, ClaudeSummarizer, GeminiSummarizer…)
-#   - infrastructure/consumers/: Kafka consumer (KnowledgeIndexerConsumer, NotificationEventsConsumer)
-#   Service projection/search KHÔNG có domain entity → domain/ chỉ có services/ (không entities/repositories).
-#   ⚠️ domain/ pure TS: domain service THUẦN bỏ @Injectable (Nest vẫn DI-instantiate class 0-tham-số).
+# † Owner-approved extension 2026-07-02 for the consumer/AI services (notification, search):
+#   - application/events/     : integration-event handlers (IIntegrationEventHandler)
+#   - domain/services/        : PURE domain services (e.g. TextChunker — NO @Injectable/NestJS)
+#                               + outbound service PORTS (interfaces: IEmbeddingService, ISummarizerService)
+#   - infrastructure/services/: concrete adapters for those ports (HttpEmbedding, ClaudeSummarizer, GeminiSummarizer…)
+#   - infrastructure/consumers/: Kafka consumers (KnowledgeIndexerConsumer, NotificationEventsConsumer)
+#   The projection/search services have NO domain entity → domain/ holds only services/ (no entities/repositories).
+#   ⚠️ domain/ is pure TS: a pure domain service drops @Injectable (Nest still DI-instantiates a zero-arg class).
 ├── app.ts                           # Root Fastify app factory
 ├── main.ts                          # Entrypoint (local)
 └── main.lambda.ts                   # Entrypoint (AWS Lambda)
@@ -82,76 +82,95 @@ src/
 
 ## ⛔ Forbidden Patterns — NEVER DO
 
-| Sai lầm | Tại sao sai |
+| Mistake | Why it's wrong |
 |---|---|
-| Đặt filter/interceptor/hook Fastify vào `common/` | `common/` chỉ chứa ABSTRACTION, không chứa infrastructure framework cụ thể |
-| Đặt Prisma module/service vào thư mục riêng `prisma/` ở root src | Prisma là infrastructure detail → phải nằm trong `infrastructure/database/prisma/` |
-| Đặt logger concrete implementation vào `common/logger/` | `common/` chứa interface, implementation dùng chung đã nằm trong `packages/shared-kernel` |
-| Đặt `ILogger` interface bên trong một service app (e.g. `auth-service/src/common/logger.ts`) | Interface dùng chung phải nằm trong `packages/shared-kernel` |
-| Đặt error base classes vào `common/errors/` trong service | Tất cả error base classes (`AppError`, `DomainError`, `ApplicationError`, `InfrastructureError`, `ResponseFormatError`) đều nằm trong `packages/shared-kernel/src/errors/` — import từ `@distributed-social-platform/shared-kernel` |
-| Tạo folder ngoài 5 thành phần chính khi không có lý do cụ thể | Phá vỡ tính nhất quán giữa các service |
+| Put a Fastify filter/interceptor/hook in `common/` | `common/` holds ABSTRACTIONS only, never concrete framework infrastructure |
+| Put a Prisma module/service in its own `prisma/` folder at the root of `src` | Prisma is an infrastructure detail → it belongs in `infrastructure/database/prisma/` |
+| Put a concrete logger implementation in `common/logger/` | `common/` holds interfaces; the shared implementation already lives in `packages/shared-kernel` |
+| Define an `ILogger` interface inside a service app (e.g. `auth-service/src/common/logger.ts`) | Shared interfaces must live in `packages/shared-kernel` |
+| Put error base classes in a service's `common/errors/` | All error base classes (`AppError`, `DomainError`, `ApplicationError`, `InfrastructureError`, `ResponseFormatError`) live in `packages/shared-kernel/src/errors/` — import them from `@distributed-social-platform/shared-kernel` |
+| Create a folder outside the 5 main components without a specific reason | Breaks consistency between services |
 
 ---
 
-## 5 Thành Phần Chính & Trách Nhiệm
+## The 5 Main Components & Responsibilities
 
-| Thư mục | Vai trò | Được phép import |
+| Folder | Role | Allowed to import |
 |---|---|---|
-| `bootstrap/` | Khởi động app, đăng ký plugin Fastify | `infrastructure/`, `config/`, `container/` |
+| `bootstrap/` | App startup, Fastify plugin registration | `infrastructure/`, `config/`, `container/` |
 | `common/` | Abstractions, interfaces, pure utilities | `packages/shared-kernel` ONLY |
 | `config/` | Env loading, validation (Zod) | `packages/shared-kernel` |
 | `infrastructure/` | Framework-specific implementations (Prisma, Fastify hooks, Pino) | `common/`, `packages/shared-kernel` |
-| `modules/` | Business logic theo từng domain | `common/`, `packages/shared-kernel` |
-| `container/` | Manual DI wiring (Fastify không có DI) | `infrastructure/`, `modules/`, `packages/shared-kernel` |
+| `modules/` | Business logic per domain | `common/`, `packages/shared-kernel` |
+| `container/` | Manual DI wiring (Fastify has no DI) | `infrastructure/`, `modules/`, `packages/shared-kernel` |
 
 ---
 
-## core-api vs auth-service — Trạng Thái Đồng Bộ
+## core-api vs auth-service — Sync Status
 
-> Trạng thái tính đến 2026-06-25: `core-api` tuân thủ kiến trúc chuẩn, ngang `auth-service` về layering, và **đã được lint enforce** (xem §Enforcement bên dưới).
+> Status as of 2026-06-25: `core-api` follows the standard architecture, on a par with
+> `auth-service` in layering, and is now **lint-enforced** (see §Enforcement below).
 
-- Toàn bộ các component infra (Prisma, Logger, HTTP Interceptors, Filters) đã được di dời từ `common/` sang `infrastructure/`.
-- CQRS buses ở `common/cqrs/` đã trở thành Pure POJO, framework module được đẩy sang `infrastructure/cqrs/`.
-- **Re-audit `modules/tenant` (2026-06-25):** sửa 3 vi phạm còn sót — `OrgGuard`/`TenantInterceptor` rời `common/` về `infrastructure/http/`; `OrgGuard` đi qua `IMembershipRepository` thay vì query Prisma thẳng; handler dùng `MembershipNotFoundError` thay vì `NotFoundException`. Dọn coupling: `org-permissions.ts` về `modules/tenant/domain/` (hết cycle domain↔common), `OrgContext` tách khỏi guard.
-- **Lưu ý:** `core-api` là NestJS app nên sử dụng `infrastructure/http/interceptors` thay vì `hooks` (như trong Fastify thuần của `auth-service`), và dùng cơ chế DI Module của NestJS thay vì thư mục `container/` thủ công.
+- Every infra component (Prisma, Logger, HTTP interceptors, filters) has been moved out of
+  `common/` into `infrastructure/`.
+- The CQRS buses in `common/cqrs/` are now pure POJOs; the framework module was pushed down into
+  `infrastructure/cqrs/`.
+- **Re-audit of `modules/tenant` (2026-06-25):** fixed the 3 remaining violations — `OrgGuard` and
+  `TenantInterceptor` moved from `common/` to `infrastructure/http/`; `OrgGuard` now goes through
+  `IMembershipRepository` instead of querying Prisma directly; the handler uses
+  `MembershipNotFoundError` instead of `NotFoundException`. Coupling cleanup: `org-permissions.ts`
+  moved to `modules/tenant/domain/` (ending the domain↔common cycle), and `OrgContext` was split
+  out of the guard.
+- **Note:** `core-api` is a NestJS app, so it uses `infrastructure/http/interceptors` rather than
+  `hooks` (as in `auth-service`'s plain Fastify), and NestJS's DI module system rather than a
+  manual `container/` directory.
 
 ---
 
 ## 🔒 Enforcement — Lint-Enforced Boundaries (core-api)
 
-> Tài liệu mô tả **ý định**; lint mới **bắt buộc**. Các ranh giới dưới đây được enforce qua
-> `@typescript-eslint/no-restricted-imports` trong `apps/core-api/eslint.config.mjs`
-> (bản `@typescript-eslint/` để bắt cả `import type` — type-only dependency xuyên layer vẫn là dependency).
-> Vi phạm = **lint fail tại commit/CI**, kèm message tiếng Việt chỉ rõ cách sửa.
+> This document describes **intent**; lint makes it **mandatory**. The boundaries below are
+> enforced via `@typescript-eslint/no-restricted-imports` in `apps/core-api/eslint.config.mjs`
+> (the `@typescript-eslint/` variant also catches `import type` — a type-only dependency across a
+> layer is still a dependency). A violation is a **lint failure at commit/CI**, with a message
+> spelling out the fix.
 
-| Layer (`files`) | Cấm import | Được phép |
+| Layer (`files`) | Forbidden imports | Allowed |
 |---|---|---|
-| `modules/*/domain/**` | NestJS, Fastify, Prisma/`@/generated`, mọi tầng ngoài (`@/common`, `@/infrastructure`, application/infra/presentation của module) | shared-kernel + relative cùng domain |
-| `modules/*/application/**` | ORM/DB/HTTP infra; **HTTP exceptions** (`NotFoundException`…) từ `@nestjs/common` | repo interface; `@/infrastructure/cqrs` (decorators); `@nestjs/common` DI (`@Injectable`/`@Inject`) |
-| `modules/*/presentation/**` | Prisma/`@/generated`, `@/infrastructure/database` | đẩy qua CommandBus/QueryBus |
+| `modules/*/domain/**` | NestJS, Fastify, Prisma/`@/generated`, every outer layer (`@/common`, `@/infrastructure`, the module's own application/infrastructure/presentation) | shared-kernel + relative imports within the same domain |
+| `modules/*/application/**` | ORM/DB/HTTP infra; **HTTP exceptions** (`NotFoundException`, …) from `@nestjs/common` | repository interfaces; `@/infrastructure/cqrs` (decorators); `@nestjs/common` DI (`@Injectable`/`@Inject`) |
+| `modules/*/presentation/**` | Prisma/`@/generated`, `@/infrastructure/database` | push through CommandBus/QueryBus |
 | `common/**` | `@/modules`, `@/infrastructure`, NestJS, Fastify, Prisma | shared-kernel + relative |
 
-**Ngoại lệ đã chốt (KHÔNG phải vi phạm):** `@Injectable()` / `@Inject()` / `@CommandHandler()` trong application layer là **idiom DI hợp lệ của NestJS** — chỉ HTTP exception mới bị cấm ở application. Đây là khác biệt framework, không phải lệch kiến trúc.
+**Settled exception (NOT a violation):** `@Injectable()` / `@Inject()` / `@CommandHandler()` in the
+application layer is a **valid NestJS DI idiom** — only HTTP exceptions are forbidden there. This is
+a framework difference, not an architectural deviation.
 
-**Quy trình khuyến nghị khi tạo module mới trong core-api:** bật/khớp lint boundary *trước*, code *sau* — để chính cổng lint chặn ngay trong lúc sinh code, thay vì phát hiện khi audit về sau.
+**Recommended workflow for a new module in core-api:** turn on / match the lint boundary *first*,
+write the code *after* — so the lint gate blocks a misplaced file during generation rather than at a
+later audit.
 
-**Gate chất lượng (cả monorepo):** `npm run check` = `turbo run typecheck lint format:check` (read-only). `typecheck` = `tsc --noEmit` mỗi workspace — bắt lỗi biên dịch mà lint/format bỏ sót (lint chỉ bắt rule, không bắt TS2322…). Sửa nhanh: `npm run lint:fix` + `npm run format`.
+**Quality gate (whole monorepo):** `npm run check` = `turbo run typecheck lint format:check`
+(read-only). `typecheck` = `tsc --noEmit` per workspace — catches compile errors lint/format miss
+(lint only catches rule violations, not e.g. `TS2322`). Quick fix: `npm run lint:fix` +
+`npm run format`.
 
 ---
 
-## Khi Agent Tạo File Mới
+## When The Agent Creates A New File
 
-**Checklist bắt buộc trước khi tạo bất kỳ file nào:**
+**Required checklist before creating any file:**
 
-1. File này là **abstraction/interface** hay **implementation**?
+1. Is this file an **abstraction/interface** or an **implementation**?
    - Interface → `common/`
-   - Implementation (có import Prisma/Fastify/Pino/...) → `infrastructure/`
-2. File này là **framework-specific HTTP concern** (filter, hook, decorator)?
+   - Implementation (imports Prisma/Fastify/Pino/…) → `infrastructure/`
+2. Is this a **framework-specific HTTP concern** (filter, hook, decorator)?
    - → `infrastructure/http/`
-3. File này là **cross-service contract**?
+3. Is this a **cross-service contract**?
    - → `packages/shared-kernel`
-4. File có thuộc về một **feature domain** cụ thể?
+4. Does the file belong to a specific **feature domain**?
    - → `modules/<domain>/`
-5. Cấu trúc của service này có đồng bộ với auth-service chưa?
-   - Đối chiếu với bảng 5 thành phần chính ở trên trước khi commit.
-6. (core-api) Chạy `npm run lint` trước khi commit — boundary rules ở §Enforcement sẽ tự chặn nếu đặt sai layer / import xuyên tầng.
+5. Is this service's structure in sync with auth-service?
+   - Check it against the 5-main-components table above before committing.
+6. (core-api) Run `npm run lint` before committing — the boundary rules in §Enforcement will block a
+   misplaced file / cross-layer import automatically.

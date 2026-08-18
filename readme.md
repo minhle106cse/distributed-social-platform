@@ -1,74 +1,77 @@
 # 🧠 CORTEX — AI-POWERED TEAM KNOWLEDGE HUB
 
-[![Architecture](https://img.shields.io/badge/Architecture-Hexagonal%20%7C%20CQRS%20%7C%20Event--Sourcing-blue)](#-kiến-trúc-nâng-cao-showcase)
-[![AI](https://img.shields.io/badge/AI-RAG%20%7C%20pgvector%20%7C%20Hybrid%20Search-purple)](#-trí-tuệ-khám-phá-rag--hybrid-retrieval)
-[![Progress](https://img.shields.io/badge/Progress-Phase%204%20(RAG%20Live)%20·%20~83%25-brightgreen)](#-tiến-độ-dự-án)
+[![Architecture](https://img.shields.io/badge/Architecture-Hexagonal%20%7C%20CQRS%20%7C%20Event--Sourcing-blue)](#-advanced-architecture-showcase)
+[![AI](https://img.shields.io/badge/AI-RAG%20%7C%20pgvector%20%7C%20Hybrid%20Search-purple)](#8--discovery-intelligence-rag--hybrid-retrieval)
+[![Progress](https://img.shields.io/badge/Progress-Phase%204%20(RAG%20Live)%20·%20~83%25-brightgreen)](#-project-progress)
 [![License](https://img.shields.io/badge/License-MIT-green)](#)
 
+🇬🇧 English · [🇻🇳 Tiếng Việt](readme.vi.md)
 
-## 📖 MỤC LỤC TÀI LIỆU
+## 📖 DOCUMENTATION INDEX
 
-| # | Tài liệu | Mô tả |
-|---|----------|-------|
-| 💼 | [Yêu cầu Nghiệp vụ](./docs/01_business_requirements.md) | 5 trụ cột: Knowledge, AI Discovery, Credit Economy, Reputation, Multi-tenancy |
-| 📋 | [Kịch bản Sử dụng](./docs/02_use_cases.md) | Đặc tả luồng tương tác User ↔ System chi tiết |
-| 🏗️ | [Kiến trúc & Sơ đồ Luồng](./docs/03_system_architecture_diagrams.md) | Topology, RAG pipeline, Sequence Diagrams, Data Flow |
-| 💾 | [Lược đồ CSDL](./docs/04_database_schema.md) | Prisma Schema, Event Store, Read Model, pgvector embeddings |
-| 🎨 | [Tiêu chuẩn UI/UX](./docs/05_web_ui_ux_guidelines.md) | Search-first UX, RAG answer + citations, credit wallet |
-| 📡 | [Đặc tả API](./docs/06_api_contracts.md) | RESTful endpoints, Idempotency, Tenant scoping |
-| 🧩 | [Design System](./docs/07_design_system_assets.md) | Color tokens, typography, spacing, component specs |
-| 🧪 | [Chiến lược Testing](./docs/08_testing_and_qa_strategy.md) | Ledger integrity, AI-Saga refund, Tenant isolation |
-| ☁️ | [Hạ tầng DevOps](./docs/09_devops_infrastructure.md) | Monorepo, Docker Compose, Observability |
-| 🛡️ | [Bảo mật & Phân quyền](./docs/10_security_rbac.md) | Multi-tenant RBAC, AI data boundary, Rate Limiting |
-| 🚀 | [Lộ trình Thực thi](./readme.phases.md) | Roadmap 9 phases (0-8): Monolith → Microservices |
+> The documents below are written in Vietnamese; see [Documentation language convention](#documentation-language-convention).
+
+| # | Document | Description |
+|---|----------|-------------|
+| 💼 | [Business Requirements](./docs/01_business_requirements.md) | The 5 pillars: Knowledge, AI Discovery, Credit Economy, Reputation, Multi-tenancy |
+| 📋 | [Use Cases](./docs/02_use_cases.md) | Detailed User ↔ System interaction flows |
+| 🏗️ | [Architecture & Flow Diagrams](./docs/03_system_architecture_diagrams.md) | Topology, the RAG pipeline, sequence diagrams, data flow |
+| 💾 | [Database Schema](./docs/04_database_schema.md) | Prisma schema, Event Store, Read Model, pgvector embeddings |
+| 🎨 | [UI/UX Standards](./docs/05_web_ui_ux_guidelines.md) | Search-first UX, RAG answer + citations, the credit wallet |
+| 📡 | [API Contracts](./docs/06_api_contracts.md) | RESTful endpoints, idempotency, tenant scoping |
+| 🧩 | [Design System](./docs/07_design_system_assets.md) | Colour tokens, typography, spacing, component specs |
+| 🧪 | [Testing Strategy](./docs/08_testing_and_qa_strategy.md) | Ledger integrity, AI-Saga refund, tenant isolation |
+| ☁️ | [DevOps Infrastructure](./docs/09_devops_infrastructure.md) | Monorepo, Docker Compose, observability |
+| 🛡️ | [Security & RBAC](./docs/10_security_rbac.md) | Multi-tenant RBAC, the AI data boundary, rate limiting |
+| 🚀 | [Execution Roadmap](./readme.phases.md) | The 9-phase roadmap (0-8): Monolith → Microservices |
 
 ---
 
-## 🧠 TẦM NHÌN DỰ ÁN
+## 🧠 PROJECT VISION
 
-**Cortex** là một **nền tảng tri thức nội bộ cho team/công ty (Internal Knowledge Hub)** được trang bị AI, xây dựng bằng kiến trúc phân tán cấp doanh nghiệp (Enterprise-grade Distributed Architecture).
+**Cortex** is an AI-equipped **internal knowledge hub for a team/company**, built on an enterprise-grade distributed architecture.
 
-### Bài toán thực tế
+### The real-world problem
 
-Tri thức của một tổ chức **tản mát khắp nơi** — Slack, Notion, Google Drive, Confluence, và quan trọng nhất: **trong đầu vài người chủ chốt**. Hệ quả mỗi ngày:
+An organisation's knowledge is **scattered everywhere** — Slack, Notion, Google Drive, Confluence, and most importantly: **inside a few key people's heads**. The daily consequences:
 
-- 🔍 **"Cái này ai biết?"** — Hỏi đi hỏi lại cùng một câu, người mới mất hàng tuần để onboard.
-- 📄 **Tài liệu chết** — Viết xong không ai tìm thấy; search bằng keyword không ra vì không nhớ đúng từ khóa.
-- 🧠 **Bus factor** — Một người nghỉ việc, cả mảng kiến thức biến mất.
-- 😮‍💨 **Lười document** — Không ai muốn viết lại vì "viết xong cũng chẳng ai đọc".
+- 🔍 **"Who knows about this?"** — the same question asked over and over; new joiners take weeks to onboard.
+- 📄 **Dead documents** — written once, then never found again; keyword search fails because nobody remembers the exact term.
+- 🧠 **Bus factor** — one person leaves and an entire area of knowledge disappears with them.
+- 😮‍💨 **Nobody wants to document** — because "nobody reads it anyway".
 
-Các giải pháp hiện tại (Glean, Notion AI, Confluence) chứng minh đây là thị trường thật. **Cortex** giải cùng bài toán nhưng bằng kiến trúc chuẩn Enterprise — **RAG + Hybrid Search, Event Sourcing, CQRS, Saga** — vì khi xử lý **tri thức + AI tốn tiền + dữ liệu nhiều tổ chức**, mọi pattern phân tán đều trở thành **bắt buộc**, không phải trang trí.
+The existing solutions (Glean, Notion AI, Confluence) prove this is a real market. **Cortex** solves the same problem but with a properly enterprise architecture — **RAG + Hybrid Search, Event Sourcing, CQRS, Saga** — because once you are handling **knowledge + AI that costs real money + data belonging to many organisations**, every distributed pattern becomes **mandatory**, not decorative.
 
-### Tại sao dự án này "Show off" System Design?
+### Why this project "shows off" system design
 
-Triết lý cốt lõi: **mỗi yêu cầu nghiệp vụ ÉP BUỘC một System Design Pattern** — không pattern nào là trang trí.
+The core philosophy: **each business requirement FORCES a system design pattern** — no pattern here is decoration.
 
-| Yêu cầu nghiệp vụ | System Design Pattern bắt buộc |
+| Business requirement | The mandatory system design pattern |
 |---|---|
-| Credit (mua bằng tiền) phải kiểm toán, không bao giờ sai số | **Event Sourcing** (sổ cái bất biến) |
-| Đọc/search tri thức 1000x vs ghi 1x | **CQRS** (Read/Write tách biệt) |
-| Tiêu credit gọi AI → nếu AI fail phải hoàn lại credit | **Saga Pattern** (Distributed Transaction) |
-| Ghi document + bắn event re-index/re-embed phải atomic | **Outbox Pattern** |
-| Bấm "Hỏi AI" 2 lần do lag | **Idempotency Key** |
-| 2 người sửa cùng 1 runbook (wiki) | **Optimistic Concurrency Control** |
-| Nhà cung cấp AI/embedding (Claude) bị down | **Circuit Breaker + Fallback** |
-| Một câu hỏi hot được 500 người search cùng lúc | **Cache + Stampede Prevention** |
-| Gọi AI rất ĐẮT → chống lạm dụng | **Rate Limiting (Token Bucket)** |
-| Worker re-index thất bại | **Dead Letter Queue + Retry** |
-| Tìm tài liệu theo NGỮ NGHĨA, không phải keyword | **Vector Search (pgvector)** |
-| Search full-text + filter + facet | **Elasticsearch (Hybrid Retrieval)** |
-| Mỗi tổ chức cô lập dữ liệu, quota riêng, chống noisy-neighbor | **Multi-tenancy** |
+| Credits (bought with real money) must be auditable, never off by a cent | **Event Sourcing** (an immutable ledger) |
+| Reading/searching knowledge happens 1000x more than writing it | **CQRS** (read/write separation) |
+| Spending credits to call the AI → a refund if the AI fails | **Saga Pattern** (a distributed transaction) |
+| Writing a document + emitting a re-index/re-embed event must be atomic | **Outbox Pattern** |
+| Pressing "Ask AI" twice because of lag | **Idempotency Key** |
+| Two people editing the same runbook (wiki) | **Optimistic Concurrency Control** |
+| The AI/embedding provider (Claude) goes down | **Circuit Breaker + Fallback** |
+| One hot question searched by 500 people simultaneously | **Cache + Stampede Prevention** |
+| AI calls are EXPENSIVE → abuse prevention | **Rate Limiting (Token Bucket)** |
+| A worker's re-index fails | **Dead Letter Queue + Retry** |
+| Finding documents by MEANING, not by keyword | **Vector Search (pgvector)** |
+| Full-text search + filters + facets | **Elasticsearch (Hybrid Retrieval)** |
+| Each organisation's data isolated, with its own quota, immune to noisy neighbours | **Multi-tenancy** |
 
 ---
 
-## 🏗️ TRIẾT LÝ KIẾN TRÚC: MODULAR MONOLITH FIRST
+## 🏗️ ARCHITECTURAL PHILOSOPHY: MODULAR MONOLITH FIRST
 
-### Core Strategy
-Bắt đầu bằng **Modular Monolith** chặt chẽ, và chỉ tách thành **Microservices** khi thực sự cần thiết hoặc để chứng minh khả năng Migration.
+### Core strategy
+Start with a strict **Modular Monolith**, and split into **Microservices** only when genuinely necessary — or to demonstrate the migration itself.
 
-### Lý do
-- **Tránh over-engineering**: Microservices toàn phần ngay từ đầu mang lại độ trễ mạng, đau đầu về distributed transaction, và chi phí hạ tầng không cần thiết.
-- **Kỹ năng Migration**: Một trong những kỹ năng đắt giá nhất của Senior là biết cách *phá vỡ Monolith một cách an toàn (Zero-Downtime Migration)*. Dự án này chứng minh điều đó ở Phase 7 — tách `discovery-service` (workload AI-bound, cần cô lập scale & chi phí).
+### The reasoning
+- **Avoiding over-engineering**: full microservices from day one bring network latency, distributed-transaction headaches, and unnecessary infrastructure cost.
+- **Migration skill**: one of the most valuable senior skills is knowing how to *break a monolith apart safely (zero-downtime migration)*. This project demonstrates that in Phase 7 — extracting `discovery-service` (an AI-bound workload needing isolated scaling and cost).
 
 ---
 
@@ -110,66 +113,66 @@ Bắt đầu bằng **Modular Monolith** chặt chẽ, và chỉ tách thành **
    ES · Hybrid RRF · RAG    follower projection,      assistant — future)
    Claude/Gemini + CB)      REST + mark-read)
 ```
-> Ghi chú trạng thái: `discovery` KHÔNG nằm trong core-api như bản vẽ gốc — Phase 4 đã sinh thẳng `search-service` như một microservice own-DB (xem readme.phases §Phase 7 re-anchor). `worker-service`/`chat-service` còn là scaffold.
+> Status note: `discovery` is NOT inside core-api as the original drawing showed — Phase 4 produced `search-service` directly as an own-DB microservice (see readme.phases §Phase 7 re-anchor). `worker-service`/`chat-service` are still scaffolds.
 
 ---
 
 ## 🧱 BOUNDARIES & EXTRACTION STRATEGY
 
-### 1. `core-api` (Trái tim hệ thống — Modular Monolith)
+### 1. `core-api` (the heart of the system — a Modular Monolith)
 
-Chứa toàn bộ Business Logic. Dữ liệu nằm chung một PostgreSQL database nhưng được chia schema/table rõ ràng. KHÔNG JOIN chéo giữa các domain mà không thông qua interface.
+Holds all the business logic. Data shares one PostgreSQL database but is clearly divided by schema/table. NO cross-domain JOINs except through an interface.
 
 **Modules:**
-- **`tenant-module`** — Tổ chức (Organization), Workspace, membership, cấu hình & quota theo tenant.
-- **`knowledge-module`** — Document/Question/Answer/Runbook/ADR. Wiki-style với OCC + versioning. Sổ cái nội dung bất biến qua event.
-- **`taxonomy-module`** — Spaces/Collections, tags/topics, subscribe.
-- **`engagement-module`** — Vote, accept answer, verify (đánh dấu "đã kiểm chứng"), bookmark, follow.
-- **`discovery-module`** — **Hybrid Search**: kết hợp Elasticsearch (full-text) + pgvector (semantic) + RAG orchestration để trả lời câu hỏi kèm trích dẫn nguồn.
-- **`credit-module`** — **Event-sourced ledger**: purchase / spend / stake / award / refund credit. Saga đảm bảo atomic.
-- **`reputation-module`** — Điểm uy tín + badge, gamify hành vi đóng góp tri thức.
-- **`feed-module`** — Read Model (Materialized View): "Mới trong Spaces của bạn", trending, digest.
+- **`tenant-module`** — Organization, Workspace, membership, per-tenant configuration & quota.
+- **`knowledge-module`** — Document/Question/Answer/Runbook/ADR. Wiki-style with OCC + versioning. An immutable content ledger via events.
+- **`taxonomy-module`** — Spaces/Collections, tags/topics, subscriptions.
+- **`engagement-module`** — Vote, accept answer, verify (marking something "confirmed"), bookmark, follow.
+- **`discovery-module`** — **Hybrid Search**: Elasticsearch (full-text) + pgvector (semantic) + RAG orchestration, answering questions with source citations.
+- **`credit-module`** — **An event-sourced ledger**: purchase / spend / stake / award / refund credits. A saga guarantees atomicity.
+- **`reputation-module`** — Reputation points + badges, gamifying knowledge contribution.
+- **`feed-module`** — A read model (materialised view): "New in your Spaces", trending, digests.
 
-### 2. Các Service tách riêng từ đầu (Microservices)
+### 2. Services separated from the start (Microservices)
 
-- **`auth-service`** (Fastify) — Cô lập bảo mật hoàn toàn. JWT, Passwords, Refresh Token Rotation, org-scoped RBAC.
-- **`notification-service`** — WebSocket (real-time) + Push Notification. Scale ngang với Redis Pub/Sub adapter.
-- **`worker-service`** — Background jobs: **sinh embeddings**, re-index, AI summarization, digest email, phát hiện tài liệu lỗi thời (stale detection), cron badge.
-- **`search-service`** — Lắng nghe Kafka để index documents vào Elasticsearch.
-- **`chat-service`** — Thảo luận realtime + **AI Assistant (RAG chatbot)** + presence.
+- **`auth-service`** (Fastify) — Complete security isolation. JWT, passwords, refresh-token rotation, org-scoped RBAC.
+- **`notification-service`** — WebSocket (real-time) + push notifications. Scales horizontally with the Redis Pub/Sub adapter.
+- **`worker-service`** — Background jobs: **embedding generation**, re-index, AI summarization, digest email, stale-document detection, badge cron.
+- **`search-service`** — Listens to Kafka and indexes documents into Elasticsearch.
+- **`chat-service`** — Real-time discussion + an **AI Assistant (RAG chatbot)** + presence.
 
-### 3. Future Migration Target (Phase 7)
+### 3. Future migration target (Phase 7)
 
-Sau khi hệ thống ổn định, thực hiện **The Great Migration**: Tách `discovery-module` ra thành `discovery-service` độc lập. Lý do: workload AI/vector **bị giới hạn bởi tài nguyên (AI-bound), đắt đỏ, và bursty** — cần scale riêng và cô lập chi phí. *(Phương án thay thế để showcase ACID: tách `credit-ledger-service`.)*
+Once the system is stable, perform **The Great Migration**: extracting `discovery-module` into a standalone `discovery-service`. The reason: AI/vector workloads are **resource-constrained (AI-bound), expensive, and bursty** — they need separate scaling and isolated cost. *(An alternative for showcasing ACID: extracting `credit-ledger-service`.)*
 
 ---
 
-## 🔥 KIẾN TRÚC NÂNG CAO (SHOWCASE)
+## 🔥 ADVANCED ARCHITECTURE (SHOWCASE)
 
 ### 1. Hexagonal Architecture (Ports & Adapters)
 
-Thiết lập ranh giới tuyệt đối giữa Logic Nghiệp vụ và Cơ sở hạ tầng:
+An absolute boundary between business logic and infrastructure:
 
-- **`common/` (Pure POJO):** Abstractions, interfaces, domain types. Tuyệt đối KHÔNG chứa code Framework (NestJS) hay ORM (Prisma).
-- **`infrastructure/`:** Triển khai cụ thể các Adapters (Prisma Client, Framework Decorators, Interceptors).
-- **Dependency Injection:** Inject từ `infrastructure/` vào `modules/` thông qua interfaces định nghĩa ở `common/`.
+- **`common/` (pure POJO):** abstractions, interfaces, domain types. Absolutely NO framework code (NestJS) or ORM code (Prisma).
+- **`infrastructure/`:** concrete adapter implementations (the Prisma client, framework decorators, interceptors).
+- **Dependency injection:** injected from `infrastructure/` into `modules/` through interfaces defined in `common/`.
 
-### 2. In-House CQRS (Command Query Responsibility Segregation)
+### 2. In-house CQRS (Command Query Responsibility Segregation)
 
-Tự xây dựng hệ thống **CQRS Bus độc lập hoàn toàn khỏi Framework** (không dùng `@nestjs/cqrs`):
+A hand-built **CQRS bus completely independent of any framework** (not using `@nestjs/cqrs`):
 
-- Chạy mượt mà trên cả **NestJS** (`core-api`) và **Fastify** (`auth-service`).
-- **[ADR-0001, 2026-07-29]** Pipeline cố định TRONG THÂN HÀM của `CommandBus` (logging → retry →
-  transaction → handler), không còn `commandBus.use(...)` với middleware rời — sai thứ tự trở thành
-  bất khả biểu diễn thay vì phụ thuộc thứ tự đăng ký. Transaction là Unit-of-Work suy từ chữ ký handler
-  (`kind: 'transactional'` nhận tham số repos), không còn cờ `options.transactional`. **[2026-07-30]**
-  Repos giờ là 1 shape cho CẢ service (trước là 1 TxScope riêng mỗi module) — xem
-  `docs/adr/0001-transaction-retry-boundary.md` và `directives/cqrs_pattern.md`.
-- `IdempotencyMiddleware` kiểm tra Idempotency Key trước khi execute Command.
+- Runs smoothly on both **NestJS** (`core-api`) and **Fastify** (`auth-service`).
+- **[ADR-0001, 2026-07-29]** The pipeline is fixed INSIDE `CommandBus`'s method body (logging → retry →
+  transaction → handler); there is no longer a `commandBus.use(...)` with detached middleware — the wrong
+  order became unrepresentable rather than dependent on registration order. The transaction is a Unit-of-Work
+  inferred from the handler's signature (`kind: 'transactional'` receiving a repos parameter), with no
+  `options.transactional` flag. **[2026-07-30]** Repos are now one shape for the WHOLE service (previously a
+  separate TxScope per module) — see `docs/adr/0001-transaction-retry-boundary.md` and `directives/cqrs_pattern.md`.
+- `IdempotencyMiddleware` checks the idempotency key before executing a command.
 
-### 3. Event Sourcing (Sổ cái Credit Bất biến)
+### 3. Event Sourcing (the immutable credit ledger)
 
-Thay vì UPDATE số dư credit trực tiếp, mọi thay đổi được lưu dưới dạng **Event bất biến**:
+Instead of UPDATE-ing a credit balance directly, every change is stored as an **immutable event**:
 
 ```
 CreditPurchasedEvent → {orgId, packId, amount: +1000, source: "billing"}
@@ -178,23 +181,23 @@ CreditRefundedEvent  → {orgId, userId, amount: +5, reason: "ai_failed", queryI
 CreditAwardedEvent   → {orgId, userId, amount: +10, reason: "answer_accepted"}
 ```
 
-**Balance = f(replay all events)**. Có thể rebuild Read Model bất cứ lúc nào. Đây chính xác là cách sổ cái tài chính hoạt động — nhưng ở đây là **credit ảo** (không bao giờ rút ra tiền mặt) ⇒ đầy đủ rigor kế toán nhưng nhẹ rủi ro pháp lý.
+**Balance = f(replay all events)**. The read model can be rebuilt at any time. This is exactly how a financial ledger works — except these are **virtual credits** (never cashed out) ⇒ full accounting rigour with low legal risk.
 
 ### 4. Saga Pattern (AI-Query & Bounty)
 
-Khi User gọi AI để hỏi (RAG):
+When a user calls the AI to ask a question (RAG):
 
 ```
-Step 1: Reserve credit (trừ tạm)       → Success ✅
-Step 2: Gọi Claude API (RAG)           → Fail ❌ (timeout / provider down)
-Step 3: Compensate — Refund credit     → Execute ✅ (Rollback)
+Step 1: Reserve credit (provisional deduction)  → Success ✅
+Step 2: Call the Claude API (RAG)               → Fail ❌ (timeout / provider down)
+Step 3: Compensate — refund the credit          → Executed ✅ (rollback)
 ```
 
-Nếu bất kỳ bước nào thất bại, Saga Engine tự động chạy **Compensating Transactions**. Bounty saga cũng tương tự: stake credit → accept answer → award → badge → notify, fail ở bất kỳ đâu thì hoàn nguyên.
+If any step fails, the saga engine automatically runs the **compensating transactions**. The bounty saga is similar: stake credit → accept answer → award → badge → notify, with a failure anywhere reverting the whole chain.
 
-### 5. Outbox Pattern (Atomic Event Publishing)
+### 5. Outbox Pattern (atomic event publishing)
 
-Ghi dữ liệu vào DB và publish event lên Kafka **cùng một database transaction**:
+Writing data to the DB and publishing the event to Kafka happen in **the same database transaction**:
 
 ```sql
 BEGIN TRANSACTION;
@@ -203,63 +206,73 @@ BEGIN TRANSACTION;
 COMMIT;
 ```
 
-Một CDC Connector (hoặc Polling Publisher) đọc `outbox_events` và đẩy lên Kafka → các consumer **re-index (ES)** và **re-embed (pgvector)**. Đảm bảo **At-least-once delivery**.
+A CDC connector (or a polling publisher) reads `outbox_events` and pushes to Kafka → consumers **re-index (ES)** and **re-embed (pgvector)**. This guarantees **at-least-once delivery**.
 
-### 6. Idempotency (Tính lũy đẳng)
+### 6. Idempotency
 
-Mọi API tốn credit (gọi AI) đều yêu cầu header `X-Idempotency-Key`. Nếu Client gửi lại cùng request (mạng lag, double-click), Server nhận diện key đã xử lý và trả về kết quả cached — **không trừ credit 2 lần**.
+Every credit-consuming API (an AI call) requires an `X-Idempotency-Key` header. If the client resends the same request (network lag, a double click), the server recognises the key as already processed and returns the cached result — **the credit is not deducted twice**.
 
-### 7. Circuit Breaker (Cầu dao quanh AI Provider)
+### 7. Circuit Breaker (around the AI provider)
 
-`discovery-module` / `worker-service` gọi API bên thứ 3 (Claude embedding/summarization). Khi API bị down:
-
-```
-State: CLOSED (bình thường)
-  → 5 lỗi liên tiếp → State: OPEN (ngắt cầu dao, rơi về keyword search / cached embeddings)
-  → Sau 30s → State: HALF-OPEN (thử 1 request)
-  → Thành công → CLOSED · Thất bại → OPEN lại
-```
-
-Không để một nhà cung cấp AI chết kéo sập toàn bộ tính năng search.
-
-### 8. 🧠 Trí tuệ Khám phá: RAG + Hybrid Retrieval
-
-Trái tim của Cortex là **Hybrid Retrieval**: kết hợp 2 thế giới để cho kết quả tốt nhất.
+`discovery-module` / `worker-service` call a third-party API (Claude embedding/summarization). When that API goes down:
 
 ```
-Query: "làm sao rotate JWT secret khi deploy?"
+State: CLOSED (normal)
+  → 5 consecutive failures → State: OPEN (tripped, falling back to keyword search / cached embeddings)
+  → After 30s → State: HALF-OPEN (try one request)
+  → Success → CLOSED · Failure → OPEN again
+```
+
+One dead AI provider must never drag down the entire search feature.
+
+### 8. 🧠 Discovery intelligence: RAG + Hybrid Retrieval
+
+The heart of Cortex is **Hybrid Retrieval**: combining two worlds for the best results.
+
+```
+Query: "how do I rotate the JWT secret during a deploy?"
    │
-   ├──► Elasticsearch (BM25 full-text) ──► top-K theo keyword
+   ├──► Elasticsearch (BM25 full-text) ──► top-K by keyword
    │
-   ├──► pgvector (cosine similarity)   ──► top-K theo ngữ nghĩa (embedding)
-   │
-   ▼
-Reciprocal Rank Fusion (RRF) ──► hợp nhất & re-rank
+   ├──► pgvector (cosine similarity)   ──► top-K by meaning (embedding)
    │
    ▼
-RAG: nạp top-N đoạn + câu hỏi vào Claude ──► câu trả lời kèm TRÍCH DẪN NGUỒN
+Reciprocal Rank Fusion (RRF) ──► merge & re-rank
+   │
+   ▼
+RAG: feed the top-N passages + the question to Claude ──► an answer WITH SOURCE CITATIONS
 ```
 
-- **Embedding** sinh bất đồng bộ bởi `search-service` (consume `knowledge-events` qua Kafka, embed-on-publish), lưu cột `vector(768)` của pgvector. Provider = self-hosted Ollama sau port `IEmbeddingService` (Claude không có embeddings API).
-- **Citation bắt buộc:** mỗi câu trả lời AI đều dẫn lại document nguồn → chống "AI bịa" (hallucination), người dùng kiểm chứng được.
+- **Embeddings** are generated asynchronously by `search-service` (consuming `knowledge-events` over Kafka, embed-on-publish) and stored in a pgvector `vector(768)` column. The provider is self-hosted Ollama behind the `IEmbeddingService` port (Claude has no embeddings API).
+- **Citations are mandatory:** every AI answer links back to its source documents → preventing hallucination and letting users verify for themselves.
 
 ---
 
 ## 🤖 AI-DRIVEN DEVELOPMENT WORKFLOW
 
-Dự án được AI xây theo một workflow **gọn, tự-duy-trì** — không framework, chỉ Markdown + 2 hook + 1 generator:
+This project is built by AI following a **lean, self-maintaining** workflow — no framework, just Markdown + 2 hooks + 1 generator:
 
-### Cách hoạt động
-- **`directives/`** — luật code bất biến (Hexagonal, CQRS, Event Sourcing…). Agent đọc TRƯỚC khi code.
-- **`docs/`** — thiết kế & spec (business, schema, API, security). Ranh giới `docs`↔`directives` + forcing-function giữ docs không lệch code (bản đồ: `.ai/KNOWLEDGE_ARCHITECTURE.md`).
-- **`.ai/`** — `KNOWLEDGE_INDEX.md` (đọc đầu mỗi phiên, **tự sinh**) + `memory/*.jsonl` (experience buffer) + `PROJECT_STATUS.md` (trạng thái sống).
-- **2 Claude Code hook** (`.claude/settings.json`): `UserPromptSubmit` → in bản đồ task→doc; `Stop` → `scripts/sync.cjs` tự regenerate index + build + cảnh báo kỷ luật After-Task.
+### How it works
+- **`directives/`** — immutable coding rules (Hexagonal, CQRS, Event Sourcing, …). The agent reads them BEFORE writing code.
+- **`docs/`** — design & specs (business, schema, API, security). The `docs`↔`directives` boundary + forcing functions keep the docs from drifting away from the code (the map: `.ai/KNOWLEDGE_ARCHITECTURE.md`).
+- **`.ai/`** — `KNOWLEDGE_INDEX.md` (read at the start of every session, **auto-generated**) + `memory/*.jsonl` (an experience buffer) + `PROJECT_STATUS.md` (live status).
+- **2 Claude Code hooks** (`.claude/settings.json`): `UserPromptSubmit` → prints the task→doc map; `Stop` → `scripts/sync.cjs` regenerates the index + builds + warns about After-Task discipline.
 
-> 📎 Lưu ý: RAG/pgvector/hybrid-search vừa là **công nghệ sản phẩm** (Cortex), vừa là cảm hứng cho AI workflow — dự án dùng chính pattern nó xây để tự phát triển.
+> 📎 Note: RAG/pgvector/hybrid-search is both **the product's technology** (Cortex) and the inspiration for the AI workflow — the project uses the very pattern it builds to develop itself.
+
+### Documentation language convention
+
+This repo is the origin of a lineage: the AI workflow + `directives/` here are ported into smaller scenarios (`../system-design-scenarios/`). To stop shared documents from drifting between repos:
+
+| Document kind | Language | Reason |
+|---|---|---|
+| `directives/*.md` | **English only** | Few readers (the agent + developers working directly on the code); they must match the ported copies in each scenario **word for word**, so only one language is kept |
+| `readme.md` / `readme.vi.md` | **Both EN and VI** | Many readers — this is the project's front door |
+| `docs/*.md`, `.ai/plans/*.md` | Vietnamese (currently) | Internal specs + the audit trail; a plan **must not be retouched after execution** (`docs/12_ai_collaboration.md`) |
 
 ---
 
-## 🛠️ CÔNG NGHỆ ÁP DỤNG
+## 🛠️ TECHNOLOGY STACK
 
 | Category | Technologies |
 |----------|-------------|
@@ -268,10 +281,10 @@ Dự án được AI xây theo một workflow **gọn, tự-duy-trì** — khôn
 | **ORM** | Prisma v7 |
 | **Database** | PostgreSQL + **pgvector** (Event Store + Read Model + Embeddings) |
 | **Cache & Pub/Sub** | Redis |
-| **Message Broker** | Kafka (Event Backbone, KRaft mode) |
-| **Search** | Elasticsearch (Full-text) + pgvector (Semantic) → Hybrid (RRF) |
-| **AI** | Embeddings: self-hosted (Ollama `nomic-embed-text`, dim 768 — Claude không có embeddings API) · RAG summarization: Claude/Gemini (swap qua `ISummarizer`) qua Circuit Breaker |
-| **Real-time** | WebSocket + Redis Pub/Sub adapter |
+| **Message Broker** | Kafka (the event backbone, KRaft mode) |
+| **Search** | Elasticsearch (full-text) + pgvector (semantic) → Hybrid (RRF) |
+| **AI** | Embeddings: self-hosted (Ollama `nomic-embed-text`, dim 768 — Claude has no embeddings API) · RAG summarization: Claude/Gemini (swappable via `ISummarizer`) behind a Circuit Breaker |
+| **Real-time** | WebSocket + the Redis Pub/Sub adapter |
 | **Frontend** | Vite + React 18 (SPA) |
 | **State** | Zustand + TanStack Query |
 | **Styling** | TailwindCSS v3 + CSS Variables |
@@ -280,27 +293,27 @@ Dự án được AI xây theo một workflow **gọn, tự-duy-trì** — khôn
 
 ---
 
-## 📈 TIẾN ĐỘ DỰ ÁN
+## 📈 PROJECT PROGRESS
 
-Tiến độ hiện tại: **Phase 4 (RAG live, smoke-tested) — ~83%** · nguồn chi tiết: [`.ai/PROJECT_STATUS.md`](./.ai/PROJECT_STATUS.md)
+Current progress: **Phase 4 (RAG live, smoke-tested) — ~83%** · detailed source: [`.ai/PROJECT_STATUS.md`](./.ai/PROJECT_STATUS.md)
 
-- [x] **Phase 0:** Foundation & Infra (Monorepo, Docker, AI Workflow, module scaffolds)
-- [x] **Phase 1:** Multi-tenant Knowledge Monolith — Tenant, Knowledge, Engagement, Feed (taxonomy deferred)
-- [x] **Phase 2:** Event Backbone — Kafka + Outbox (HA claim/reaper), CloudEvents 1.0, DLQ, idempotency enforce
-- [ ] **Phase 3:** CQRS & Read Model — deferred có chủ đích (schema chỉ giữ source-of-truth; xem quyết định rollback read-model)
-- [x] **Phase 4:** AI Search & Discovery — `search-service` (pgvector + ES Hybrid RRF + RAG Claude/Gemini + Circuit Breaker)
-- [ ] **Phase 5:** Credit Economy & Saga — Spend/Stake, AI-Query Saga (ledger tables đã sẵn)
-- [🔄] **Phase 6:** Real-time & Workers — notification-service LIVE (Kafka consumer + REST); WebSocket/chat chưa
-- [ ] **Phase 7:** Migration/Extraction — re-anchored: `search-service` đã sinh ra là microservice, target mới = tách `credit-ledger-service` (xem readme.phases)
-- [ ] **Phase 8:** Production Hardening — một phần đã làm sớm (DLQ, outbox HA, metrics); tracing/load-test chưa
+- [x] **Phase 0:** Foundation & infra (monorepo, Docker, the AI workflow, module scaffolds)
+- [x] **Phase 1:** Multi-tenant knowledge monolith — Tenant, Knowledge, Engagement, Feed (taxonomy deferred)
+- [x] **Phase 2:** Event backbone — Kafka + Outbox (HA claim/reaper), CloudEvents 1.0, DLQ, idempotency enforcement
+- [ ] **Phase 3:** CQRS & read model — deliberately deferred (the schema holds only the source of truth; see the read-model rollback decision)
+- [x] **Phase 4:** AI search & discovery — `search-service` (pgvector + ES Hybrid RRF + RAG Claude/Gemini + Circuit Breaker)
+- [ ] **Phase 5:** Credit economy & saga — spend/stake, the AI-Query saga (the ledger tables are already in place)
+- [🔄] **Phase 6:** Real-time & workers — notification-service is LIVE (a Kafka consumer + REST); WebSocket/chat not yet
+- [ ] **Phase 7:** Migration/extraction — re-anchored: `search-service` was born a microservice, so the new target is extracting `credit-ledger-service` (see readme.phases)
+- [ ] **Phase 8:** Production hardening — partly done early (DLQ, outbox HA, metrics); tracing/load-testing not yet
 
-📋 Chi tiết từng Phase: [readme.phases.md](./readme.phases.md)
+📋 Per-phase detail: [readme.phases.md](./readme.phases.md)
 
 ---
 
-## 🚀 KHỞI CHẠY NHANH
+## 🚀 QUICK START
 
-> Hướng dẫn đầy đủ (gateway URL, luồng end-to-end, gotchas): **[RUN.md](./RUN.md)**
+> The full guide (gateway URLs, the end-to-end flow, gotchas): **[RUN.md](./RUN.md)**
 
 ```bash
 # 1. Install
@@ -316,12 +329,12 @@ npm run db:push
 # 4. Everything with hot reload (auth:4001 core:4002 notif:4003 search:4004 + web:3001)
 npm run dev
 
-# → Toàn bộ API qua gateway: http://localhost:8000/api/v1/*
+# → Every API through the gateway: http://localhost:8000/api/v1/*
 # → Web SPA: http://localhost:3001
 ```
 
 ---
 
-## 🚀 BƯỚC TIẾP THEO
+## 🚀 NEXT STEPS
 
-Xem [Lộ trình Thực thi (readme.phases.md)](./readme.phases.md) để nắm chi tiết roadmap từ Monolith đến Microservices.
+See the [Execution Roadmap (readme.phases.md)](./readme.phases.md) for the detailed roadmap from monolith to microservices.
