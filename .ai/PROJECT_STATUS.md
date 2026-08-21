@@ -133,6 +133,14 @@
   `{ success: boolean }` the bodies return) that `any` had hidden. Now: **`turbo run typecheck lint
   format:check` 19/19 green, 455 tests pass, `check:arch` green.** Remaining blocker for a fully green
   `npm run check`: **`apps/web` has no `eslint.config` file at all** (pre-existing, untouched, git-clean).
+- **Both remaining gaps closed (2026-08-21).** `apps/web` had zero eslint config (no devDependency
+  even installed) — added eslint.config.mjs (backend shape + React-hooks/refresh plugins), `.prettierrc`
+  matching core-api's, format scripts. `auth-service` had zero Hexagonal layer-boundary lint — added,
+  reading real imports first rather than copying core-api verbatim (it legitimately allows
+  `@/common/**` from domain and `@/container/repos` from application — both verified real, not gaps).
+  Both rule sets verified to actually fire (violation injected + confirmed rejected + reverted), not
+  just pass on clean code. **`turbo run typecheck lint format:check test` is now 33/33 green across the
+  WHOLE monorepo, including apps/web** — no open gaps left from either lint round.
 - **Current focus:** land correlation-id once reviewed, then RAG learning curriculum → resume
   feature work.
 
