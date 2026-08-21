@@ -222,6 +222,44 @@ const warnings = []
 //     AGENTS.md is prose the agent may silently skip, and until 2026-08-07 this very warning was
 //     shouting at the wrong party.
 let afterTaskBlock = null
+let repoPlacementBlock = null
+const SEP = String.fromCharCode(10, 10) + '---' + String.fromCharCode(10, 10)
+
+// (D) Repository placement. The rule this enforces lived ONLY as prose in two directives that
+//     contradicted each other for ~6 weeks (folder_structure_sop.md's canonical tree said
+//     `application/repositories/`; cqrs_pattern.md declared that folder banned) with nothing to
+//     catch it — and the agent then propagated the wrong side INTO the file that contradicted it.
+//     Prose the agent may skip is exactly what failed, so this BLOCKS the turn rather than warning:
+//     a misplaced port is cheap to fix now and expensive once it is a committed rename.
+;(function checkRepoPlacement() {
+  const codeFiles = changedSourceFiles()
+  const touchesRepos = codeFiles.some((f) =>
+    /[/]modules[/][^/]+[/](domain|application)[/]/.test(f.split(path.sep).join('/')),
+  )
+  if (!touchesRepos) return
+  try {
+    require('child_process').execSync('node scripts/check-repo-placement.cjs', {
+      cwd: ROOT,
+      stdio: 'pipe',
+    })
+  } catch (err) {
+    const detail = String(err.stdout || '') + String(err.stderr || '')
+    repoPlacementBlock = [
+      'Repository placement check failed (npm run check:arch):',
+      '',
+      detail.trim(),
+      '',
+      'Fix the placement before finishing. Decision procedure (ORDERED, stop at the first Yes)',
+      '— cqrs_pattern.md § "Repository-interface & DTO placement":',
+      '  1. Interface has ANY mutating method (save/insert/upsert/delete/index…)?',
+      '     → domain/repositories/. A write port is the domain persistence contract no matter',
+      '     who assembles it; this also covers a mixed write+read port such as the ES index.',
+      '  2. Read-only: does any file under domain/ import it?',
+      '     Yes → domain/repositories/ as I{X}Reader.',
+      '     No  → application/repositories/ as <module>.query-repository.ts.',
+    ].join('\n')
+  }
+})()
 
 ;(function checkDiscipline() {
   if (FORCE_ALL) return
@@ -301,12 +339,18 @@ function run(cmd) {
 // Two audiences, two channels — conflating them is what made the After-Task check inert:
 //   systemMessage      → the USER's terminal (build results, topology warnings)
 //   decision + reason  → the AGENT (blocks the turn ending, feeds the reason back)
-function emit(systemMessage, blockReason) {
+// Placement is the harder failure to recover from (a committed rename), so it leads.
+function blockReason() {
+  const parts = [repoPlacementBlock, afterTaskBlock].filter(Boolean)
+  return parts.length ? parts.join(SEP) : null
+}
+
+function emit(systemMessage, reason) {
   const out = {}
   if (systemMessage) out.systemMessage = systemMessage
-  if (blockReason) {
+  if (reason) {
     out.decision = 'block'
-    out.reason = blockReason
+    out.reason = reason
   }
   process.stdout.write(JSON.stringify(out))
 }
@@ -316,7 +360,7 @@ if (tasks.length === 0) {
   const msg = warnings.length
     ? warnings.join('\n\n')
     : '✅ sync: no relevant changes detected.'
-  emit(msg, afterTaskBlock)
+  emit(msg, blockReason())
   process.exit(0)
 }
 
@@ -352,7 +396,7 @@ log('═════════════════════════
 log(allOk ? '✅ All synced.' : '❌ Some tasks failed — check output above.')
 log('══════════════════════════════════\n')
 
-emit(summary, afterTaskBlock)
+emit(summary, blockReason())
 // Exit 0 even on task failure: the JSON `decision` above is what steers the agent, and a
 // non-zero exit here would be reported as a hook error on top of it, muddying both channels.
 process.exit(0)
