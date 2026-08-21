@@ -87,6 +87,39 @@
   `docs/adr/0001-transaction-retry-boundary.md` left untouched (frozen historical record per
   `docs/adr/README.md` — this collapse effectively supersedes its `TxScopeToken`/registry design;
   still worth a formal ADR amendment even though the code itself already landed).
+- **Naming/CQRS-boundary audit (2026-08-20, during RAG learning curriculum, committed pending).**
+  User's questions while reading search-service code (RAG walkthrough) surfaced a real gap in
+  `naming_conventions.md` (no rule for an application-layer service with no CommandBus/QueryBus) and
+  6 naming/placement fixes across 4 services — `ISearchChunkReader` relocated
+  `domain/repositories/`→`application/queries/` (no domain consumer; contrast with
+  `IOrgRolePermissionReader`, kept in domain because a domain service depends on it), the reader impl's
+  misleading `.query-repository` suffix fixed, `Imp*Service`→`Argon2PasswordService`/`JwtTokenService`
+  (auth-service), `Claude/GeminiSummarizer`→`...SummarizerService` (adapter-suffix consistency),
+  `resolve-org-permissions.ts`→`org-permission-resolver.ts` (filename/class match), both
+  search-service/notification-service controllers moved into `presentation/controllers/` to match
+  `folder_structure_sop.md`'s own spec (core-api already had this). `naming_conventions.md` gained §11
+  (Application Service) + §12 (controllers/ nesting); `cqrs_pattern.md`'s repository-placement rule
+  gained a dependency-direction litmus test. `npx turbo run typecheck test` green across all 4 touched
+  services (search-service 12/12 suites·53 tests, notification-service 11/11·32, core-api 53/53·157,
+  auth-service 30/30·123) — no logic changed, naming/location only.
+- **Repo-placement rule made enforceable (2026-08-21, uncommitted).** Follow-on to the naming audit
+  above. Owner asked how to guarantee this class of drift never recurs; answer was a control, not more
+  prose — the rule had lived only in two directives that **contradicted each other for ~6 weeks**
+  (`folder_structure_sop.md`'s canonical tree listed `application/repositories/`, `cqrs_pattern.md`
+  declared that same folder banned) with nothing cross-checking them. Settled in favour of the
+  canonical tree: all 10 `*.query-repository.ts` ports moved `application/queries/` →
+  `application/repositories/` across 4 services (DTOs stay in `queries/`). Placement now decided by an
+  ORDERED 2-step rule (write method → domain; else read port → domain only if a `domain/` file imports
+  it, else application) — the earlier single-step "dependency direction" phrasing was found to
+  contradict the pre-existing "mixed write+read" row on `IKeywordSearchRepository` and was replaced.
+  Shipped `scripts/check-repo-placement.cjs` → `npm run check:arch` (5 deterministic checks; each
+  verified by injecting a violation), wired into `npm run check` **first** so pre-existing lint
+  failures can't short-circuit past it, and into the `Stop` hook as a **turn-blocking** check —
+  verified end-to-end: blocks with a fix-procedure on a misplaced file, silent on a clean tree. It also
+  closes a real eslint hole (`no-restricted-imports` matches literal specifiers, so it misses a
+  relative `../../application/...` import from domain) and covers all 4 services, whereas the eslint
+  layer boundaries exist only in core-api. **Known gap left open: auth-service has no layer-boundary
+  lint rules at all.** typecheck+test green on all 4; lint counts equal their committed baselines.
 - **Current focus:** land correlation-id once reviewed, then RAG learning curriculum → resume
   feature work.
 
