@@ -120,6 +120,19 @@
   relative `../../application/...` import from domain) and covers all 4 services, whereas the eslint
   layer boundaries exist only in core-api. **Known gap left open: auth-service has no layer-boundary
   lint rules at all.** typecheck+test green on all 4; lint counts equal their committed baselines.
+- **Monorepo lint debt 261 → 0 (2026-08-21).** `npm run check` had been permanently red, which erodes
+  every gate hanging off it. Measured before fixing: 194/261 were in `.spec.ts` and 81 of those were
+  `unbound-method` — the standard Jest `expect(mock.method)` assertion, not a defect; root cause was
+  that auth-service's long-standing spec-relaxation block had never been copied to the 3 NestJS
+  services. **The 23 `no-restricted-imports` errors turned out to be one real architecture violation
+  the red count had been hiding:** `CoreApiRepos` (the ADR-0001 UoW shape — domain repo interfaces
+  only, no Prisma types) was declared inside the infrastructure factory, so all 23 transactional
+  handlers imported a type from `@/infrastructure`. Extracted to `src/common/database/core-api-repos.ts`
+  (owner's call over a lint exception); the factory stays in infrastructure. Typing the 4 `any` result
+  params in auth-service immediately surfaced a latent mismatch (`{ success: true }` vs the widened
+  `{ success: boolean }` the bodies return) that `any` had hidden. Now: **`turbo run typecheck lint
+  format:check` 19/19 green, 455 tests pass, `check:arch` green.** Remaining blocker for a fully green
+  `npm run check`: **`apps/web` has no `eslint.config` file at all** (pre-existing, untouched, git-clean).
 - **Current focus:** land correlation-id once reviewed, then RAG learning curriculum → resume
   feature work.
 
