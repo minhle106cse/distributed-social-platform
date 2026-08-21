@@ -93,6 +93,11 @@ Kafka) during smoke tests — there is no agent sandbox and nothing here needs o
 - **Never** CORS wildcard `['*']` — origins from env.
 - **Never** put infrastructure code in `common/` — `common/` is abstractions only (see
   `directives/folder_structure_sop.md`; layer boundaries are lint-enforced in core-api).
+- **Never** place a repository interface by eye. Write port (has a mutating method) →
+  `domain/repositories/`. Read-only port → `domain/repositories/` **only if** a `domain/` file
+  imports it, else `application/repositories/` as `<module>.query-repository.ts`. Full 2-step
+  procedure: `directives/cqrs_pattern.md`; **machine-checked by `npm run check:arch`** across all
+  4 services (the eslint layer boundaries only cover core-api, and only alias-form imports).
 - Entities: UUID PK, `camelCase` in code / `@map("snake_case")` in DB, soft delete via `deletedAt`.
 - Zod is the **only** input-validation library, only at the boundary (`presentation/schemas/`).
 

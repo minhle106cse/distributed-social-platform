@@ -84,6 +84,40 @@ obvious from how it's used/generated).
 - A separate query side (CQRS, returning DTOs instead of Entities): the `.query-repository.ts`
   suffix / `I{Entity}QueryRepository`
 
+**⚠️ `.query-repository.ts` is reserved for `application/repositories/` ports only — do NOT use it for a
+domain-layer READ port.** Found 2026-08-20: `ISearchChunkReader` and `IOrgRolePermissionReader` are
+both plain READ ports (no entity, no mapper — see `cqrs_pattern.md`'s repository-placement rule for
+the domain-vs-application litmus test), but their Prisma implementations had been named
+`Prisma{X}QueryRepository`/`*.query-repository.ts` anyway, borrowing the nearest-looking suffix. That
+suffix means something specific (an application-layer port returning a DTO straight to a query
+handler) and implies a location (`application/repositories/`) — using it for a domain-consumed reader is
+misleading about both.
+
+**Decision rule** — this file names things; `cqrs_pattern.md` decides WHERE they go via a 2-step
+procedure (step 1 = has a write method? → domain; step 2 = read-only, does `domain/` import it?).
+Read that first, then name per the two cases below. Placement is machine-checked by
+`npm run check:arch`; naming is not, so the cases below still need a human eye.
+
+**Naming for a repo that only reads (no entity/mapper):**
+
+1. Does the interface itself live in `domain/repositories/` because a **domain-layer class** consumes
+   it (a domain service, not just a query handler)? → it is a domain READ port. Name the interface
+   `I{X}Reader` (already the convention: `IOrgRolePermissionReader`, `ISearchChunkReader`), and name its
+   Prisma impl `Prisma{X}Reader{Repository}` / `{x}-reader.repository.ts` — **never** `.query-repository`.
+   Example: `PrismaOrgRolePermissionReaderRepository` (`prisma-org-role-permission-reader.repository.ts`),
+   fixed 2026-08-20 (was `PrismaOrgRolePermissionQueryRepository`).
+2. Does NOTHING in `domain/` import the interface — only an `application/` class (a query handler, or
+   an application service like `SearchKnowledgeService`) does? → it's a genuine application query-repo.
+   Move the interface itself to `application/repositories/{module}.query-repository.ts`, keep the standard
+   `I{Entity}QueryRepository` naming. Example: `ISearchChunkReader` moved from
+   `domain/repositories/search-chunk.repository.ts` to
+   `application/repositories/search-chunk.query-repository.ts` (its impl file, already named
+   `prisma-search-chunk.query-repository.ts`, needed no rename — only its import path changed).
+
+The full architectural reasoning (why domain-consumed reads can't simply move to `application/` even
+though they "look like" a query-repo) is in `cqrs_pattern.md`'s repository-placement section — read
+that first before reclassifying a new one.
+
 ✅ **Fixed (2026-07-31):** `auth-service` used to omit the `I` prefix on interfaces — e.g.
 `RefreshTokenRepository`, `UserRepository`, `RoleRepository` — while the implementations still
 followed the pattern correctly (`PrismaUserRepository implements UserRepository`). Found during a
@@ -161,18 +195,24 @@ standalone PR just to rename an environment variable.
 **Rule:** `I{Capability}Service` for the interface, file `{capability}.service.ts` — even when the
 more natural name would be an agent noun ending in "-er" (`Summarizer`, `Chunker`). The accompanying
 DI token: `{CAPABILITY}_SERVICE` (SCREAMING_SNAKE, dropping the `I` prefix, adding the `_SERVICE`
-suffix).
+suffix). **The adapter class implementing the port keeps the same `Service` suffix as the interface**
+(mirrors group 4's `Prisma{Entity}Repository implements I{Entity}Repository` — the impl's name is the
+interface's suffix with the mechanism prefixed on): `{Provider}{Capability}Service`.
 
-| Example | File | Token |
-|---|---|---|
-| `IEmbeddingService` | `embedding.service.ts` | `EMBEDDING_SERVICE` |
-| `ISummarizerService` | `summarizer.service.ts` | `SUMMARIZER_SERVICE` |
+| Example | File | Token | Adapter(s) |
+|---|---|---|---|
+| `IEmbeddingService` | `embedding.service.ts` | `EMBEDDING_SERVICE` | `HttpEmbeddingService` |
+| `ISummarizerService` | `summarizer.service.ts` | `SUMMARIZER_SERVICE` | `ClaudeSummarizerService`, `GeminiSummarizerService` |
 
 ⚠️ **Does NOT apply to a PURE domain service with no interface** (makes no outbound call, needs no
 swappable adapter) — e.g. `TextChunker` (`text-chunker.ts`, `domain/services/`) has no `I` prefix and
 no `Service` suffix, because it isn't a port. The deciding question: *"can this class have more than
 one swappable implementation (different adapters behind one interface)?"* — yes → group 9 (a port);
-no → name it freely by its domain meaning, with no obligation to use `.service.ts`.
+no → name it freely by its domain meaning, with no obligation to use `.service.ts`. When a pure domain
+service's file/class DO drift apart (agent-noun class, verb-phrase filename, or vice versa), the
+FILENAME should match the CLASS — e.g. `resolve-org-permissions.ts` → `org-permission-resolver.ts`
+(fixed 2026-08-20, class was always `OrgPermissionResolver`; same precedent as `TextChunker` living in
+`text-chunker.ts`, not a verb-phrase file).
 
 **History:** found on 2026-07-24 when the user (learning RAG, reading the code for the first time)
 asked why `embedding.service.ts` (`IEmbeddingService`) and `summarizer.ts` (`ISummarizer`) were named
@@ -181,6 +221,12 @@ then, even though `folder_structure_sop.md` listed both names as examples withou
 inconsistency. Standardised on `I{X}Service` and renamed
 `summarizer.ts`→`summarizer.service.ts`, `ISummarizer`→`ISummarizerService`,
 `SUMMARIZER`→`SUMMARIZER_SERVICE`.
+
+**Follow-up 2026-08-20:** the interface/file/token rename above never covered the ADAPTER class name —
+audit found `HttpEmbeddingService` (kept `Service`) next to `ClaudeSummarizer`/`GeminiSummarizer`
+(dropped it), a real inconsistency between 2 adapters of the SAME port shape in the SAME service.
+Renamed `ClaudeSummarizer`→`ClaudeSummarizerService` (`claude-summarizer.ts`→
+`claude-summarizer.service.ts`), same for Gemini — now 100% consistent with `HttpEmbeddingService`.
 
 ## 10. Messaging Port (transport-agnostic port, `packages/shared-kernel/src/messaging/interfaces/`)
 
@@ -217,6 +263,50 @@ noticed `DeadLetterPort` was the ONLY name in `messaging/interfaces/` not follow
 the other three interfaces (no `I` prefix, and a `Port` suffix no other interface in that directory
 used) — renamed to `IDeadLetterProducer`, and this rule written at the same time so group 9
 (AI-provider ports) doesn't get misapplied to messaging ports or vice versa.
+
+## 11. Application Service (a class doing application-layer orchestration with no CommandBus/QueryBus)
+
+**Rule:** `{Verb}{Noun}Service`, file `{verb}-{noun}.service.ts`, living in `application/queries/` (or
+`application/` for a service with no query-repo) — this is what a query handler would be called if the
+service HAD a bus to dispatch through.
+
+Only applies where group 5 (Command/Query Handler) genuinely does not apply — i.e. `rag_ai_integration.md`'s
+documented exception (search-service has no CommandBus/QueryBus because its only write is a Kafka event,
+not an HTTP command; see `resilience-defense-curriculum-progress.md`/`kafka-rag-learning-progress.md` for
+the full reasoning). Do NOT name a class this way just to dodge naming a `Query`/`Handler` pair when a bus
+IS available — that is group 5's job.
+
+| Example | Why not group 5 |
+|---|---|
+| `SearchKnowledgeService` (`application/queries/search-knowledge.service.ts`) | Called directly via NestJS DI from `SearchController` — no `QueryBus`, no `SearchKnowledgeQuery` object exists to pair a `Handler` name with. |
+
+**Found 2026-08-20:** the user noticed `IndexKnowledgeHandler` (event side, correctly named — dispatched
+through `EventRouter`) sitting next to `SearchKnowledgeService` (query side) and asked whether the
+asymmetry was a naming mistake. It isn't — but until this entry, naming_conventions.md had no rule
+covering `application/queries/*.service.ts` at all, so the name looked arbitrary rather than
+deliberate. This group exists so the next reader has a rule to point to instead of re-deriving the
+"no bus" reasoning from scratch.
+
+Also fixed the same day, in the adjacent auth-service naming debt this audit surfaced:
+`ImpPasswordService`/`ImpTokenService` (`Imp` = "implementation", says nothing about mechanism, the
+exact violation naming_conventions.md's intro warns against) → renamed to `Argon2PasswordService`
+(`argon2-password.service.ts`, uses the `argon2` package) and `JwtTokenService`
+(`jwt-token.service.ts`, uses `jsonwebtoken` + RS256/HS256) — matching how every other adapter in the
+repo is named after its real mechanism (`HttpEmbeddingService`, `PrismaXRepository`,
+`ElasticsearchKeywordRepository`).
+
+## 12. `presentation/` controller subfolder — always nested under `controllers/`
+
+**Rule:** `presentation/controllers/{name}.controller.ts` — matches `folder_structure_sop.md`'s spec
+(`presentation/routes/` for Fastify, `controllers/` for NestJS), and matches `presentation/schemas/`
+already being nested the same way in every service.
+
+**Fixed 2026-08-20:** search-service and notification-service had their single controller sitting
+directly under `presentation/{name}.controller.ts` (flat), while core-api's 6 modules were already
+correctly nested under `presentation/controllers/`. Moved
+`search.controller.ts`→`presentation/controllers/search.controller.ts` and
+`notification.controller.ts`→`presentation/controllers/notification.controller.ts` (relative import
+depth changed by one level in both — `../` → `../../` for application imports, `./schemas/` → `../schemas/`).
 
 ## ⚠️ How to apply this file
 

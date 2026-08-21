@@ -55,7 +55,7 @@ src/
 │       │   ├── entities/            # Aggregate Roots & Entities
 │       │   ├── value-objects/       # Immutable Value Objects
 │       │   ├── services/           # Domain services + OUTBOUND service ports (interfaces) †
-│       │   └── repositories/        # Command Repository Interfaces (returns Entities)
+│       │   └── repositories/        # Command/WRITE repo interfaces (Entities via mapper) + read ports a DOMAIN class consumes
 │       ├── infrastructure/          # Infrastructure Layer (Concrete Implementations)
 │       │   ├── mappers/             # Domain <-> Persistence Mappers
 │       │   ├── consumers/          # Kafka consumers (event-driven services) †
@@ -90,6 +90,8 @@ src/
 | Define an `ILogger` interface inside a service app (e.g. `auth-service/src/common/logger.ts`) | Shared interfaces must live in `packages/shared-kernel` |
 | Put error base classes in a service's `common/errors/` | All error base classes (`AppError`, `DomainError`, `ApplicationError`, `InfrastructureError`, `ResponseFormatError`) live in `packages/shared-kernel/src/errors/` — import them from `@distributed-social-platform/shared-kernel` |
 | Create a folder outside the 5 main components without a specific reason | Breaks consistency between services |
+| Put a repository interface loose in `application/queries/`, or nested inside one query's own subfolder | Application-layer read/query ports live in `modules/*/application/repositories/` (one folder per module) — as the canonical tree above has always specified — mirroring `domain/repositories/` for the write side. `application/queries/` holds ONLY use-cases + their response DTOs: per-query subfolders (`{verb}-{noun}/` with `.query.ts` + `.handler.ts`) and the flat `<module>.dto.ts` files. ⚠️ **Resolved 2026-08-21 — this file and `cqrs_pattern.md` had contradicted each other since 2026-07-03:** the tree above listed `application/repositories/` as the home for query-repo interfaces, while `cqrs_pattern.md` declared that same folder **banned** and sent them to `application/queries/`; the code followed `cqrs_pattern.md`, so every service ended up with port files sitting loose among the per-query subfolders. Settled in favour of THIS file (the canonical structure doc): all 10 `*.query-repository.ts` ports moved to `application/repositories/` across all 4 services, and `cqrs_pattern.md` was rewritten to match. The original 2026-07-03 concern — that a folder with no defined meaning becomes an "I'm not sure" bucket — is answered by the folder now having exactly one meaning (application-layer read ports, nothing else). See `cqrs_pattern.md` for the domain-vs-application decision rule. |
+| Nest a repository interface inside ONE query's own subfolder (e.g. `application/queries/get-x/some.repository.ts`) | The per-query subfolder (`{verb}-{noun}/`) holds exactly `{name}.query.ts` + `{name}.handler.ts` (+ spec) — nothing else. A query-repo interface belongs in `application/repositories/` so every consumer reaches it the same way (a shared repo buried in `get-org-members/` forcing `list-my-orgs` to reach across is the original anti-pattern). Audited clean repo-wide 2026-08-20: all 17 per-query subfolders across all 4 services contain only the query/handler pair. |
 
 ---
 
@@ -150,8 +152,16 @@ a framework difference, not an architectural deviation.
 write the code *after* — so the lint gate blocks a misplaced file during generation rather than at a
 later audit.
 
-**Quality gate (whole monorepo):** `npm run check` = `turbo run typecheck lint format:check`
-(read-only). `typecheck` = `tsc --noEmit` per workspace — catches compile errors lint/format miss
+**Quality gate (whole monorepo):** `npm run check` = `turbo run typecheck lint format:check` +
+`npm run check:arch` (read-only).
+
+**`npm run check:arch`** (`scripts/check-repo-placement.cjs`) enforces the repository-placement rule
+across ALL 4 services — not just core-api, which is the only one with the eslint layer boundaries
+above. It exists because this rule previously lived only as prose in two directives that
+contradicted each other for ~6 weeks with nothing to catch it. It also closes a real hole in the
+eslint boundary: `no-restricted-imports` matches the literal import string, so it blocks
+`@/modules/*/application/**` from domain but NOT a relative `../../application/...` — the script
+resolves relative specifiers and catches both. `typecheck` = `tsc --noEmit` per workspace — catches compile errors lint/format miss
 (lint only catches rule violations, not e.g. `TS2322`). Quick fix: `npm run lint:fix` +
 `npm run format`.
 
@@ -174,3 +184,5 @@ later audit.
    - Check it against the 5-main-components table above before committing.
 6. (core-api) Run `npm run lint` before committing — the boundary rules in §Enforcement will block a
    misplaced file / cross-layer import automatically.
+7. Creating a **repository interface**? Do not decide by eye — run `npm run check:arch` (all 4
+   services), and read `cqrs_pattern.md`'s 2-step decision procedure for domain-vs-application.

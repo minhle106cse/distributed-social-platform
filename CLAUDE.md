@@ -47,6 +47,10 @@ Source of truth: `.ai/KNOWLEDGE_INDEX.md` → `docs/01..10` → `readme.md` / `r
 
 - Never `console.log` (use `createLogger`); never `autoincrement()` PK (use UUID); never CORS `['*']`;
   never put infrastructure code in `common/`.
+- Repo interface placement is NOT by eye: write port → `domain/repositories/`; read port →
+  `domain/repositories/` only if a `domain/` file imports it, else `application/repositories/`
+  (`<module>.query-repository.ts`). 2-step rule in `directives/cqrs_pattern.md`, enforced by
+  `npm run check:arch`.
 - Entities: UUID PK, `camelCase` code / `@map("snake_case")` DB, soft delete via `deletedAt`.
 - Run TS via `turbo` (`npm run check`). `docker exec <container>` is only for infra (Postgres, nginx,
   Kafka) during smoke tests — there is no agent sandbox.

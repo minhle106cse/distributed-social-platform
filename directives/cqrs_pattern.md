@@ -81,11 +81,14 @@ export class CoreApiRepoFactory implements IRepoFactory<CoreApiRepos, Prisma.Tra
 A guard, a query handler, or a search hot path has no transaction and must not open one. Those get a
 separate reader implemented on the plain client:
 
-- `IMembershipQueryRepository.findRoleByOrgAndUser` — used by `OrgGuard` (runs *before* any handler).
+- `IMembershipQueryRepository.findRoleByOrgAndUser` (`application/repositories/`) — used by `OrgGuard` (runs *before* any handler).
 - `IOrgRolePermissionReader` — split from the write repo; lives in `domain/` because the domain service
   `OrgPermissionResolver` depends on it (domain must not import `application/`).
-- `ISearchChunkReader.semanticSearch`, `IOutboxDispatchRepository` (claim/mark/reap — publishing does
-  Kafka I/O, so it must never join a caller's transaction).
+- `ISearchChunkReader.semanticSearch` (search-service) — lives in `application/repositories/`, NOT
+  `domain/` (no domain-layer file depends on it, only the application-layer `SearchKnowledgeService`
+  does — see the repository-placement litmus test below).
+- `IOutboxDispatchRepository` (claim/mark/reap — publishing does Kafka I/O, so it must never join a
+  caller's transaction).
 
 ### 3. The handler's TYPE declares what it needs — there is no flag, and no per-handler scope token
 
@@ -212,23 +215,101 @@ By strictly enforcing this folder structure and the "Pure POJO" rule for the CQR
 
 ## Repository-interface & DTO placement — CANONICAL (enforced across ALL services)
 
-> Ruling 2026-07-03 after a cross-service audit found repo interfaces scattered across three different folders (`domain/repositories/`, `application/queries/`, `application/repositories/`). There are now **exactly two** legal locations for a repository interface. `application/repositories/` is **banned** — it existed only as a neutral "I'm not sure" folder and is what caused the drift.
+> **Ruling 2026-08-21 — resolves a 6-week contradiction between THIS file and `folder_structure_sop.md`.**
+> A repository interface has exactly two legal homes, split by LAYER, each in its own `repositories/`
+> folder: `domain/repositories/` (command/write-side ports — Entities via mapper — plus any read port a
+> **domain-layer** class depends on) and `application/repositories/` (read/query ports consumed only by
+> the application layer, returning DTOs/plain shapes, never Entities).
+>
+> **What was wrong before:** `folder_structure_sop.md`'s canonical `src/` tree — the file that calls
+> itself an immutable directive — has listed `application/repositories/  # Query Repository Interfaces
+> (returns DTOs)` since it was written. This file, meanwhile, declared that exact folder **banned** in the
+> 2026-07-03 ruling and routed query-repo interfaces into `application/queries/` instead. Both statements
+> lived in `directives/` at the same time; nothing cross-checked them, and the CODE followed this file.
+> The visible symptom was in every module: `application/queries/` held two different KINDS of thing at
+> once — per-query subfolders (`get-vote-summary/`, `list-bookmarks/`, each a `.query.ts` + `.handler.ts`
+> pair) sitting next to loose port files (`engagement.query-repository.ts`) — so a reader could not tell
+> ports from use-cases without opening files. That is what the owner spotted 2026-08-21.
+>
+> **Settled in favour of `folder_structure_sop.md`** (the canonical structure doc wins a structure
+> question). The 2026-07-03 ruling's actual concern was never the folder itself — it was that
+> `application/repositories/` at the time had NO defined meaning and had become an "I'm not sure where
+> this goes" bucket, which is what let interfaces drift across three locations. That concern is answered
+> by definition, not by deletion: the folder now holds exactly one thing (application-layer read ports)
+> and the domain-vs-application choice is decided by the dependency-direction test below, not by taste.
+>
+> Mechanically: all 10 `*.query-repository.ts` port files moved `application/queries/` →
+> `application/repositories/` across all 4 services (2026-08-21). Response DTOs stay in
+> `application/queries/` next to the handlers that return them, so a port importing its own DTO reads
+> `from '../queries/<module>.dto'`.
 
 **Decision rule — classify a repo by what its result is used for, not by whether it happens to read or write:**
 
 | Repo kind | Location | File | Types |
 |---|---|---|---|
-| **Command / write-side** (entity-based, serves command handlers) | `domain/repositories/` | `<name>.repository.ts` | write-input types **inline** in the file |
+| **Command / write-side** (entity-based, serves command handlers, mutation goes through a mapper when an Entity exists) | `domain/repositories/` | `<name>.repository.ts` | write-input types **inline** in the file |
 | **Projection / write-model** (maintained from events; has NO entity/invariant; any read it exposes is an *internal* pipeline lookup, not an HTTP response) | `domain/repositories/` | `<name>.repository.ts` | input/intermediate types **inline** |
-| **Mixed write + internal-read** (e.g. a search index: written by an event handler, read internally to feed further logic — the read result is an *intermediate*, not the endpoint's response DTO) | `domain/repositories/` | `<name>.repository.ts` | **inline** |
-| **Query-side** (returns a DTO that is handed **straight back** to a query handler / the client) | `application/queries/` | `<module>.query-repository.ts` | response DTO in its **own** `<module>.dto.ts` next to it |
+| **Domain READ port** (a **domain-layer class** — a domain service, not just a query handler — depends on it; domain must not import `application/`, so this is structural, not a style choice) | `domain/repositories/` | `<name>.repository.ts`, interface named `I{X}Reader` | **inline**; impl is `Prisma{X}Reader{Repository}` / `<x>-reader.repository.ts`, **never** `.query-repository.ts` (see `naming_conventions.md` §4) |
+| **Application READ port** (only an `application/`-layer class consumes it — a query handler, or an application service like `SearchKnowledgeService` — nothing in `domain/` imports it) | `application/repositories/` | `<module>.query-repository.ts` | response DTO in its **own** `<module>.dto.ts` next to it, OR (if the result is an intermediate feeding further application-layer computation, not a straight response) inline in the query-repo file |
+
+### The decision procedure — answer in this ORDER, stop at the first Yes
+
+Two steps, and the order matters. Asking only step 2 gets `IKeywordSearchRepository` wrong (found
+2026-08-21 while mechanizing this rule: the single-step "dependency direction" phrasing that briefly
+lived here contradicted the "Mixed write + internal-read" row above, on that exact file).
+
+1. **Does the interface have ANY method that mutates state** (`save`, `insert`, `replaceForItem`,
+   `indexItem`, `upsert`, `delete`…)? → **`domain/repositories/`**. A write port is the domain's
+   persistence contract, and that is true no matter who assembles it — most write ports are referenced
+   by the service's repos-factory in `infrastructure/`, not by any `domain/` file, so step 2 alone would
+   wrongly evict all 15 of them. A mixed write+read port (a search index: written by an event handler,
+   read back internally) is a write port by this step — `IKeywordSearchRepository` stays in `domain/`.
+2. **Read-only port. Does any file under `domain/` import it?**
+   - **Yes → `domain/repositories/`**, named `I{X}Reader`, regardless of how "query-shaped" it looks.
+     This is structural, not stylistic: Clean Architecture's Dependency Rule makes domain the innermost
+     layer, so a domain class depending on an application-layer interface is not fixable by relocating
+     the file — only by not needing the dependency. Example: `IOrgRolePermissionReader`.
+   - **No → `application/repositories/`**, named `I{X}QueryRepository`, file `<module>.query-repository.ts`.
+     Example: `ISearchChunkReader`, and all 9 `*QueryRepository` ports.
+
+**This is machine-checked — `npm run check:arch` (`scripts/check-repo-placement.cjs`), part of
+`npm run check`.** The script does NOT guess at steps 1–2 (that is a design judgement; a heuristic
+that misfires just teaches people to ignore the gate). It enforces the consequences, which are
+deterministic: a `*.query-repository.ts` anywhere but `application/repositories/` fails; that suffix
+inside `domain/repositories/` fails; a non-port file inside `application/repositories/` fails; anything
+under `domain/**` importing `application/**` fails — **including relative-path imports, which the
+eslint `no-restricted-imports` boundary does not catch** (it only matches the `@/modules/*/application/**`
+alias form); and a stray file inside a per-query subfolder fails. Each check was verified to actually
+fire by injecting the violation, not just by passing on clean code.
+
+**Worked examples (both audited 2026-08-20):**
+- `IOrgRolePermissionReader` (core-api tenant module) — `OrgPermissionResolver`, a **domain service**,
+  depends on it directly (`domain/services/org-permission-resolver.ts`) → stays in `domain/repositories/`.
+  Its Prisma impl was wrongly named `PrismaOrgRolePermissionQueryRepository`/`*.query-repository.ts` (that
+  suffix implies an application-layer port in `application/repositories/`) — renamed to `PrismaOrgRolePermissionReaderRepository`
+  (`prisma-org-role-permission-reader.repository.ts`); the domain interface itself did not move.
+- `ISearchChunkReader` (search-service) — only `SearchKnowledgeService` (`application/queries/`, an
+  Application Service per `naming_conventions.md` §11 since search-service has no CommandBus/QueryBus)
+  consumes it, feeding RRF fusion. No `domain/` file imports it. Moved from
+  `domain/repositories/search-chunk.repository.ts` to `application/repositories/search-chunk.query-repository.ts`
+  — this one's result IS an intermediate (feeds fusion, not handed straight to the client as
+  `SearchResult`), so its types stayed inline in the query-repo file rather than getting a separate
+  `.dto.ts` (matches the "intermediate vs straight-out response" split already established below).
 
 **Rules:**
-- A query-repo interface shared by more than one query lives at the **`application/queries/` level**, NOT inside one query's sub-folder (a shared repo buried in `get-org-members/` forcing `list-my-orgs` to reach across is the anti-pattern that was fixed).
-- **Response DTOs are FLAT — one `<name>.dto.ts` per query-repo, at the `application/queries/` level, NOT nested per-query** (`get-me/get-me.dto.ts`, `get-org-members/get-org-members.dto.ts` were the anti-pattern; flattened to `user.dto.ts`, `membership.dto.ts` 2026-07-03). The DTO file is named to match its query-repo (`membership.query-repository.ts` ↔ `membership.dto.ts`, `wallet.query-repository.ts` ↔ `wallet.dto.ts`). All DTOs a given query-repo returns go in that one file, even if consumed by several query handlers (`membership.dto.ts` holds both `MemberDto` and `MyOrgDto`). Query `.query.ts` + `.handler.ts` stay in their per-query sub-folder; only the DTO comes up a level. (Request/input DTOs are a different artifact — they live in `presentation/schemas/` as Zod-schema types and are out of scope for this rule.)
+- A query-repo interface shared by more than one query lives in **`application/repositories/`**, NOT inside one query's sub-folder (a shared repo buried in `get-org-members/` forcing `list-my-orgs` to reach across is the anti-pattern that was fixed) and no longer loose in `application/queries/` either (2026-08-21).
+- **Response DTOs stay in `application/queries/` (they belong to the use-case, not the port) and are FLAT — one `<name>.dto.ts` per query-repo, at the `application/queries/` level, NOT nested per-query** (`get-me/get-me.dto.ts`, `get-org-members/get-org-members.dto.ts` were the anti-pattern; flattened to `user.dto.ts`, `membership.dto.ts` 2026-07-03). The DTO file is named to match its query-repo, which now sits one folder over in `application/repositories/` (`repositories/membership.query-repository.ts` ↔ `queries/membership.dto.ts`, `repositories/wallet.query-repository.ts` ↔ `queries/wallet.dto.ts`) — so a port importing its own DTO reads `from '../queries/<module>.dto'`. All DTOs a given query-repo returns go in that one file, even if consumed by several query handlers (`membership.dto.ts` holds both `MemberDto` and `MyOrgDto`). Query `.query.ts` + `.handler.ts` stay in their per-query sub-folder; only the DTO comes up a level. (Request/input DTOs are a different artifact — they live in `presentation/schemas/` as Zod-schema types and are out of scope for this rule.)
 - **Response DTOs get their own `.dto.ts` file** (query side). **Write-input/intermediate types stay inline** in the domain repo file (mirrors `InsertNotificationRow` in `notification.repository.ts`). Do NOT invert this.
-- The deciding question for a repo that both reads and writes: **"does its read result go straight out as the query response, or is it an intermediate step inside a handler/service?"** Straight-out → `application/queries/`. Intermediate → `domain/repositories/`. (Examples: `space_followers.findFollowerIds` feeds fan-out → domain; `ISearchChunkReader.semanticSearch` feeds RRF fusion → domain (read port, split from the write repo in ADR-0001); `INotificationQueryRepository.findByRecipient` → returns `NotificationDto[]` to the query handler → `application/queries/`.)
-- **NEVER** create `application/repositories/`. (Historical note: auth-service originally put query-repos there; migrated 2026-07-03.)
+- The deciding question for a repo that both reads and writes: **"does its read result go straight out as the query response, or is it an intermediate step inside a handler/service?"** Straight-out → `application/repositories/`. Intermediate → usually `domain/repositories/`, EXCEPT when nothing under `domain/` actually imports the interface — then it belongs in `application/repositories/` regardless of being an intermediate (dependency direction wins over "is this conceptually a query", see the sharper litmus test above). (Examples: `space_followers.findFollowerIds` feeds fan-out, consumed inside a `domain`-adjacent event handler → domain; `ISearchChunkReader.semanticSearch` feeds RRF fusion but is consumed ONLY by the application-layer `SearchKnowledgeService` → `application/repositories/` (moved 2026-08-20 — this was the wrong example in this line before that date, corrected after an audit found no domain consumer); `INotificationQueryRepository.findByRecipient` → returns `NotificationDto[]` to the query handler → `application/repositories/`.)
+- **Application-layer read ports live in `application/repositories/`, one folder per module** — NOT loose
+  inside `application/queries/` (changed 2026-08-21, see the ruling at the top of this section; the old
+  "NEVER create `application/repositories/`" rule from 2026-07-03 is superseded, not merely relaxed).
+  `application/queries/` now holds ONLY use-cases and their response DTOs: per-query subfolders
+  (`{verb}-{noun}/` with `.query.ts` + `.handler.ts`) plus the flat `<module>.dto.ts` files.
+- **Still NEVER** put a repository interface loose in `application/` itself, or nested inside one query's
+  own subfolder — the two `repositories/` folders (domain + application) are the only legal homes, and
+  the reason the 2026-07-03 ban existed (a folder with no defined meaning invites drift) still applies to
+  any third location.
 
 ## A command that needs to read mid-flight reads through the domain/write repo, NEVER through a query-repo
 
