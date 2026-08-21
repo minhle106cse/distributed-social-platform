@@ -24,4 +24,16 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'off',
     },
   },
+  // Build scripts are plain Node CommonJS, not library source: they legitimately use
+  // `process`, `require`, `__dirname`. Without this the shared `eslint.configs.recommended`
+  // (browser-ish default globals) flagged `process` as undefined in scripts/gen-proto.js —
+  // 1 error that kept `npm run check` red repo-wide even when every service was clean
+  // (found 2026-08-21 while driving the monorepo lint count from 261 to 0).
+  {
+    files: ['scripts/**/*.js', 'scripts/**/*.cjs'],
+    languageOptions: {
+      globals: { process: 'readonly', require: 'readonly', __dirname: 'readonly', module: 'writable' },
+    },
+  },
+
 );

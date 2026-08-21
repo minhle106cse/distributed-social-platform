@@ -98,7 +98,12 @@ export class CircuitBreaker {
     this.failureCount++
     this.lastFailureTime = Date.now()
     this.logger.warn(
-      { context: LogContext.CIRCUIT_BREAKER, name: this.name, err, failureCount: this.failureCount },
+      {
+        context: LogContext.CIRCUIT_BREAKER,
+        name: this.name,
+        err,
+        failureCount: this.failureCount,
+      },
       'Call failed',
     )
     if (this.failureCount >= this.threshold && this.state !== 'open') {

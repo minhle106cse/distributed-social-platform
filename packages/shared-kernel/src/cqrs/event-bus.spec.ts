@@ -24,7 +24,9 @@ describe('EventBus', () => {
   })
 
   it('nên gọi mọi handler đã register cho đúng tên event', async () => {
-    const handler: jest.Mocked<IEventHandler<IEvent>> = { handle: jest.fn().mockResolvedValue(undefined) }
+    const handler: jest.Mocked<IEventHandler<IEvent>> = {
+      handle: jest.fn().mockResolvedValue(undefined),
+    }
     bus.register('TestEvent', handler)
 
     bus.publish(makeEvent('TestEvent'))
@@ -44,7 +46,9 @@ describe('EventBus', () => {
   })
 
   it('publish một event CÓ handler thì KHÔNG log warn "no handler"', async () => {
-    const handler: jest.Mocked<IEventHandler<IEvent>> = { handle: jest.fn().mockResolvedValue(undefined) }
+    const handler: jest.Mocked<IEventHandler<IEvent>> = {
+      handle: jest.fn().mockResolvedValue(undefined),
+    }
     bus.register('TestEvent', handler)
 
     bus.publish(makeEvent('TestEvent'))
@@ -54,8 +58,12 @@ describe('EventBus', () => {
   })
 
   it('nên hỗ trợ nhiều handler cho cùng 1 event name', async () => {
-    const handler1: jest.Mocked<IEventHandler<IEvent>> = { handle: jest.fn().mockResolvedValue(undefined) }
-    const handler2: jest.Mocked<IEventHandler<IEvent>> = { handle: jest.fn().mockResolvedValue(undefined) }
+    const handler1: jest.Mocked<IEventHandler<IEvent>> = {
+      handle: jest.fn().mockResolvedValue(undefined),
+    }
+    const handler2: jest.Mocked<IEventHandler<IEvent>> = {
+      handle: jest.fn().mockResolvedValue(undefined),
+    }
     bus.register('TestEvent', handler1)
     bus.register('TestEvent', handler2)
 
@@ -70,7 +78,9 @@ describe('EventBus', () => {
     const failing: jest.Mocked<IEventHandler<IEvent>> = {
       handle: jest.fn().mockRejectedValue(new Error('handler boom')),
     }
-    const healthy: jest.Mocked<IEventHandler<IEvent>> = { handle: jest.fn().mockResolvedValue(undefined) }
+    const healthy: jest.Mocked<IEventHandler<IEvent>> = {
+      handle: jest.fn().mockResolvedValue(undefined),
+    }
     bus.register('TestEvent', failing)
     bus.register('TestEvent', healthy)
 

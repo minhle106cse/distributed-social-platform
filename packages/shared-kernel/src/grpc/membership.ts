@@ -5,7 +5,7 @@
 // source: membership.proto
 
 /* eslint-disable */
-import { BinaryReader, BinaryWriter } from "@bufbuild/protobuf/wire";
+import { BinaryReader, BinaryWriter } from '@bufbuild/protobuf/wire'
 import {
   type CallOptions,
   type ChannelCredentials,
@@ -17,71 +17,71 @@ import {
   type Metadata,
   type ServiceError,
   type UntypedServiceImplementation,
-} from "@grpc/grpc-js";
+} from '@grpc/grpc-js'
 
-export const protobufPackage = "cortex.tenant";
+export const protobufPackage = 'cortex.tenant'
 
 export interface CheckMembershipRequest {
-  orgId: string;
-  userId: string;
+  orgId: string
+  userId: string
 }
 
 export interface CheckMembershipResponse {
-  isMember: boolean;
+  isMember: boolean
   /**
    * Resolved org permissions for this (org_id, user_id) — empty if not a
    * member. Same resolution rule as core-api's OrgGuard (OWNER implicit-all,
    * other roles read from org_role_permissions), computed server-side so
    * callers never need to know role names, only permission codes.
    */
-  permissions: string[];
+  permissions: string[]
 }
 
 function createBaseCheckMembershipRequest(): CheckMembershipRequest {
-  return { orgId: "", userId: "" };
+  return { orgId: '', userId: '' }
 }
 
 export const CheckMembershipRequest: MessageFns<CheckMembershipRequest> = {
   encode(message: CheckMembershipRequest, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
-    if (message.orgId !== "") {
-      writer.uint32(10).string(message.orgId);
+    if (message.orgId !== '') {
+      writer.uint32(10).string(message.orgId)
     }
-    if (message.userId !== "") {
-      writer.uint32(18).string(message.userId);
+    if (message.userId !== '') {
+      writer.uint32(18).string(message.userId)
     }
-    return writer;
+    return writer
   },
 
   decode(input: BinaryReader | Uint8Array, length?: number): CheckMembershipRequest {
-    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
-    const end = length === undefined ? reader.len : reader.pos + length;
-    const message = createBaseCheckMembershipRequest();
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input)
+    const end = length === undefined ? reader.len : reader.pos + length
+    const message = createBaseCheckMembershipRequest()
     while (reader.pos < end) {
-      const tag = reader.uint32();
+      const tag = reader.uint32()
       switch (tag >>> 3) {
         case 1: {
           if (tag !== 10) {
-            break;
+            break
           }
 
-          message.orgId = reader.string();
-          continue;
+          message.orgId = reader.string()
+          continue
         }
         case 2: {
           if (tag !== 18) {
-            break;
+            break
           }
 
-          message.userId = reader.string();
-          continue;
+          message.userId = reader.string()
+          continue
         }
       }
       if ((tag & 7) === 4 || tag === 0) {
-        break;
+        break
       }
-      reader.skip(tag & 7);
+      reader.skip(tag & 7)
     }
-    return message;
+    return message
   },
 
   fromJSON(object: any): CheckMembershipRequest {
@@ -89,83 +89,90 @@ export const CheckMembershipRequest: MessageFns<CheckMembershipRequest> = {
       orgId: isSet(object.orgId)
         ? globalThis.String(object.orgId)
         : isSet(object.org_id)
-        ? globalThis.String(object.org_id)
-        : "",
+          ? globalThis.String(object.org_id)
+          : '',
       userId: isSet(object.userId)
         ? globalThis.String(object.userId)
         : isSet(object.user_id)
-        ? globalThis.String(object.user_id)
-        : "",
-    };
+          ? globalThis.String(object.user_id)
+          : '',
+    }
   },
 
   toJSON(message: CheckMembershipRequest): unknown {
-    const obj: any = {};
-    if (message.orgId !== "") {
-      obj.orgId = message.orgId;
+    const obj: any = {}
+    if (message.orgId !== '') {
+      obj.orgId = message.orgId
     }
-    if (message.userId !== "") {
-      obj.userId = message.userId;
+    if (message.userId !== '') {
+      obj.userId = message.userId
     }
-    return obj;
+    return obj
   },
 
-  create<I extends Exact<DeepPartial<CheckMembershipRequest>, I>>(base?: I): CheckMembershipRequest {
-    return CheckMembershipRequest.fromPartial(base ?? ({} as any));
+  create<I extends Exact<DeepPartial<CheckMembershipRequest>, I>>(
+    base?: I,
+  ): CheckMembershipRequest {
+    return CheckMembershipRequest.fromPartial(base ?? ({} as any))
   },
-  fromPartial<I extends Exact<DeepPartial<CheckMembershipRequest>, I>>(object: I): CheckMembershipRequest {
-    const message = createBaseCheckMembershipRequest();
-    message.orgId = object.orgId ?? "";
-    message.userId = object.userId ?? "";
-    return message;
+  fromPartial<I extends Exact<DeepPartial<CheckMembershipRequest>, I>>(
+    object: I,
+  ): CheckMembershipRequest {
+    const message = createBaseCheckMembershipRequest()
+    message.orgId = object.orgId ?? ''
+    message.userId = object.userId ?? ''
+    return message
   },
-};
+}
 
 function createBaseCheckMembershipResponse(): CheckMembershipResponse {
-  return { isMember: false, permissions: [] };
+  return { isMember: false, permissions: [] }
 }
 
 export const CheckMembershipResponse: MessageFns<CheckMembershipResponse> = {
-  encode(message: CheckMembershipResponse, writer: BinaryWriter = new BinaryWriter()): BinaryWriter {
+  encode(
+    message: CheckMembershipResponse,
+    writer: BinaryWriter = new BinaryWriter(),
+  ): BinaryWriter {
     if (message.isMember !== false) {
-      writer.uint32(8).bool(message.isMember);
+      writer.uint32(8).bool(message.isMember)
     }
     for (const v of message.permissions) {
-      writer.uint32(18).string(v!);
+      writer.uint32(18).string(v!)
     }
-    return writer;
+    return writer
   },
 
   decode(input: BinaryReader | Uint8Array, length?: number): CheckMembershipResponse {
-    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
-    const end = length === undefined ? reader.len : reader.pos + length;
-    const message = createBaseCheckMembershipResponse();
+    const reader = input instanceof BinaryReader ? input : new BinaryReader(input)
+    const end = length === undefined ? reader.len : reader.pos + length
+    const message = createBaseCheckMembershipResponse()
     while (reader.pos < end) {
-      const tag = reader.uint32();
+      const tag = reader.uint32()
       switch (tag >>> 3) {
         case 1: {
           if (tag !== 8) {
-            break;
+            break
           }
 
-          message.isMember = reader.bool();
-          continue;
+          message.isMember = reader.bool()
+          continue
         }
         case 2: {
           if (tag !== 18) {
-            break;
+            break
           }
 
-          message.permissions.push(reader.string());
-          continue;
+          message.permissions.push(reader.string())
+          continue
         }
       }
       if ((tag & 7) === 4 || tag === 0) {
-        break;
+        break
       }
-      reader.skip(tag & 7);
+      reader.skip(tag & 7)
     }
-    return message;
+    return message
   },
 
   fromJSON(object: any): CheckMembershipResponse {
@@ -173,35 +180,39 @@ export const CheckMembershipResponse: MessageFns<CheckMembershipResponse> = {
       isMember: isSet(object.isMember)
         ? globalThis.Boolean(object.isMember)
         : isSet(object.is_member)
-        ? globalThis.Boolean(object.is_member)
-        : false,
+          ? globalThis.Boolean(object.is_member)
+          : false,
       permissions: globalThis.Array.isArray(object?.permissions)
         ? object.permissions.map((e: any) => globalThis.String(e))
         : [],
-    };
+    }
   },
 
   toJSON(message: CheckMembershipResponse): unknown {
-    const obj: any = {};
+    const obj: any = {}
     if (message.isMember !== false) {
-      obj.isMember = message.isMember;
+      obj.isMember = message.isMember
     }
     if (message.permissions?.length) {
-      obj.permissions = message.permissions;
+      obj.permissions = message.permissions
     }
-    return obj;
+    return obj
   },
 
-  create<I extends Exact<DeepPartial<CheckMembershipResponse>, I>>(base?: I): CheckMembershipResponse {
-    return CheckMembershipResponse.fromPartial(base ?? ({} as any));
+  create<I extends Exact<DeepPartial<CheckMembershipResponse>, I>>(
+    base?: I,
+  ): CheckMembershipResponse {
+    return CheckMembershipResponse.fromPartial(base ?? ({} as any))
   },
-  fromPartial<I extends Exact<DeepPartial<CheckMembershipResponse>, I>>(object: I): CheckMembershipResponse {
-    const message = createBaseCheckMembershipResponse();
-    message.isMember = object.isMember ?? false;
-    message.permissions = object.permissions?.map((e) => e) || [];
-    return message;
+  fromPartial<I extends Exact<DeepPartial<CheckMembershipResponse>, I>>(
+    object: I,
+  ): CheckMembershipResponse {
+    const message = createBaseCheckMembershipResponse()
+    message.isMember = object.isMember ?? false
+    message.permissions = object.permissions?.map((e) => e) || []
+    return message
   },
-};
+}
 
 /**
  * Internal service-to-service contract, NOT public API. Called by services
@@ -211,77 +222,84 @@ export const CheckMembershipResponse: MessageFns<CheckMembershipResponse> = {
  * Secured by shared-secret metadata (x-internal-secret), same convention as
  * org-provisioning.proto.
  */
-export type MembershipVerificationService = typeof MembershipVerificationService;
+export type MembershipVerificationService = typeof MembershipVerificationService
 export const MembershipVerificationService = {
   checkMembership: {
-    path: "/cortex.tenant.MembershipVerification/CheckMembership" as const,
+    path: '/cortex.tenant.MembershipVerification/CheckMembership' as const,
     requestStream: false as const,
     responseStream: false as const,
     requestSerialize: (value: CheckMembershipRequest): Buffer =>
       Buffer.from(CheckMembershipRequest.encode(value).finish()),
-    requestDeserialize: (value: Buffer): CheckMembershipRequest => CheckMembershipRequest.decode(value),
+    requestDeserialize: (value: Buffer): CheckMembershipRequest =>
+      CheckMembershipRequest.decode(value),
     responseSerialize: (value: CheckMembershipResponse): Buffer =>
       Buffer.from(CheckMembershipResponse.encode(value).finish()),
-    responseDeserialize: (value: Buffer): CheckMembershipResponse => CheckMembershipResponse.decode(value),
+    responseDeserialize: (value: Buffer): CheckMembershipResponse =>
+      CheckMembershipResponse.decode(value),
   },
-} as const;
+} as const
 
 export interface MembershipVerificationServer extends UntypedServiceImplementation {
-  checkMembership: handleUnaryCall<CheckMembershipRequest, CheckMembershipResponse>;
+  checkMembership: handleUnaryCall<CheckMembershipRequest, CheckMembershipResponse>
 }
 
 export interface MembershipVerificationClient extends Client {
   checkMembership(
     request: CheckMembershipRequest,
     callback: (error: ServiceError | null, response: CheckMembershipResponse) => void,
-  ): ClientUnaryCall;
+  ): ClientUnaryCall
   checkMembership(
     request: CheckMembershipRequest,
     metadata: Metadata,
     callback: (error: ServiceError | null, response: CheckMembershipResponse) => void,
-  ): ClientUnaryCall;
+  ): ClientUnaryCall
   checkMembership(
     request: CheckMembershipRequest,
     metadata: Metadata,
     options: Partial<CallOptions>,
     callback: (error: ServiceError | null, response: CheckMembershipResponse) => void,
-  ): ClientUnaryCall;
+  ): ClientUnaryCall
 }
 
 export const MembershipVerificationClient = makeGenericClientConstructor(
   MembershipVerificationService,
-  "cortex.tenant.MembershipVerification",
+  'cortex.tenant.MembershipVerification',
 ) as unknown as {
   new (
     address: string,
     credentials: ChannelCredentials,
     options?: Partial<ClientOptions>,
-  ): MembershipVerificationClient;
-  service: typeof MembershipVerificationService;
-  serviceName: string;
-};
+  ): MembershipVerificationClient
+  service: typeof MembershipVerificationService
+  serviceName: string
+}
 
-type Builtin = Date | Function | Uint8Array | string | number | boolean | undefined;
+type Builtin = Date | Function | Uint8Array | string | number | boolean | undefined
 
-export type DeepPartial<T> = T extends Builtin ? T
-  : T extends globalThis.Array<infer U> ? globalThis.Array<DeepPartial<U>>
-  : T extends ReadonlyArray<infer U> ? ReadonlyArray<DeepPartial<U>>
-  : T extends {} ? { [K in keyof T]?: DeepPartial<T[K]> }
-  : Partial<T>;
+export type DeepPartial<T> = T extends Builtin
+  ? T
+  : T extends globalThis.Array<infer U>
+    ? globalThis.Array<DeepPartial<U>>
+    : T extends ReadonlyArray<infer U>
+      ? ReadonlyArray<DeepPartial<U>>
+      : T extends {}
+        ? { [K in keyof T]?: DeepPartial<T[K]> }
+        : Partial<T>
 
-type KeysOfUnion<T> = T extends T ? keyof T : never;
-export type Exact<P, I extends P> = P extends Builtin ? P
-  : P & { [K in keyof P]: Exact<P[K], I[K]> } & { [K in Exclude<keyof I, KeysOfUnion<P>>]: never };
+type KeysOfUnion<T> = T extends T ? keyof T : never
+export type Exact<P, I extends P> = P extends Builtin
+  ? P
+  : P & { [K in keyof P]: Exact<P[K], I[K]> } & { [K in Exclude<keyof I, KeysOfUnion<P>>]: never }
 
 function isSet(value: any): boolean {
-  return value !== null && value !== undefined;
+  return value !== null && value !== undefined
 }
 
 export interface MessageFns<T> {
-  encode(message: T, writer?: BinaryWriter): BinaryWriter;
-  decode(input: BinaryReader | Uint8Array, length?: number): T;
-  fromJSON(object: any): T;
-  toJSON(message: T): unknown;
-  create<I extends Exact<DeepPartial<T>, I>>(base?: I): T;
-  fromPartial<I extends Exact<DeepPartial<T>, I>>(object: I): T;
+  encode(message: T, writer?: BinaryWriter): BinaryWriter
+  decode(input: BinaryReader | Uint8Array, length?: number): T
+  fromJSON(object: any): T
+  toJSON(message: T): unknown
+  create<I extends Exact<DeepPartial<T>, I>>(base?: I): T
+  fromPartial<I extends Exact<DeepPartial<T>, I>>(object: I): T
 }

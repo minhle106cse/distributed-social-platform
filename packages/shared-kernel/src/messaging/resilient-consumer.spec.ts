@@ -10,9 +10,11 @@ function buildConsumer(): jest.Mocked<MinimalConsumer> & {
   const consumer = {
     connect: jest.fn().mockResolvedValue(undefined),
     subscribe: jest.fn().mockResolvedValue(undefined),
-    run: jest.fn().mockImplementation(async (config: { eachMessage: typeof consumer.eachMessage }) => {
-      consumer.eachMessage = config.eachMessage
-    }),
+    run: jest
+      .fn()
+      .mockImplementation(async (config: { eachMessage: typeof consumer.eachMessage }) => {
+        consumer.eachMessage = config.eachMessage
+      }),
     commitOffsets: jest.fn().mockResolvedValue(undefined),
     disconnect: jest.fn().mockResolvedValue(undefined),
   } as unknown as jest.Mocked<MinimalConsumer> & {
@@ -82,15 +84,20 @@ describe('ResilientEventConsumer', () => {
       expect(consumer.connect).toHaveBeenCalledTimes(1)
       expect(consumer.subscribe).toHaveBeenCalledWith({ topic: 'topic-a', fromBeginning: false })
       expect(consumer.subscribe).toHaveBeenCalledWith({ topic: 'topic-b', fromBeginning: false })
-      expect(consumer.run).toHaveBeenCalledWith(
-        expect.objectContaining({ autoCommit: false }),
-      )
+      expect(consumer.run).toHaveBeenCalledWith(expect.objectContaining({ autoCommit: false }))
     })
   })
 
   describe('stop()', () => {
     it('nên disconnect consumer', async () => {
-      const runner = new ResilientEventConsumer({ consumer, topics: [], router, deadLetter, logger, sleep })
+      const runner = new ResilientEventConsumer({
+        consumer,
+        topics: [],
+        router,
+        deadLetter,
+        logger,
+        sleep,
+      })
       await runner.stop()
       expect(consumer.disconnect).toHaveBeenCalledTimes(1)
     })
@@ -98,7 +105,14 @@ describe('ResilientEventConsumer', () => {
 
   describe('eachMessage — tombstone (value rỗng)', () => {
     it('nên commit ngay và bỏ qua, không gọi router/deadLetter', async () => {
-      const runner = new ResilientEventConsumer({ consumer, topics: ['t'], router, deadLetter, logger, sleep })
+      const runner = new ResilientEventConsumer({
+        consumer,
+        topics: ['t'],
+        router,
+        deadLetter,
+        logger,
+        sleep,
+      })
       await runner.start()
 
       await consumer.eachMessage!(buildPayload(null))
@@ -112,7 +126,14 @@ describe('ResilientEventConsumer', () => {
 
   describe('eachMessage — poison pill', () => {
     it('JSON không parse được → dead-letter reason poison-pill, rồi vẫn commit', async () => {
-      const runner = new ResilientEventConsumer({ consumer, topics: ['t'], router, deadLetter, logger, sleep })
+      const runner = new ResilientEventConsumer({
+        consumer,
+        topics: ['t'],
+        router,
+        deadLetter,
+        logger,
+        sleep,
+      })
       await runner.start()
 
       await consumer.eachMessage!(buildPayload('{not-json'))
@@ -124,7 +145,14 @@ describe('ResilientEventConsumer', () => {
     })
 
     it('JSON hợp lệ nhưng thiếu id/type → dead-letter reason poison-pill (envelope invalid, retry vô ích)', async () => {
-      const runner = new ResilientEventConsumer({ consumer, topics: ['t'], router, deadLetter, logger, sleep })
+      const runner = new ResilientEventConsumer({
+        consumer,
+        topics: ['t'],
+        router,
+        deadLetter,
+        logger,
+        sleep,
+      })
       await runner.start()
 
       await consumer.eachMessage!(buildPayload(JSON.stringify({ specversion: '1.0' })))
@@ -137,9 +165,20 @@ describe('ResilientEventConsumer', () => {
 
   describe('eachMessage — handler thành công', () => {
     it('nên route đúng 1 lần, commit, không dead-letter, không sleep', async () => {
-      const handler = { eventType: 'KNOWLEDGE_PUBLISHED', idempotency: 'natural-key' as const, handle: jest.fn().mockResolvedValue(undefined) }
+      const handler = {
+        eventType: 'KNOWLEDGE_PUBLISHED',
+        idempotency: 'natural-key' as const,
+        handle: jest.fn().mockResolvedValue(undefined),
+      }
       router.register(handler)
-      const runner = new ResilientEventConsumer({ consumer, topics: ['t'], router, deadLetter, logger, sleep })
+      const runner = new ResilientEventConsumer({
+        consumer,
+        topics: ['t'],
+        router,
+        deadLetter,
+        logger,
+        sleep,
+      })
       await runner.start()
 
       await consumer.eachMessage!(buildPayload(validEventJson()))

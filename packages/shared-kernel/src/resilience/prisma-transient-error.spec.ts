@@ -51,7 +51,9 @@ describe('makePrismaTransientErrorHelpers', () => {
       expect(isTransient(occConflict)).toBe(true)
       expect(() => record(occConflict, true)).not.toThrow()
 
-      const metric = await register.getSingleMetricAsString(`${metricPrefix}_db_transient_error_total`)
+      const metric = await register.getSingleMetricAsString(
+        `${metricPrefix}_db_transient_error_total`,
+      )
       expect(metric).toContain('code="A2001"')
       expect(metric).toContain('retried="true"')
     })

@@ -85,10 +85,7 @@ describe('log redaction (root logger secret masking)', () => {
   it('masks a secret nested 3+ levels deep, arbitrary depth', () => {
     const { logger, lines } = capture()
 
-    logger.info(
-      { a: { b: { c: { d: { refreshToken: 'rt_secret', keep: 'me' } } } } },
-      'x',
-    )
+    logger.info({ a: { b: { c: { d: { refreshToken: 'rt_secret', keep: 'me' } } } } }, 'x')
 
     const [line] = lines()
     expect(line.a.b.c.d.refreshToken).toBe('[REDACTED]')
@@ -98,7 +95,15 @@ describe('log redaction (root logger secret masking)', () => {
   it('masks secrets nested inside arrays of objects', () => {
     const { logger, lines } = capture()
 
-    logger.info({ users: [{ email: 'a@b.com', password: 'p1' }, { email: 'c@d.com', password: 'p2' }] }, 'x')
+    logger.info(
+      {
+        users: [
+          { email: 'a@b.com', password: 'p1' },
+          { email: 'c@d.com', password: 'p2' },
+        ],
+      },
+      'x',
+    )
 
     const [line] = lines()
     expect(line.users[0].password).toBe('[REDACTED]')
