@@ -64,5 +64,4 @@ export interface ISagaCommandHandler<C extends ICommand = any, R = any> {
 }
 
 export type ICommandHandler<C extends ICommand = any, R = any> =
-  | ITransactionalCommandHandler<C, R, any>
-  | ISagaCommandHandler<C, R>
+  ITransactionalCommandHandler<C, R, any> | ISagaCommandHandler<C, R>
