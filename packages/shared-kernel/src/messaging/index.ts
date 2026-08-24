@@ -26,7 +26,6 @@ export * from './events/index.js'
 export * from './routing/index.js'
 
 // Ports/interfaces — transport-agnostic contracts
-export * from './interfaces/message-publisher.interface.js'
 export * from './interfaces/event-handler.interface.js'
 export * from './interfaces/dead-letter.interface.js'
 
@@ -38,3 +37,4 @@ export * from './kafka-shapes/minimal-producer.js'
 export * from './event-router.js'
 export * from './resilient-consumer.js'
 export * from './dlq-replay-consumer.js'
+export * from './interfaces/message-publisher.interface.js'

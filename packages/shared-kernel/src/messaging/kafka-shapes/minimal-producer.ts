@@ -1,5 +1,6 @@
 /** Structural subset of a kafkajs Producer — raw send, not the CloudEvent-level
- * `IMessagePublisher` port. The shape itself has nothing DLQ-specific (that's
+ * publisher port (`IMessagePublisher`, which lives in core-api's common/ since
+ * 2026-08-24 — it had no consumer outside that service). The shape itself has nothing DLQ-specific (that's
  * why it's not named MinimalDlqProducer) — today its one caller is
  * `DlqReplayConsumer`, which needs raw byte-for-byte send (it may be
  * republishing the exact poison-pill payload that failed to parse as a

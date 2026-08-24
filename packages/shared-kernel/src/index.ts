@@ -69,6 +69,32 @@ export {
   type MembershipVerificationServer,
   MembershipVerificationClient,
 } from './grpc/membership.js'
+// gRPC — core-api -> search-service, one paid RAG query for the AI-Query Saga
+// (Phase 5b). Named (not `export *`) for the same ts-proto helper-name collision
+// reason as membership.js above.
+export {
+  type RagQueryRequest,
+  type RagQueryResponse,
+  type RagSource,
+  type RagChunk,
+  RagOutcome,
+  RagQueryService,
+  type RagQueryServer,
+  RagQueryClient,
+} from './grpc/ai-query.js'
+// Transactional Outbox — the contract (write port + dispatch port + row shape)
+// and the framework-free publish loop. A service supplies the storage adapter,
+// the scheduler and the metrics; everything identical between services is here.
+// Extracted from core-api 2026-08-24 — see folder_structure_sop.md
+// § Where An Abstraction Lives.
+export * from './outbox/outbox.ports.js'
+export * from './outbox/outbox-publisher.js'
+// gRPC — hand-written client half of membership.proto, shared by every service
+// that has no Membership table of its own (notification, search). Promoted from
+// two byte-identical per-service copies 2026-08-24 — reason B, see
+// folder_structure_sop.md § Where An Abstraction Lives.
+export { MembershipVerifier } from './grpc/membership-verifier.js'
+export type { MembershipCheckResult, BreakerCall } from './grpc/membership-verifier.js'
 // gRPC — shared M2M auth convention (shared-secret metadata), reused by every
 // internal gRPC server/client so the wire format can't drift between them.
 export * from './grpc/internal-grpc-auth.js'
