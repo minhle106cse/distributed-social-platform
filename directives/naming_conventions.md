@@ -84,6 +84,15 @@ obvious from how it's used/generated).
 - A separate query side (CQRS, returning DTOs instead of Entities): the `.query-repository.ts`
   suffix / `I{Entity}QueryRepository`
 
+**⚠️ A `Prisma*Repository` class does NOT always have an interface (2026-08-24).** The rule above
+describes the standard case — a repository that is a real port. When EVERY consumer of a repository
+lives inside `infrastructure/` there is no port and no interface, and the class keeps the
+`Prisma{X}Repository` name anyway: it is still a repository, just not a ported one. Live examples:
+`PrismaOutboxRepository` (consumers: PollingPublisher/Reaper/Cleanup/MetricsReporter) and the
+reaper/cleanup half of `PrismaSagaCompensationRepository`. Do not read `implements` into the name,
+and do not "restore" a missing interface — `resilience_patterns.md` §6.1, enforced by
+`npm run check:arch` check F.
+
 **⚠️ `.query-repository.ts` is reserved for `application/repositories/` ports only — do NOT use it for a
 domain-layer READ port.** Found 2026-08-20: `ISearchChunkReader` and `IOrgRolePermissionReader` are
 both plain READ ports (no entity, no mapper — see `cqrs_pattern.md`'s repository-placement rule for
@@ -144,17 +153,42 @@ found.
 
 **Rule:** `{SpecificReason}Error extends ApplicationError` (not `AppError`/`Exception`).
 
-**Location + filename:** `common/errors/{module}.error.ts` — **singular** (`error`, not `errors`).
+**Vị trí + tên file — MỘT MỐI, không ngoại lệ (chốt 2026-08-24):**
 
-Correct examples: `auth.error.ts`, `rbac.error.ts`, `user.error.ts`, `engagement.error.ts`,
-`knowledge.error.ts`, `platform-admin.error.ts`, `tenant.error.ts`, `notification.error.ts`.
+> `modules/{module}/domain/{module}.error.ts` — mỗi module đúng **một** file lỗi, tên file trùng tên
+> module, **số ít** (`error`, không phải `errors`).
 
-⚠️ **Known exception, NOT yet fixed:** `apps/core-api/src/modules/credit/domain/credit.errors.ts` —
-wrong on **two counts** at once: (a) plural (`credit.errors.ts` instead of `credit.error.ts`), and
-(b) wrong location (inside `modules/credit/domain/` rather than `common/errors/` like every other
-module). Don't move/rename it just because you happened to walk past it — fix it only when another
-legitimate reason is already touching that file, to avoid one PR mixing a pure rename with a logic
-change.
+Không còn `common/errors/`. Thư mục đó đã bị xoá ở cả 3 service có nó; 8 file được gom về `domain/`
+của module sở hữu, và **cả 4 service giờ đều cấm `modules/*/domain/**` import `@/common/**`** —
+nên `common/` không còn là lựa chọn hợp lệ nữa, chứ không phải "một trong hai chỗ".
+
+Hiện trạng sau khi gom: `auth.error.ts`, `rbac.error.ts`, `user.error.ts` (auth-service) ·
+`knowledge.error.ts`, `engagement.error.ts`, `tenant.error.ts`, `platform-admin.error.ts`,
+`credit.error.ts` (core-api) · `notification.error.ts` (notification-service).
+
+**Class thuộc module nào thì đi theo NGƯỜI THROW, không theo tên class.** Ví dụ thật:
+`AuthMethodNotFoundError` mang chữ "auth" nhưng người throw là `user.entity.ts` → nó nằm trong
+`modules/user/domain/user.error.ts`. Thấy ngược mắt thì đó là dấu hiệu **tên class** đặt sai — sửa
+tên bằng một commit riêng, đừng để nó lái vị trí file.
+
+**Base class:** `ApplicationError`, kể cả với error do domain throw — không phải lựa chọn thẩm mỹ:
+`GlobalExceptionFilter` chỉ map `instanceof ApplicationError` sang status code, mọi base khác rơi
+xuống 500. `shared-kernel/src/errors/` có **`AppError`, `ApplicationError`, `InfrastructureError`,
+`UnreachableError`, `ResponseFormatError` — không có `DomainError`** (một dòng cũ trong
+`folder_structure_sop.md` từng nhắc tới nó; class đó chưa bao giờ tồn tại).
+
+**Machine-checked:** `npm run check:arch` check I (đúng một vị trí, tên khớp module, số ít) và
+check D (domain không được import `@/common/**` — kể cả bằng đường vòng relative, thứ mà eslint
+không thấy vì nó khớp chuỗi literal).
+
+⚠️ **Mục này từng SAI, và cách nó sai đáng nhớ.** Nó bắt **mọi** error phải ở `common/errors/`, rồi
+liệt kê đúng một file không tuân theo được — `credit.errors.ts`, do `credit-account.aggregate.ts`
+throw — như là *"known exception, NOT yet fixed, wrong on two counts"*. Nửa "plural" đúng; **nửa
+"sai vị trí" là chẩn đoán sai**: `@/common/**` nằm trong ban-list của tầng domain, nên làm theo
+directive thì aggregate không import nổi error của chính nó. credit là module duy nhất có domain
+throw error nên là chỗ duy nhất mâu thuẫn lộ ra — và nó bị ghi thành "cẩu thả" thay vì "hai rule đá
+nhau". Cùng hình dạng với vụ `folder_structure_sop.md` ↔ `cqrs_pattern.md` mâu thuẫn ~6 tuần hồi
+2026-07. **Khi đúng MỘT file "vi phạm" một rule, kiểm tra rule trước khi sửa file.**
 
 ## 7. NestJS Module (`@Module`)
 

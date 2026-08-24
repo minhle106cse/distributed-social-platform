@@ -582,6 +582,23 @@ Five caller classes for five external calls: `ClaudeApiCaller`, `GeminiApiCaller
 
 ---
 
+### 3.1.3 Breakers in front of a service that has its own breakers (2026-08-22)
+
+`RagQueryGrpcCaller` (core-api → search-service) sits in front of a service already wrapped in
+breakers for Elasticsearch, Ollama and Claude. Not redundant, and the distinction is worth keeping
+straight: **those breakers protect search-service from its dependencies; this one protects core-api's
+saga — and the credit it is currently holding — from search-service itself** being down or slow.
+
+Its deadline is 30s, far longer than the 3–5s used for membership/provisioning calls, because the
+call legitimately waits on embedding + Elasticsearch + an LLM round-trip. The reservation TTL that
+backs the sweeper must stay comfortably above it.
+
+Note also what does NOT trip this breaker: a response saying the AI degraded. That is a normal
+outcome from a healthy service, resolved (tagged) inside the `caller.call(fn)` closure — the same
+rule as `ALREADY_EXISTS` above.
+
+---
+
 ## 4. Rate Limiting & Throttle
 
 ### 4.1 HTTP rate limiting — per-route + per-org
@@ -751,18 +768,108 @@ Why the jobs' code is still NOT moved into one physical `jobs/` directory (only 
 | `SagaCompensationReaperService` (2 jobs: `.poll` + `.reapStaleClaims`) | `@Interval(5000)` + `@Interval(30000)` | `infrastructure/saga-compensation/saga-compensation-reaper.service.ts` |
 | `SagaCompensationCleanupService` | `@Cron('0 3 * * *')` | `infrastructure/saga-compensation/saga-compensation-cleanup.service.ts` |
 | `IdempotencyCleanupService` | `@Cron('0 3 * * *')` | `infrastructure/http/idempotency/idempotency-cleanup.service.ts` |
+| `ExpiredReservationSweeperService` | `setInterval(AI_RESERVATION_SWEEP_INTERVAL_MS)` | `modules/credit/infrastructure/services/expired-reservation-sweeper.service.ts` (§6a) |
 
 **A silent bug fixed at the same time:** previously `PollingPublisherService.poll()` and `SagaCompensationReaperService.poll()` had only `try/finally`, with NO outer `catch` — if `claimPendingBatch` itself threw (e.g. a DB blip), the error drifted off as an unhandled rejection, unlogged, with nobody knowing the job had just "died quietly" for a tick. All 7 jobs now have an outer `catch`: recording `jobRegistry.recordFailure()` + logging the error clearly, then **swallowing** it (not rethrowing) — one background job failing for one tick must not crash the whole process; the next tick runs normally.
 
 **2026-07-31 (earlier the same day):** `modules/outbox/` → `infrastructure/outbox/` — the outbox has no real domain layer (no entity, no business rule) and had been misplaced in `modules/` from before the "business module vs pure infra" boundary was as clear as it is for `saga-compensation` (written later, correctly placed from the start). See `folder_structure_sop.md`: `modules/` = "business logic per domain" — the outbox doesn't match that definition. During the move, the `domain/repositories/` + `infrastructure/{cleanup,publishers,reapers,reporters,repositories}/` substructure was preserved — **wrong, corrected immediately afterwards the same day**: once it was established that the outbox is not a business module, there was no longer any reason to keep the nested `domain/`+`infrastructure/` shape (which only means something for a module with real DDD layers) while `saga-compensation` — the same kind of thing, written later — is completely flat. `infrastructure/outbox/` was flattened to 8 sibling files, matching `saga-compensation` 100%; the filenames (`outbox-cleanup.service.ts`, `prisma-outbox.repository.ts`, …) are already self-describing and need no extra classifying subfolders.
 
-### 6.1 When port-ifying the driven side is worth it, and when it's ceremony
+### 6.1 Where a port may live, and when there should be no port at all
 
-The two outbox jobs above (`poll()`, `reapStaleClaims()`) previously called `PrismaService.$queryRaw`/`$executeRaw` directly — violating the existing rule in `cqrs_pattern.md` ("the Application layer uses a Domain Repository through an interface and knows nothing about the ORM"). Fixed: `IOutboxRepository` (already present for `append()`) gained `claimPendingBatch`/`markProcessed`/`markFailed`/`reapStaleInflight` — the HA-safe algorithm (`FOR UPDATE SKIP LOCKED`) now sits behind a named interface, so swapping ORMs forces a complete reimplementation (TypeScript enforces it, rather than relying on memory).
+**The rule — two ordered steps, decided by WHERE THE CONSUMERS ARE. Not by how clever the code
+behind the interface is.**
 
-**One mistake made during that same pass, recorded so it isn't repeated:** the identical pattern was applied to `IdempotencyCleanupService`/`IdempotencyInterceptor` — creating an `IIdempotencyRepository` port. Wrong, because a prerequisite was missing: `IOutboxRepository` genuinely is a port because it lives in `domain/repositories/` and is injected by **real command handlers in the Application layer** (`publish-knowledge.handler.ts` and several others) — the dependency runs from Application into Domain, with Infrastructure implementing it. For `IIdempotencyRepository`, the interface + implementation + its only 2 consumers **all live inside `infrastructure/`** — no Application layer depends on it, and no architectural boundary is crossed. That is infra calling infra through a layer of indirection, not a Hexagonal port — it was reverted.
+1. **At least one consumer lives outside `infrastructure/`** (application, domain, `common/`,
+   another package) → there MUST be an interface, and it MUST be declared **outside**
+   `infrastructure/`: the module's `domain/services/` (outbound service port) or
+   `domain/repositories/`/`application/repositories/` (repository port) when one module consumes
+   it, `common/` when it spans modules of the same service, `packages/shared-kernel` when it spans
+   services. The concrete class stays in `infrastructure/` and `implements` it.
+2. **Every consumer is also inside `infrastructure/`** → **no interface and no DI token.** Inject
+   the concrete class.
 
-**The self-check question before port-ifying something:** *"Is the other side of this interface genuinely the Application/Domain layer, or is it also Infrastructure?"* If both ends are Infrastructure → no interface needed, call it directly. A secondary question: *"Is the logic behind it hard enough and worth protecting enough to justify port-ifying it?"* (`FOR UPDATE SKIP LOCKED` is; a one-line `deleteMany` isn't.)
+⚠️ **Step 2 is a snapshot, not a verdict — re-derive it whenever code moves.** Both outbox ports
+proved this within one day (2026-08-24): `IOutboxDispatchRepository` was deleted in the morning
+(all four consumers were core-api infrastructure, so it crossed nothing) and came back in the
+afternoon as `IOutboxStore` once the publish loop moved into `shared-kernel/src/outbox/` — its
+consumer now lives in another package, which is a boundary by any reading. `IMessagePublisher` made
+the same round trip in the opposite order. Neither is a reversal of the rule; the rule asks *where
+are the consumers*, and the consumers moved. Read the import graph, do not trust the last decision
+recorded about a file.
+
+Data shapes are not ports and this rule does not touch them: `OutboxAppendInput`,
+`ClaimedOutboxEvent`, `JwtPayload`, `OrgContext`, `ScheduledJobDescriptor` may be declared next to
+whatever produces them, infrastructure included. The rule is about port-ifying **behaviour**.
+
+**Machine-checked** — `npm run check:arch` (`scripts/check-repo-placement.cjs`, check F) fails the
+build on an `I<Name>` interface declared under `infrastructure/` that is either `implements`ed
+anywhere in the service or paired with a `Symbol()` DI token in the same file. Both signals are
+structural; neither guesses at intent.
+
+**Why step 2 has no "but the logic is hard" escape hatch (deleted 2026-08-24).** This section used
+to end with a secondary question — *"Is the logic behind it hard enough and worth protecting enough
+to justify port-ifying it? (`FOR UPDATE SKIP LOCKED` is; a one-line `deleteMany` isn't.)"* — and
+that sentence quietly undid the rule above it, because the only two interfaces it applied to were
+the two that violated step 2. Wanting the claim algorithm to live in exactly one place is an
+argument for having one CLASS, not for wrapping that class in an interface: the algorithm sits in
+`PrismaOutboxRepository` either way, and no test ever mocked the interface. "Swapping ORMs forces a
+complete reimplementation" was the other stated benefit, and it is not real either — deleting the
+class body forces the same reimplementation, and the swap has never happened in any service here.
+
+**History — the three cases this rule was distilled from:**
+
+- **2026-07-31, `IOutboxRepository` grows a dispatch side.** The two outbox jobs (`poll()`,
+  `reapStaleClaims()`) had been calling `PrismaService.$queryRaw`/`$executeRaw` directly. That was
+  a real problem (raw SQL in a scheduled job), and it was fixed by moving the SQL behind
+  `claimPendingBatch`/`markProcessed`/`markFailed`/`reapStaleInflight`. Correct fix, wrong
+  justification: it was written up as satisfying `cqrs_pattern.md`'s "the Application layer uses a
+  Domain Repository through an interface" — but `PollingPublisherService` is a scheduled
+  infrastructure job, not the Application layer, so that rule never applied to it.
+- **2026-07-31, same pass, `IIdempotencyRepository` reverted.** The identical pattern was applied
+  to `IdempotencyCleanupService`/`IdempotencyInterceptor`. Wrong: the interface, the
+  implementation, and both of its consumers all lived inside `infrastructure/`. Infra calling infra
+  through a layer of indirection, no boundary crossed. Reverted the same day.
+- **2026-08-24, the audit that produced the rule above.** Owner asked why `infrastructure/outbox/`
+  contained an interface at all when there is no port to be found inside infrastructure. Correct on
+  both counts, and the sweep found the problem in both directions:
+  - `IOutboxDispatchRepository` (4 consumers: PollingPublisher, OutboxReaper, OutboxCleanup,
+    OutboxMetricsReporter) and `ISagaCompensationDispatchRepository` (2: reaper, cleanup) had every
+    consumer inside `infrastructure/` → both interfaces and both `Symbol` tokens deleted, consumers
+    now inject `PrismaOutboxRepository`/`PrismaSagaCompensationRepository` directly.
+    `PrismaSagaCompensationRepository` keeps `implements ISagaCompensationStore` — that one is a
+    real port, declared in shared-kernel and consumed by `CommandBus`.
+  - `IOutboxWriter` (then still named `IOutboxAppender`) was the opposite case: a genuine port (6 command handlers call
+    `tx.outbox.append(...)`) declared in the wrong place. While it sat in `infrastructure/`,
+    `common/database/core-api-repos.ts` had to import from `@/infrastructure/**`, and the
+    file-scoped eslint exception it was granted "for its domain repository imports" was silently
+    covering that too. Moved to `common/outbox/outbox-writer.ts`, and renamed for its role rather
+    than its one method — see `folder_structure_sop.md` § The two outbox interfaces.
+  - `AskAiHandler` and `ProvisionOrgHandler` injected the CONCRETE `RagQueryClient` /
+    `AuthProvisioningClient` out of `@/infrastructure/grpc` — a port that should exist and didn't.
+    Added `IRagQueryService` (`modules/credit/domain/services/`) and `IAuthProvisioningService`
+    (`modules/platform-admin/domain/services/`); the gRPC clients now `implements` them and are
+    exported from `GrpcModule` only behind their token. eslint had missed this because the
+    application-layer boundary listed `@/infrastructure/database/**` + `@/infrastructure/http/**`
+    and nothing else; it is now `@/infrastructure/**` minus `cqrs`, so a new infra folder is closed
+    by default instead of open by default.
+
+---
+
+### 6a. Sweepers for state a reaper cannot see (2026-08-22)
+
+`SagaCompensationReaperService` retries compensations that were **recorded and failed**. It cannot
+help with the window before that: a process killed between a side effect committing and its
+compensation being written leaves state nothing remembers.
+
+For the AI-Query Saga that state is an OPEN credit hold, and the failure mode is nasty precisely
+because it is quiet — `balance` still reads correctly, only `available` is permanently short.
+`ExpiredReservationSweeperService` closes it: scan for holds older than `AI_RESERVATION_TTL_MS` with
+no matching commit/release, dispatch the ordinary release command for each.
+
+It is deliberately dumber than a reaper — no claim column, no status machine — because the ledger IS
+the state and the release is already idempotent. Two instances sweeping the same row produce one
+release and one no-op. Reach for this shape whenever "the durable retry mechanism only starts after
+a write that may itself never happen" is true; add it to the §6 background-job index when you do.
 
 ---
 
@@ -787,7 +894,34 @@ Every boundary plays exactly one of two roles, never both in the same call:
 
 **An easy misunderstanding:** the boundary is NOT "HTTP = a real entry point, gRPC/Kafka = intermediate so no fallback needed" — all 4 RECEIVE points (including the gRPC server and the Kafka consumer, which are not real system entry points) use `startTraceContext` and **all generate a new trace when one is missing**. This is deliberate defensive design: a request/event arriving at any RECEIVE boundary is guaranteed a usable `trace_id`, even when the caller forgot to attach one (a bug) or an old Kafka row (from before the `traceparent` column existed) has no value. Conversely, the SEND side never generates one, because inventing a trace at send time is meaningless — only the place that GENUINELY initiates work has a trace worth propagating.
 
-The 4 current RECEIVE points: `TraceContextMiddleware` (core-api HTTP), the `onRequest` hook (auth-service HTTP), `auth-provisioning.grpc-service.ts` (the auth-service gRPC server), and `resilient-consumer.ts` (the Kafka consumer, in shared-kernel). The 2 SEND points: `auth-provisioning.client.ts.metadata()` (the gRPC client) and `prisma-outbox.repository.ts.append()` (writing the DB column).
+**The current points — regenerate this list from `grep -rl startTraceContext` / `grep -rl getCurrentTraceparent`, do not trust it from memory** (reconciled 2026-08-24; the previous version listed 4 RECEIVE + 2 SEND and had been stale for a while):
+
+| RECEIVE (8) | |
+|---|---|
+| `trace-context.middleware.ts` | core-api, notification-service, search-service (HTTP) |
+| `bootstrap/server.ts` `onRequest` hook | auth-service (HTTP) |
+| `auth-provisioning.grpc-service.ts` | auth-service (gRPC server) |
+| `membership-verification.grpc-service.ts` | core-api (gRPC server) — **added 2026-08-24** |
+| `rag-query.grpc-service.ts` | search-service (gRPC server) — **added 2026-08-24** |
+| `resilient-consumer.ts` | shared-kernel (Kafka consumer) |
+
+| SEND (4) | |
+|---|---|
+| `auth-provisioning.client.ts.metadata()` | core-api → auth-service |
+| `rag-query.client.ts.metadata()` | core-api → search-service |
+| `membership-verifier.ts.metadata()` | shared-kernel, used by notification + search → core-api — **added 2026-08-24** |
+| `prisma-outbox-writer.ts.append()` | writing the DB column for later Kafka publication |
+
+⚠️ **How the gap was found, and why this list must be enumerated rather than asserted (2026-08-24).**
+The old list was not wrong about what existed — it was wrong by omission, and the omission WAS the
+bug: three gRPC endpoints existed while only one appeared as a RECEIVE point, and nobody read the
+mismatch. Concretely, of the 3 gRPC hops only ONE propagated end-to-end: `core-api → search-service`
+(RagQuery) attached traceparent but the server never read it, so the trace died at the boundary of
+the one call that charges the user; `notification/search → core-api` (Membership) neither attached
+nor read. The duplication hid it — the two `MembershipVerificationClient` copies were byte-identical,
+so both were missing the same line and fixing one would not have revealed the other. **When a feature
+is "propagate X everywhere", list the boundaries first and tick them off; a status line saying "done"
+is not coverage.**
 
 ### ⚠️ `parentSpanId` — why it was added back after deliberately being dropped
 

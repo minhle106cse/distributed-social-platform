@@ -33,7 +33,7 @@
 | 409 | `OCC_CONFLICT` | Version đã đổi (wiki edit) |
 | 422 | `VALIDATION_ERROR` | Zod schema fail |
 | 429 | `RATE_LIMITED` | Vượt quota (AI/login) |
-| 402 | `INSUFFICIENT_CREDIT` | Org hết credit |
+| 402 | `INSUFFICIENT_CREDITS` | Hết credit khả dụng (`available`, đã trừ phần đang bị reservation giữ) |
 | 503 | `AI_UNAVAILABLE` | Circuit Breaker OPEN (kèm fallback) |
 
 ---
@@ -117,19 +117,22 @@ PATCH /api/v1/knowledge/abc {"body":"...","version":3}
 
 ## 5. SEARCH-SERVICE — DISCOVERY (Search + RAG, service riêng, port 4004)
 
-> **Đính chính lớn:** search **KHÔNG** nằm trong core-api — search-service là **microservice riêng**, own `search_db`, có guard riêng (`RemoteOrgMembershipGuard` — verify `X-Org-Id` qua gRPC sang core-api vì không có `Membership` local). Endpoint là **`POST`** (không phải `GET`), và KHÔNG tách "search thường" khỏi "ask AI" — **1 endpoint duy nhất** làm cả semantic + hybrid (RRF) + RAG summary tuỳ tham số `summarize`. Không có `POST /api/v1/ai/ask` nào tồn tại.
+> **Đính chính lớn:** search **KHÔNG** nằm trong core-api — search-service là **microservice riêng**, own `search_db`, có guard riêng (`RemoteOrgMembershipGuard` — verify `X-Org-Id` qua gRPC sang core-api vì không có `Membership` local). Endpoint là **`POST`** (không phải `GET`).
+>
+> **Cập nhật Phase 5b (2026-08-22):** hai đường giờ đã TÁCH. `POST /api/v1/search` = retrieval thuần (hybrid RRF, trả chunks, **không có `summarize`**, miễn phí). RAG summary = `POST /api/v1/ai/ask` ở core-api (§6b), tốn credit, chạy qua AI-Query Saga và gọi search-service qua gRPC nội bộ (`proto/ai-query.proto`, service `RagQuery`). Tham số `summarize` đã bị **gỡ khỏi HTTP** — để nó ở đó thì bất kỳ ai có `knowledge:read` cũng lấy được câu trả lời AI miễn phí, vô hiệu hoá toàn bộ việc tính credit.
 
 ```http
 POST /api/v1/search
 X-Org-Id: <orgId>
-{ "query": "làm sao rotate JWT secret khi deploy?", "topK": 20, "summarize": true }
+{ "query": "làm sao rotate JWT secret khi deploy?", "topK": 20 }
 
 → 200 {
   "data": {
-    "results": [
-      { "itemId":"...", "title":"Deploy Guide", "score":0.91, "source":"hybrid" }
+    "chunks": [
+      { "knowledgeItemId":"...", "titleSnapshot":"Deploy Guide", "content":"…", "score":0.91 }
     ],
-    "summary": "Để rotate JWT secret khi deploy…"   // null nếu summarize=false hoặc Circuit Breaker OPEN
+    "summary": null,   // LUÔN null trên đường HTTP kể từ Phase 5b — dùng POST /ai/ask
+    "sources": []
   }
 }
 ```
@@ -137,7 +140,7 @@ X-Org-Id: <orgId>
 - RAG summary qua `ClaudeSummarizer`, bảo vệ bằng **Circuit Breaker** (5 fail liên tiếp → OPEN → fail-fast, degrade `summary:null` thay vì 500).
 - ES down → degrade còn semantic-only (pgvector), vẫn 200 chứ không 500.
 - Throttled 20 req/phút/org (đắt hơn CRUD thường — chạm Elasticsearch + có thể cả Claude).
-- **Không tốn credit hiện tại** — mục "Ask AI tốn credit / X-Idempotency-Key / 402 INSUFFICIENT_CREDIT" của tài liệu cũ là thiết kế cho Phase 5b (AI-Query Saga: reserve→RAG→commit/compensate) — **CHƯA triển khai**, chưa có wiring credit↔search nào trong code. Credit ledger (§6) hiện độc lập với search.
+- **Không tốn credit** — endpoint này là retrieval thuần. Wiring credit↔search **đã tồn tại từ Phase 5b** nhưng nằm ở `POST /api/v1/ai/ask` (§6b), không phải ở đây. Dòng cũ ("chưa có wiring credit↔search nào trong code") đã hết đúng từ 2026-08-22.
 - Không có `WS /ws/ai-chat` — không có WebSocket/streaming nào trong code.
 
 ---
@@ -151,6 +154,61 @@ X-Org-Id: <orgId>
 | POST | `/api/v1/credits/spend` | Trừ credit của chính mình (sink). Idempotent (`X-Idempotency-Key`) + OCC. Cần `credit:spend` |
 
 > **Đính chính:** trước đây tài liệu ghi `GET /credits/balance`, `GET /credits/ledger`, `POST /credits/purchase` — các path này **không tồn tại**. Endpoint thật (shipped 2026-07-03) là `wallet`/`grant`/`spend` như trên. `POST /questions/{id}/bounty` (stake credit) **chưa triển khai** — thuộc Phase 5c (bounty + reputation), chưa bắt đầu.
+
+> **Phase 5b đổi response của `/credits/wallet`:** thêm `available` và `reserved`. `balance` là số
+> credit sở hữu, `available` = `balance − reserved` và là con số **quyết định** có cho tiêu hay
+> không. Hai request AI song song phải cùng nhìn thấy phần tiền bên kia đang giữ, nên mọi kiểm tra
+> spend/reserve đều so với `available`.
+>
+> **`INSUFFICIENT_CREDITS` giờ là 402, không phải 409** (đổi 2026-08-22). Bảng mã lỗi §1 vốn đã hứa
+> 402 từ đầu; code trước đó trả 409, trùng ý nghĩa với `OCC_CONFLICT` ("state của bạn cũ rồi, retry
+> đi") vốn là một chỉ dẫn khác hẳn. Code string là `INSUFFICIENT_CREDITS` (số nhiều).
+
+---
+
+## 6b. CORE API — AI QUERY (Phase 5b, AI-Query Saga)
+
+| Method | Endpoint | Mô tả |
+|--------|----------|-------|
+| POST | `/api/v1/ai/ask` | Hỏi AI trên knowledge base của org. **Tốn credit**, idempotent (`X-Idempotency-Key`), cần **cả** `knowledge:read` **và** `credit:spend` |
+| GET  | `/api/v1/ai/queries` | Lịch sử AI query của chính mình (gồm cả lần FAILED), cần `knowledge:read` |
+
+```http
+POST /api/v1/ai/ask
+X-Org-Id: <orgId>
+X-Idempotency-Key: <uuid>
+{ "question": "làm sao rotate JWT secret khi deploy?", "topK": 10 }
+
+→ 200 {
+  "data": {
+    "aiQueryId": "...", "answer": "Để rotate JWT secret…",
+    "sources": [{ "knowledgeItemId":"...", "title":"Deploy Guide" }],
+    "creditCost": 1, "balance": 41
+  }
+}
+```
+
+**Saga (3 bước, `AskAiHandler`):** reserve credit (giữ tạm) → gRPC `RagQuery.Query` sang
+search-service → commit reservation + lưu `AiQuery` + append outbox `CreditSpent`, **cả 3 trong một
+transaction**.
+
+| Kết cục | HTTP | Ledger | Credit |
+|---|---|---|---|
+| Trả lời được | 200 | `CreditReserved` + `CreditReservationCommitted` | **trừ** |
+| Không đủ credit | **402** `INSUFFICIENT_CREDITS` | (không ghi gì) | không |
+| Vượt token bucket | **429** `RATE_LIMITED` | (không ghi gì) | không |
+| Knowledge base rỗng | 200, `answer: null` | `CreditReserved` + `CreditReservationReleased` (`NO_RESULTS`) | không |
+| AI down / breaker OPEN | **503** `AI_UNAVAILABLE` (kèm `fallbackChunks`) | `CreditReserved` + `CreditReservationReleased` (`AI_UNAVAILABLE`) | không |
+
+- **Two-phase reserve, không phải spend-rồi-refund:** khi AI fail thì balance **chưa từng** thay đổi,
+  nên không có gì để hoàn. Notification gửi cho user là *"credit không bị trừ"*, không phải *"đã hoàn"*.
+- **Idempotency:** `IdempotencyInterceptor` claim key **trước khi** handler chạy và replay response cũ
+  cho lần gửi lại — đó chính là yêu cầu "cùng key 2 lần → không trừ credit lần 2" của UC-C2.
+- **Rate limit:** token bucket per `(org, user)` trong Postgres (`ai_quota_buckets`), refill + consume
+  atomic trong 1 `UPDATE … RETURNING`. `@Throttle` per-route vẫn còn nhưng chỉ là backstop
+  (fixed-window, in-memory từng instance).
+- **Reservation kẹt:** `ExpiredReservationSweeperService` release các hold OPEN quá `AI_RESERVATION_TTL_MS`
+  — đường phục hồi cho saga chết giữa chừng (trước khi compensation kịp ghi xuống).
 
 ---
 

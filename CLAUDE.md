@@ -51,6 +51,16 @@ Source of truth: `.ai/KNOWLEDGE_INDEX.md` → `docs/01..10` → `readme.md` / `r
   `domain/repositories/` only if a `domain/` file imports it, else `application/repositories/`
   (`<module>.query-repository.ts`). 2-step rule in `directives/cqrs_pattern.md`, enforced by
   `npm run check:arch`.
+- Never declare a port inside `infrastructure/`; never inject a concrete infra class into an
+  application handler. Decide by WHERE THE CONSUMERS ARE: any consumer outside `infrastructure/` →
+  interface lives outside it too (module `domain/`, `common/` if cross-module, shared-kernel if
+  cross-service); all consumers inside → no interface, no token, inject the class.
+  `directives/resilience_patterns.md` §6.1, enforced by `npm run check:arch` (check F).
+- Never put something in `packages/shared-kernel` without one of 3 reasons: (A) shared-kernel's own
+  code imports it, (B) 2+ services consume it AND it's framework-independent, (C) it's a published
+  wire contract. Fails all 3 → owning service's `common/`. shared-kernel takes no runtime dep on
+  kafkajs/NestJS/Fastify/Prisma/Redis. `folder_structure_sop.md` § Where An Abstraction Lives;
+  `npm run check:arch` check H.
 - Entities: UUID PK, `camelCase` code / `@map("snake_case")` DB, soft delete via `deletedAt`.
 - Run TS via `turbo` (`npm run check`). `docker exec <container>` is only for infra (Postgres, nginx,
   Kafka) during smoke tests — there is no agent sandbox.

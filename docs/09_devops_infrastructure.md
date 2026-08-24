@@ -105,6 +105,14 @@ Nhóm chính (xem `.env.example`):
 - **Redis/Kafka/Elastic/Embedding:** `REDIS_*`, `KAFKA_*` (per-service `clientId`/consumer-group), `ELASTIC_*`, `EMBEDDING_SERVICE_PORT` (Ollama).
 - **App ports:** `AUTH_SERVICE_PORT=4001`, `CORE_API_PORT=4002`, `NOTIFICATION_SERVICE_PORT=4003`, `SEARCH_SERVICE_PORT=4004`, `API_GATEWAY_PORT=8000`.
 - **gRPC (org-provisioning saga, 2026-07-07):** `AUTH_GRPC_PORT=50051`, `CORE_GRPC_PORT=50052`, `INTERNAL_GRPC_SHARED_SECRET` (M2M auth, không phải JWT).
+- **gRPC (AI-Query saga, Phase 5b 2026-08-22):** `SEARCH_GRPC_PORT=50054` (search-service mọc gRPC
+  **server** đầu tiên — trước đó nó chỉ là client), `SEARCH_GRPC_URL=localhost:50054` phía core-api.
+  Dùng chung `INTERNAL_GRPC_SHARED_SECRET`.
+- **AI-Query saga (core-api, Phase 5b):** `AI_QUERY_CREDIT_COST=1` (giá phẳng — pricing theo token
+  cần usage trả về từ provider, port summarizer chưa expose), `AI_QUERY_TOP_K=10`,
+  `AI_QUOTA_CAP=20` / `AI_QUOTA_REFILL_PER_MIN=10` (token bucket, xem `docs/10` §4),
+  `AI_RESERVATION_TTL_MS=300000` + `AI_RESERVATION_SWEEP_INTERVAL_MS=60000` (sweeper release các
+  credit hold bị bỏ lại bởi saga chết giữa chừng — TTL phải rộng hơn deadline gRPC 30s).
 - **JWT:** `JWT_PUBLIC_KEY` (dùng chung, giữ ở root `.env`) + `JWT_PRIVATE_KEY`/`JWT_REFRESH_SECRET` (chỉ auth-service, tách vào `apps/auth-service/.env.secrets`, gitignored).
 - **AI:** `ANTHROPIC_API_KEY`/`GEMINI_API_KEY` (RAG summary + FE, tách vào `apps/search-service/.env.secrets`) — qua Circuit Breaker. Embeddings **không** dùng Claude (self-hosted Ollama, xem §2.1).
 - **Naming debt đã biết:** `CORS_ORIGINS` (auth-service) vs `CORS_ALLOWED_ORIGINS` (3 service NestJS) — chưa hợp nhất (xem `.ai/PROJECT_STATUS.md` → Live debts).

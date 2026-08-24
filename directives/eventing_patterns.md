@@ -114,6 +114,24 @@ Kafka topics are looked up via `EVENT_TOPIC_MAP` (both maps live in `shared-kern
 ### 4.1 Producer reliability
 - **Transactional Outbox** (Guaranteed Delivery): write the business change + the outbox row in the same DB transaction. See `resilience_patterns.md §2`.
 - **PollingPublisher** on an `@Interval`: at-least-once. Failure → retry → `FAILED_DLQ` after N attempts (`OUTBOX_MAX_ATTEMPTS`).
+- **Where the outbox actually lives (2026-08-24).** The pattern is identical in every service that
+  adopts it, so it is a shared-kernel **capability**, not a core-api feature:
+  - `shared-kernel/src/outbox/outbox.ports.ts` — the whole contract: `IOutboxWriter` (write side, runs
+    inside the caller's transaction, one method on purpose) + `IOutboxStore` (dispatch side: claim /
+    markProcessed / markFailed, and nothing else) + `OutboxAppendInput` / `ClaimedOutboxEvent`.
+  - `shared-kernel/src/outbox/outbox-publisher.ts` — `OutboxPublisher`, the framework-free loop:
+    claim a batch → map each row to the CloudEvents 1.0 envelope → publish → mark → decide DLQ. No
+    scheduler, no DI decorator, no metrics client. Same shape as `ResilientEventConsumer`.
+  - **Per service:** the storage adapter (`PrismaOutboxWriter` / `PrismaOutboxRepository`, where the
+    `FOR UPDATE SKIP LOCKED` claim lives), the `OutboxEvent` Prisma model, the tick + re-entrancy
+    guard (`PollingPublisherService` is now ~75 lines of wiring), the prom-client counter via the
+    engine's `onDeadLetter` hook, and the `sourcePrefix` for CloudEvents `source`.
+  - **Deliberately NOT on the port:** `reapStaleInflight` / `countByStatus` / `purgeProcessed`. Their
+    callers (Reaper, MetricsReporter, Cleanup) are per-service infrastructure sitting next to the
+    adapter, and each is a one-line delegation — see `resilience_patterns.md` §6.1. A port carries
+    what crosses the boundary, not everything the class can do.
+  - Adopting the outbox in a new service is therefore: a Prisma model + an adapter + a scheduler that
+    calls `pollOnce()`. Not a copy of the loop.
 - **Observability (2026-07-31):** previously the only way to see the PENDING/INFLIGHT/FAILED_DLQ backlog was opening the DB, and a row landing permanently in `FAILED_DLQ` logged on the SAME line as an ordinary retry. Now split out: `core_api_outbox_dead_letter_total{eventType}`
   (a Counter, incremented only when a row GENUINELY exhausts `maxAttempts`) + `core_api_outbox_backlog{status}` (a Gauge; `OutboxMetricsReporter`
   snapshots counts by status on a 30s `@Interval`) — both surface on `GET /metrics` automatically (the prom-client default registry). The recording rule
@@ -221,6 +239,26 @@ class ItemPublishedHandler implements IIntegrationEventHandler<KnowledgePublishe
 - For writes **across stores/services** (Postgres + Elasticsearch, or another service's DB) a transaction is impossible —
   use idempotency + retry/DLQ, do NOT try to wrap a transaction (see `IndexKnowledgeHandler`).
 - Errors inside a handler are thrown out to the adapter (the adapter decides retry/DLQ) — never swallow them silently.
+
+---
+
+### 4.4 The producer emits FACTS; the consumer decides what is worth a notification (2026-08-22)
+
+`CreditReservationReleased` is emitted for **every** release reason — `AI_UNAVAILABLE`, `EXPIRED`,
+and the entirely benign `NO_RESULTS`. The producer does not filter, because "was this worth telling
+the user about?" is a UX judgement that belongs where the UX is: the notification handler keeps the
+`NOTIFIABLE_REASONS` set and returns early for the rest.
+
+The alternative — deciding at the producer and only emitting "bad" releases — looks tidier and is
+worse: the ledger's integration stream would then be missing releases that really happened, and
+adding a reason later would need a producer change plus a redeploy of the service that owns the
+money. Emit the fact once; let each consumer group filter.
+
+**Subscribing to a topic for one event type is fine.** `EventRouter` warns and **skips** an
+unregistered type — it does not DLQ it (`event-router.ts`). notification-service listens on
+`credit-events` for `CreditReservationReleased` and takes a warn line per `CreditSpent`/
+`CreditAwarded` as the cost. Do NOT silence that with a no-op handler: the warn is what would tell
+you a type you meant to handle is going unhandled.
 
 ---
 

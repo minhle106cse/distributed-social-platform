@@ -67,6 +67,24 @@
 - Hexagonal Architecture là implementation cụ thể: Port (interface trong Application) + Adapter (implement trong Infrastructure)
 - Folder structure trong core-api enforce điều này: `domain/` → `application/` → `infrastructure/` → `presentation/`
 - Lợi ích thực tế: swap Prisma → TypeORM không đụng business logic
+- **Chất liệu thật (audit 2026-08-24) — cái hook đắt nhất của bài này:** "port" bị hiểu sai theo
+  **hai chiều ngược nhau** trong cùng một codebase đã chạy nhiều tháng, và cả hai đều lọt lint:
+  (1) `infrastructure/outbox/` chứa cả interface lẫn implement, 4 consumer đều nằm trong
+  `infrastructure/` → interface đó không phải port, chỉ là indirection (xoá, inject class thẳng);
+  (2) `AskAiHandler` inject **class gRPC cụ thể** từ `@/infrastructure/grpc` → port đáng lẽ phải có
+  thì lại không có. Nghĩa là câu hỏi "có nên tạo interface không" KHÔNG trả lời được bằng cảm giác
+  về độ khó của code — chỉ bằng **consumer đang nằm ở tầng nào**.
+- **Điểm gây tranh luận tốt:** rule cũ của repo có vế phụ "logic đủ khó thì đáng port-ify
+  (`FOR UPDATE SKIP LOCKED` thì có)". Nghe rất hợp lý, nhưng nó lặng lẽ vô hiệu hoá vế chính — vì
+  `FOR UPDATE SKIP LOCKED` đúng là thứ DUY NHẤT nó áp dụng vào. Muốn thuật toán nằm một chỗ là lý do
+  để có **một class**, không phải để có một interface.
+- **Tín hiệu nhận biết port đặt sai tầng (dùng được cho mọi project):** nếu một file ở `common/`
+  hoặc `application/` phải **xin exception của lint** mới import được thứ gì đó → thứ đó đang nằm
+  sai tầng. Exception không phải giải pháp, nó là triệu chứng.
+- **Kết bài = control, không phải prose:** rule sống trong `check:arch` (fail build khi có port khai
+  báo dưới `infrastructure/`) + eslint đảo từ blocklist sang allowlist (`@/infrastructure/**` trừ
+  `cqrs`), nên một thư mục infra MỚI mặc định là đóng. Trước đó rule chỉ nằm trong doc — và doc thì
+  không chặn được ai.
 
 ### #9 · DDD Aggregate Pattern — thiết kế domain object đúng cách
 **Góc:** Domain-Driven Design thực tế
@@ -223,8 +241,31 @@
 **Góc:** Pattern deep-dive
 - Vấn đề: Reserve credit → gọi RAG → nếu RAG timeout → credit bị mất?
 - Saga: chuỗi bước có **compensation** — bước fail → chạy ngược compensation về trạng thái ban đầu
-- AI-Query Saga: Reserve → RAG call → Commit | timeout → Compensate: `CreditRefundedEvent` + notify user
+- AI-Query Saga: Reserve → RAG call → Commit | fail → Compensate + notify user
 - Bounty Saga: stake → answer accepted → award credit + reputation + badge + notify; fail bất kỳ bước → compensate toàn bộ
+
+> **Chất liệu thật sau khi implement (2026-08-22).** Ba chi tiết chỉ lộ ra khi code, đáng giá hơn
+> phần lý thuyết ở trên — bài viết nên xoay quanh chúng:
+>
+> 1. **Two-phase reserve chứ không phải spend-rồi-refund.** Cả hai đều "đúng", nhưng
+>    `CreditReserved → Committed/Released` giữ cho `balance` **không bao giờ tụt vì việc thất bại** —
+>    user nhìn ví trong lúc AI sập thì thấy con số đứng yên, thay vì tiền biến mất rồi hiện lại. Đổi
+>    lại phải sinh ra con số thứ hai, `available = balance − Σ(hold đang mở)`, và **mọi** invariant
+>    phải so với nó. Bẫy: `spend()` vẫn so với `balance` thì user tiêu được đúng phần một AI query
+>    đang giữ — và **OCC không bắt được** (hai lệnh ở hai version khác nhau).
+> 2. **Một bước "thành công" vẫn có thể phải làm saga fail.** search-service degrade thay vì throw:
+>    Claude chết → `summary: null`, nhưng knowledge base rỗng → cũng `summary: null`. Với billing thì
+>    đó là hai chuyện khác hẳn (503 + compensation vs 200 không tính tiền). Contract phải mang
+>    **enum outcome**, không phải `bool degraded`. Đây là bài học "đúng cho free tier, sai cho paid
+>    tier" rất dễ kể.
+> 3. **Compensation phải idempotent ở tầng handler, không chỉ tầng aggregate.** Reaper retry từ
+>    storage bền, sweeper chạy song song — release lần hai trên hold đã COMMITTED sẽ hoàn tiền
+>    người ta đã trả, và làm việc đó **trong im lặng**. Chặn ở aggregate thôi chưa đủ: cái row
+>    `AiQuery` ANSWERED vẫn bị đè thành FAILED và notification vẫn gửi.
+>
+> Cộng thêm một mẩu về "reaper không cứu được mọi thứ": nó chỉ retry compensation **đã ghi xuống**;
+> process chết trước lúc ghi thì cần một sweeper theo TTL — `balance` vẫn đúng, chỉ `available` mất
+> vĩnh viễn, đúng kiểu lỗi khó chịu nhất vì nó không báo gì cả.
 
 ### #29 · Idempotency Key — chống double-charge khi client retry
 **Góc:** API design
@@ -232,6 +273,11 @@
 - Client gửi `X-Idempotency-Key: <uuid>` → server check `idempotency_records` table → trả response cũ nếu đã xử lý
 - NestJS Interceptor pattern; TTL 24h; KHÔNG đăng ký global — chỉ cho mutation tốn kém (AI call, credit spend)
 - Kết hợp với Saga: idempotency key check trước khi bắt đầu saga
+
+> **Chất liệu thật (2026-08-22):** khi làm `POST /ai/ask`, điều đáng nói là **không phải thêm gì cả**.
+> `IdempotencyInterceptor` (claim-before-execute) đã thoả đúng yêu cầu "cùng key 2 lần → không trừ
+> credit lần 2" mà không cần một cơ chế dedup nào ở tầng saga. Góc bài: một cơ chế đặt đúng chỗ thì
+> feature sau dùng lại miễn phí — ngược lại với phản xạ "feature mới thì cần cơ chế mới".
 
 ---
 

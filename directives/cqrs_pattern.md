@@ -41,7 +41,7 @@ themselves.
 export interface CoreApiRepos {
   readonly items: IKnowledgeItemRepository
   readonly revisions: IRevisionRepository
-  readonly outbox: IOutboxAppender
+  readonly outbox: IOutboxWriter
   readonly bookmarks: IBookmarkRepository
   // ...every other write repo in the service, flat — no per-module grouping
 }
@@ -87,8 +87,13 @@ separate reader implemented on the plain client:
 - `ISearchChunkReader.semanticSearch` (search-service) — lives in `application/repositories/`, NOT
   `domain/` (no domain-layer file depends on it, only the application-layer `SearchKnowledgeService`
   does — see the repository-placement litmus test below).
-- `IOutboxDispatchRepository` (claim/mark/reap — publishing does Kafka I/O, so it must never join a
-  caller's transaction).
+- ~~`IOutboxDispatchRepository`~~ — **deleted 2026-08-24.** The claim/mark/reap side of the outbox
+  still must never join a caller's transaction, but that is enforced by `PrismaOutboxRepository`
+  running on the plain client, not by an interface: all four of its consumers are themselves
+  infrastructure, so there was no boundary for a port to sit on (§6.1 of `resilience_patterns.md`,
+  check F of `check:arch`). The write side, `IOutboxWriter` (renamed from `IOutboxAppender` the same
+  day — named for its role, not for its single method), IS a real port and now lives in
+  `common/outbox/`.
 
 ### 3. The handler's TYPE declares what it needs — there is no flag, and no per-handler scope token
 
@@ -197,6 +202,35 @@ does not join, so we fail loudly rather than pick savepoint semantics by acciden
 ---
 ---
 
+### 4a. Saga #2 — `AskAiHandler` (2026-08-22): three lessons the first saga did not surface
+
+`ProvisionOrgHandler` was the only saga for months. The AI-Query Saga added three things worth
+writing down, because none of them are visible from the first one:
+
+**A step that fails "successfully" still has to fail the saga.** search-service degrades instead of
+throwing (AI down → `summary: null`), so a healthy gRPC response can still mean the user is not
+getting what they would pay for. The wire contract therefore carries an *outcome enum*, not a
+boolean, and the saga throws its own `AiUnavailableError` on it. A `bool degraded` would have
+collapsed "AI is down" and "your knowledge base is empty" into one case — the first is a 503 and a
+compensation, the second is a normal 200 nobody should be billed for.
+
+**Not every unwind is a compensation.** The benign outcome (`NO_RESULTS`) releases the hold by
+*dispatching the release command directly* and returning normally, with its own reason. The
+registered compensation stays unused. Throwing just to trigger the stack would have turned "no
+matching documents" into an infrastructure error in every log and metric.
+
+**Keep multi-write steps as ONE transactional command.** Committing the reservation, storing the
+answer and appending the outbox event are a single `CommitAiQueryCommand`. Split into two dispatches,
+the second one failing leaves a charged wallet with no record of what it bought — and now needs a
+compensation of its own, registered inside a saga whose stack is already unwinding.
+
+Everything else is unchanged: register the compensation the instant the undoable thing exists (here:
+right after the reserve, *before* the gRPC call), and register the `actionType` runner in the owning
+module's `onModuleInit` — forgetting that is invisible until the first in-process compensation
+failure, when the reaper treats the unknown type as permanent and DLQs it with the hold still open.
+
+---
+
 ## Folder Structure & Clean Architecture
 
 The CQRS implementation dictates a strict directory separation based on Hexagonal Architecture:
@@ -281,6 +315,14 @@ under `domain/**` importing `application/**` fails — **including relative-path
 eslint `no-restricted-imports` boundary does not catch** (it only matches the `@/modules/*/application/**`
 alias form); and a stray file inside a per-query subfolder fails. Each check was verified to actually
 fire by injecting the violation, not just by passing on clean code.
+
+**Check F, added 2026-08-24, enforces the same idea for NON-repository interfaces:** a port
+(`I<Name>` that a class `implements`, or one paired with a `Symbol()` DI token) declared under
+`infrastructure/` fails the build. The 2-step rule above answers *domain or application* for a
+repository port; `resilience_patterns.md` §6.1 answers the question one level up — *should this
+interface exist at all, and may it live in infrastructure* — for every port, repository or not.
+Short version: at least one consumer outside `infrastructure/` → the interface belongs outside
+`infrastructure/`; every consumer inside → write no interface, inject the class.
 
 **Worked examples (both audited 2026-08-20):**
 - `IOrgRolePermissionReader` (core-api tenant module) — `OrgPermissionResolver`, a **domain service**,

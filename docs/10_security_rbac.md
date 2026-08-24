@@ -107,7 +107,7 @@ Platform (do bạn — nhà vận hành — sở hữu)
 | `engagement:accept_answer` | Accept 1 answer cho question |
 | `ai:query` | Hỏi AI (search + RAG summary — hiện KHÔNG tốn credit, xem `docs/06` §5) |
 | `credit:read` | Xem wallet/ledger credit của mình |
-| `credit:spend` | Trừ credit của chính mình |
+| `credit:spend` | Trừ credit của chính mình (`POST /credits/spend`, và **`POST /ai/ask`** — xem dưới) |
 | `credit:grant` | Cấp credit cho thành viên (admin/owner phân phối gói) |
 | `org:manage_members` | Mời/đổi role/xóa thành viên |
 | `org:manage_spaces` | Tạo/sửa/xóa space |
@@ -135,6 +135,18 @@ Platform (do bạn — nhà vận hành — sở hữu)
 - **OWNER luôn có toàn bộ permission**, KHÔNG cho gỡ. OrgGuard coi OWNER là "có mọi quyền" theo mặc định (implicit), bất kể bảng mapping → tránh trường hợp org không còn ai quản lý được.
 - Chỉ permission của ADMIN/MEMBER/GUEST là chỉnh được.
 - Không cho hạ role của OWNER cuối cùng / không cho org tồn tại với 0 OWNER.
+
+> **Route đầu tiên cần NHIỀU permission cùng lúc (Phase 5b):** `POST /api/v1/ai/ask` khai báo
+> `@RequireOrgPermission(KNOWLEDGE_READ, CREDIT_SPEND)` — vì nó làm hai việc: đọc knowledge của org
+> *và* tiêu credit của caller. `RequireOrgPermission` giờ nhận nhiều permission và `OrgGuard` kiểm
+> **AND** (phải có đủ), không phải OR. Một role được đọc nhưng không được tiêu tiền phải bị chặn ở
+> cửa này, đúng như nó bị chặn ở `POST /credits/spend`.
+>
+> **Ngoại lệ có chủ ý — gRPC `RagQuery` (search-service) KHÔNG check membership.** Đây không phải
+> lỗi IDOR tái diễn: lỗi 2026-07-19 là một endpoint **HTTP public** tin `X-Org-Id` do client gửi.
+> Ở đây caller là core-api, đã chạy JwtAuthGuard + OrgGuard + permission trước khi saga bắt đầu, và
+> `x-internal-secret` là trust boundary. Bắt search-service verify lại còn tạo vòng gọi ngược về
+> core-api trong lúc core-api đang chờ chính call này.
 
 ### 2.3. Luồng enforce (per-request)
 
@@ -228,9 +240,19 @@ Request + Cookie(accessToken) + Header(X-Org-Id: orgId)
 | `POST /credits/grant` | 30 req / phút | `@nestjs/throttler` |
 | `POST /credits/spend` | 60 req / phút | `@nestjs/throttler` |
 | `POST /search` | 20 req / phút / org | `@nestjs/throttler` + `OrgAwareThrottlerGuard` (key theo `orgId`, không phải global) |
-| Credit | chặn khi balance < cost | Ledger check (`INSUFFICIENT_CREDITS`, 409) |
+| `POST /ai/ask` | Token bucket per `(org, user)` — cap `AI_QUOTA_CAP`, refill `AI_QUOTA_REFILL_PER_MIN` | `AiQuotaGuard` — **Postgres** (`ai_quota_buckets`), refill+consume atomic trong 1 `UPDATE … RETURNING`. `@Throttle` 20/phút vẫn còn nhưng chỉ là backstop |
+| Credit | chặn khi `available` < cost | Ledger check (`INSUFFICIENT_CREDITS`, **402**) |
 
-> **Đính chính:** "Token Bucket (Redis)" per-`aiRateLimitPerMin`/org và "Redis rate-limit ghi nội dung" của tài liệu cũ **chưa triển khai** — `aiRateLimitPerMin` không tồn tại trên `Organization` (xem `docs/04` §2.2), và toàn bộ rate-limit ở core-api hiện dùng `@nestjs/throttler` **in-memory** (không backing Redis), keyed theo route + org (`OrgAwareThrottlerGuard`) cho endpoint nhạy cảm. Redis đã khai báo trong compose nhưng chưa dùng cho rate-limit (xem `docs/09`).
+> **Cập nhật 2026-08-22 (Phase 5b):** token bucket cho AI query **đã triển khai**, nhưng ở **Postgres
+> chứ không Redis** — Redis vẫn zero dòng code, thêm nó cho một bộ đếm là thêm client + config +
+> health check + shutdown path. Đây cũng là chỗ duy nhất trong repo có rate-limit **thật sự
+> multi-instance**: `@nestjs/throttler` là fixed-window in-memory từng instance, nên N instance nhân
+> giới hạn thật lên N lần — không thay thế được. Lý do phải có nó dù query đã tốn credit: **giá là
+> ngân sách, không phải tốc độ** — user còn 500 credit vẫn bắn được 200 query trong 10 giây và kéo
+> sập chi phí/latency của Claude+Ollama.
+>
+> `aiRateLimitPerMin` trên `Organization` vẫn **không tồn tại** (xem `docs/04` §2.2) — hạn mức đọc từ
+> env, chưa per-org configurable.
 - Quota **per tenant** (qua `OrgAwareThrottlerGuard`) đảm bảo org này không làm cạn throttle-budget của org khác trên cùng route.
 
 ---

@@ -368,19 +368,22 @@ Mỗi aggregate có bảng riêng để index nhỏ hơn và query không lẫn 
 
 ```prisma
 /// Append-only credit event ledger. KHÔNG BAO GIỜ update/delete row.
-/// eventType: CreditPurchased | CreditAwarded | CreditRefunded (+)
-///            CreditSpent | CreditStaked | CreditReserved (−)
+/// Ví per-user-per-org: aggregateId = "${orgId}:${userId}" (KHÔNG phải orgId —
+/// tài liệu cũ ghi sai). orgId/userId denormalize ra cột để query/audit tenant-safe.
 model CreditEvent {
-  id          String   @id @default(uuid())
-  aggregateId String   // CreditAccount id = orgId
-  eventType   String
+  id          String   @id @default(uuid(7))
+  aggregateId String   @map("aggregate_id")
+  eventType   String   @map("event_type")
   version     Int      // per-aggregate sequence cho OCC
   payload     Json
-  userId      String?
-  createdAt   DateTime @default(now())
+  orgId       String   @map("org_id")
+  userId      String   @map("user_id")
+  createdAt   DateTime @default(now()) @map("created_at")
 
   @@unique([aggregateId, version])
   @@index([aggregateId])
+  @@index([orgId])
+  @@index([eventType, createdAt]) // ExpiredReservationSweeperService quét CreditReserved cũ
   @@map("credit_events")
 }
 
@@ -402,8 +405,71 @@ model ReputationEvent {
 }
 ```
 
-**Credit event types:** `CreditPurchased`, `CreditAwarded`, `CreditRefunded` (+) · `CreditSpent`, `CreditStaked`, `CreditReserved` (−).
+**Credit event types (đã implement):** `CreditGranted`, `CreditRefunded` (+) · `CreditSpent` (−) ·
+và bộ two-phase reserve của Phase 5b: `CreditReserved`, `CreditReservationCommitted`,
+`CreditReservationReleased`.
+
+> **Two-phase reserve — đọc kỹ chỗ này khi fold ledger.** `CreditReserved` **không đổi balance**, nó
+> chỉ *giữ* tiền; `CreditReservationCommitted` mới là lúc trừ thật; `CreditReservationReleased` cũng
+> không đổi balance (chưa từng trừ thì không có gì hoàn). Vì vậy có HAI con số:
+> `balance` = tiền sở hữu, `available` = `balance − Σ(reservation đang OPEN)`. **Mọi kiểm tra
+> spend/reserve so với `available`**, kể cả `POST /credits/spend` — nếu so với `balance` thì user
+> tiêu được đúng phần mà một AI query đang giữ.
+>
+> `payload.reservationId` là thứ nối 3 event của một reservation lại với nhau (không có cột riêng —
+> ledger cố ý giữ schema mỏng).
+>
+> `CreditPurchased` / `CreditStaked` trong tài liệu cũ **chưa tồn tại** (Phase 5c).
 **Reputation event types:** `PointsEarned`, `PointsDeducted`, `BadgeAwarded`, `BadgeRevoked`.
+
+---
+
+### 🟨 2.6b. AI Query (Phase 5b)
+
+```prisma
+/// Một dòng cho một lượt chạy AI-Query Saga (UC-C2). Không phải event stream:
+/// đây chỉ là bản ghi "đã hỏi gì, nhận về gì", không có gì fold lại từ nó.
+/// Ghi ở CẢ HAI kết cục — ANSWERED bởi CommitAiQueryCommand, FAILED bởi
+/// ReleaseCreditReservationCommand — nên lịch sử của user thấy được cả lần hỏng.
+model AiQuery {
+  id            String   @id @default(uuid(7))
+  orgId         String   @map("org_id")
+  userId        String   @map("user_id")
+  question      String
+  answer        String?  // null khi FAILED
+  sources       Json     @default("[]")  // [{ knowledgeItemId, title }]
+  creditCost    Int      @map("credit_cost")  // 0 khi FAILED — hold chưa từng bị trừ
+  status        String   // ANSWERED | FAILED
+  reservationId String   @unique @map("reservation_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([orgId, userId, createdAt])
+  @@map("ai_queries")
+}
+
+/// Token bucket chặn BURST cho AI query (credit đã là quota về tổng, cái này lo
+/// về tốc độ). Postgres chứ không Redis: Redis có trong docker-compose nhưng
+/// zero dòng code, thêm nó = thêm client/config/health-check/shutdown cho đúng
+/// một bộ đếm. Refill + consume atomic trong 1 `UPDATE … RETURNING`.
+/// NGOẠI LỆ so với §"PK luôn là uuid": đây là counter khoá bởi đúng (orgId,userId),
+/// thêm uuid surrogate vẫn phải unique-index lên cặp đó, không được gì.
+model AiQuotaBucket {
+  orgId        String   @map("org_id")
+  userId       String   @map("user_id")
+  tokens       Float
+  lastRefillAt DateTime @map("last_refill_at")
+
+  @@id([orgId, userId])
+  @@map("ai_quota_buckets")
+}
+```
+
+**`notification_db.notifications` đổi theo (Phase 5b):** `itemId` / `spaceId` / `titleSnapshot` /
+`actorUserId` từ NOT NULL → **nullable**, và thêm `metadata Json?`. Lý do: bảng này thôi không còn
+chỉ nói về knowledge item — một notification `AI_UNAVAILABLE` không có item, không có space, không
+có actor (kẻ "gây ra" là một call AI hỏng). Chọn nới cột thay vì tách bảng thứ hai hay nhét tất cả
+vào một JSON blob: hình dạng vẫn là một dòng cho mỗi (recipient, source event), chỉ phần tuỳ chọn
+đổi. `titleSnapshot` giờ mang nghĩa rộng hơn — tiêu đề item, hoặc trích đoạn câu hỏi.
 
 ---
 
@@ -481,7 +547,7 @@ model IdempotencyRecord {
 | `tenant` | organizations, memberships, spaces, org_role_permissions, org_invites | Multi-tenancy + Org RBAC động |
 | `knowledge` | knowledge_items, revisions, tags | Write + OCC + versioning |
 | `engagement` | votes, bookmarks, follows | Tương tác + follow (nguồn cho feed/fan-out) |
-| `credit` | credit_events | Event Sourcing ledger — balance fold-on-read, KHÔNG có summary table (§2.7) |
+| `credit` | credit_events, ai_queries, ai_quota_buckets | Event Sourcing ledger (balance/available fold-on-read, KHÔNG có summary table — §2.7) + AI-Query Saga (§2.6b) |
 | `reputation` | reputation_events | Event Sourcing ledger — chưa có endpoint đọc (Phase 5c chưa làm) |
 | `feed` | (không có bảng riêng) | Query-side thuần: fan-out-on-read trên follows × knowledge_items |
 | (infra) | outbox_events, idempotency_records | Outbox + Idempotency |

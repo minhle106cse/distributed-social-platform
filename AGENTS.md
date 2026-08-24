@@ -97,7 +97,23 @@ Kafka) during smoke tests — there is no agent sandbox and nothing here needs o
   `domain/repositories/`. Read-only port → `domain/repositories/` **only if** a `domain/` file
   imports it, else `application/repositories/` as `<module>.query-repository.ts`. Full 2-step
   procedure: `directives/cqrs_pattern.md`; **machine-checked by `npm run check:arch`** across all
-  4 services (the eslint layer boundaries only cover core-api, and only alias-form imports).
+  4 services (each service's eslint config is separate and has drifted before; lint also only
+  matches alias-form imports).
+- **Never** declare a port inside `infrastructure/`, and never inject a concrete infrastructure class
+  into an application handler. One question decides both: **where do the consumers live?** ≥1 outside
+  `infrastructure/` → the interface must live outside it too (module `domain/`, or `common/` when it
+  spans modules, shared-kernel when it spans services). All consumers inside `infrastructure/` → write
+  **no** interface and no DI token, inject the class. Difficulty of the code is not a reason
+  (`directives/resilience_patterns.md` §6.1); machine-checked by `npm run check:arch` check F.
+- **Never** put something in `packages/shared-kernel` without one of exactly three reasons: **A**
+  shared-kernel's own code imports it (else it won't compile); **B** 2+ independent services already
+  consume it AND it is framework-independent (`CircuitBreaker` precedent — "might need it later" does
+  not count); **C** it is a published wire contract (proto types, event payload definitions, routing
+  maps — consumer count irrelevant). Fails all three → it lives in the owning service's `common/`.
+  And regardless of reason, shared-kernel takes **no runtime dependency** on kafkajs, NestJS, Fastify,
+  Prisma or Redis (`import type` is fine), so a duplicated framework binding never gets promoted.
+  Full table + the audit: `directives/folder_structure_sop.md` § Where An Abstraction Lives; checked
+  by `npm run check:arch` check H.
 - Entities: UUID PK, `camelCase` in code / `@map("snake_case")` in DB, soft delete via `deletedAt`.
 - Zod is the **only** input-validation library, only at the boundary (`presentation/schemas/`).
 

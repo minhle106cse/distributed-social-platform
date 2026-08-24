@@ -228,12 +228,52 @@ async load(aggregateId: string): Promise<CreditAccount> {
 
 ---
 
+### 6. Two-phase reserve — a hold is an EVENT, not a status column (2026-08-22, Phase 5b)
+
+When work spans a boundary a transaction cannot cover (the AI-Query Saga: charge → call
+search-service over gRPC → deliver), the naive shape is spend-then-refund. Don't. Model it as three
+events instead:
+
+| Event | `balance` | `available` |
+|---|---|---|
+| `CreditReserved` | unchanged | −amount |
+| `CreditReservationCommitted` | −amount | (hold ends, net −amount) |
+| `CreditReservationReleased` | unchanged | +amount (hold ends) |
+
+Two properties come out of this, and both matter more than the event count:
+
+1. **`balance` never dips for work that failed.** A user watching their wallet during an AI outage
+   sees nothing move. Spend-then-refund makes the money visibly vanish and reappear, and every
+   report that sums `CreditSpent` has to learn to subtract `CreditRefunded`.
+2. **`available` is a second, separate number** — `balance − Σ(OPEN holds)` — and it is the one every
+   invariant compares against. This is the part that is easy to get wrong: `spend()` checking
+   `balance` lets a user spend the exact credits an in-flight query is holding. **OCC does not save
+   you here** — it catches two writers at the same `version`, and these two are at different ones.
+
+**Fold rules must live in exactly as many places as you have folds.** SoT-only (no summary table)
+means the read side re-implements `apply()` by hand — add a new event type and you must add it in
+both, or the wallet endpoint quietly disagrees with the aggregate that authorizes spending. Pin that
+down with a parity test running one stream through both (see `credit-account.aggregate.spec.ts`).
+
+**The release must be idempotent, and this is the sharpest edge in the whole pattern.** Release is a
+saga compensation, so it gets retried from durable storage by the reaper, and an expiry sweeper can
+race with it. Releasing an already-COMMITTED hold hands back credits that were legitimately charged;
+releasing an already-RELEASED one double-counts. Both break `Sum(events) == Balance`, and both do it
+silently. Rule: **not OPEN → raise no event, return `false`**, and let the caller skip every other
+write it was going to make (the AiQuery row, the outbox event) on that same `false`.
+
+---
+
 ## ⚠️ Gotchas
 
 - **OCC**: catch Prisma P2002 (unique constraint) when saving events → throw `OptimisticLockError`, not a 500.
 - **Projection lag**: the read model (CreditBalanceSummary) can trail the EventStore if updated asynchronously. For the credit economy, update it **synchronously in the same transaction** to guarantee consistency.
 - **Event payload immutability**: never modify the payload of a stored event. If data needs fixing, append a correction event.
 - **Version starts at 1**: version 0 means "no events yet" — it is not the first event.
+- **An OPEN reservation with nobody left to close it** (process killed between the reserve committing
+  and the compensation being recorded) freezes `available` forever while `balance` looks fine — worse
+  than a visible error. Needs a sweeper on a TTL; the ledger itself has no way to notice
+  (`ExpiredReservationSweeperService`, Phase 5b).
 
 ---
 

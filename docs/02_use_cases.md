@@ -64,6 +64,10 @@ Tài liệu mô tả các luồng tương tác **User ↔ System** của **Corte
 ### UC-C1: Semantic Search
 - **Actor:** Member
 - **Luồng chính:** Gõ truy vấn ngôn ngữ tự nhiên → hệ thống chạy **Hybrid Retrieval** (ES BM25 + pgvector) → RRF hợp nhất → trả danh sách kết quả kèm điểm liên quan & highlight.
+- **KHÔNG kèm RAG summary** (từ Phase 5b, 2026-08-22): `POST /api/v1/search` chỉ trả chunks. Bản
+  tóm tắt của AI là thứ UC-C2 tính credit — để nó miễn phí ở đây thì mọi caller có `knowledge:read`
+  đều lấy được đúng câu trả lời đó mà không trả gì, và việc tính tiền chỉ còn là trang trí.
+  Đường tóm tắt nay chỉ đến được qua gRPC nội bộ (`proto/ai-query.proto`), sau saga.
 - **Pattern:** Hybrid Retrieval, Vector Search.
 
 ### UC-C2: Hỏi AI (RAG) — tốn credit
@@ -71,8 +75,17 @@ Tài liệu mô tả các luồng tương tác **User ↔ System** của **Corte
 - **Tiền điều kiện:** Org còn đủ credit; user trong rate-limit.
 - **Luồng chính:**
   1. Member hỏi → gửi kèm `X-Idempotency-Key`.
-  2. **Saga**: reserve credit → retrieve top-N đoạn → gọi Claude (RAG) → trả lời **kèm citation** → commit credit spend (`CreditSpentEvent`).
-- **Luồng lỗi:** Claude timeout/down → **Circuit Breaker OPEN** → refund credit (`CreditRefundedEvent`) → trả về kết quả search keyword + thông báo "AI tạm không khả dụng".
+  2. **Saga**: reserve credit (**giữ tạm, KHÔNG trừ**) → retrieve top-N đoạn → gọi Claude (RAG) →
+     trả lời **kèm citation** → commit reservation + `CreditSpentEvent`.
+- **Luồng lỗi:** Claude timeout/down → **Circuit Breaker OPEN** → **release reservation**
+  (`CreditReservationReleasedEvent`) → **503 `AI_UNAVAILABLE`** kèm chunks đã retrieve làm fallback
+  + thông báo *"AI tạm thời không khả dụng, credit không bị trừ"*.
+  ⚠️ Câu chữ cũ "refund credit / credit đã được hoàn" là SAI kể từ khi two-phase reserve landed
+  (Phase 5b): credit **chưa từng rời khỏi balance**, nên không có gì để hoàn. Ledger ghi cặp
+  Reserved/Released chứ không phải Spent/Refunded.
+- **Luồng "không có kết quả":** knowledge base không có gì để trả lời → **200** với `answer: null`,
+  reservation được release với lý do `NO_RESULTS`, **không tính credit**, và **không** gửi
+  notification (đây không phải sự cố AI).
 - **Lỗi double-submit:** cùng Idempotency-Key gửi 2 lần → trả kết quả cached, **không trừ credit lần 2**.
 - **Pattern:** Saga, Circuit Breaker, Idempotency, Rate Limiting.
 
