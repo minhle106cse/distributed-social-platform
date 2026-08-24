@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package cortex.search;
+
+// Internal service-to-service contract, NOT public API. Called by core-api's
+// AI-Query Saga to run one paid RAG query against search-service, which owns
+// the embeddings + Elasticsearch index and is the only place the retrieval
+// pipeline lives. Secured by shared-secret metadata (x-internal-secret), same
+// convention as membership.proto / org-provisioning.proto.
+//
+// This RPC deliberately does NOT verify org membership: core-api has already
+// authenticated the caller (JWT + OrgGuard + KNOWLEDGE_READ/CREDIT_SPEND) before
+// the saga starts, and the shared secret is the trust boundary here. Do not read
+// the absence of a membership check as the IDOR regression fixed in 2026-07-19 —
+// that one was about a PUBLIC HTTP endpoint trusting a client-supplied X-Org-Id.
+service RagQuery {
+  rpc Query(RagQueryRequest) returns (RagQueryResponse);
+}
+
+message RagQueryRequest {
+  string org_id = 1;
+  string question = 2;
+  int32 top_k = 3;
+}
+
+// Why an enum and not a `bool degraded`: search-service returns `summary: null`
+// for TWO very different reasons — the AI provider is down/circuit-open, and
+// "the org's knowledge base had nothing to answer from". Billing must treat them
+// differently (neither is charged, but only the first is a 503 the user should
+// retry), and a bool collapses them into one indistinguishable case.
+enum RagOutcome {
+  RAG_OUTCOME_UNSPECIFIED = 0;
+  // Retrieval found chunks AND the summarizer produced an answer — chargeable.
+  RAG_OUTCOME_ANSWERED = 1;
+  // Retrieval legitimately found nothing. Not a failure, not chargeable: HTTP 200
+  // with a null answer, no compensation needed beyond releasing the hold.
+  RAG_OUTCOME_NO_RESULTS = 2;
+  // Chunks were retrieved but the summarizer failed / its breaker is open. The
+  // user did not get what they would have paid for → 503 + release the hold.
+  RAG_OUTCOME_AI_UNAVAILABLE = 3;
+}
+
+message RagQueryResponse {
+  RagOutcome outcome = 1;
+  // Empty unless outcome == ANSWERED.
+  string summary = 2;
+  repeated RagSource sources = 3;
+  // Retrieved chunks, always populated when retrieval found anything — returned
+  // even on AI_UNAVAILABLE so the caller can serve them as a fallback (UC-C2).
+  repeated RagChunk chunks = 4;
+}
+
+message RagSource {
+  string knowledge_item_id = 1;
+  string title = 2;
+}
+
+message RagChunk {
+  string knowledge_item_id = 1;
+  string title_snapshot = 2;
+  string content = 3;
+  double score = 4;
+}

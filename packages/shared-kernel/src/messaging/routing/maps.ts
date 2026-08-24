@@ -32,6 +32,7 @@ export const EVENT_TRANSPORT_MAP: Record<EventTypeValue, TransportValue[]> = {
 
   [EventType.CREDIT_AWARDED]: [Transport.KAFKA],
   [EventType.CREDIT_SPENT]: [Transport.KAFKA],
+  [EventType.CREDIT_RESERVATION_RELEASED]: [Transport.KAFKA],
 }
 
 export function transportsForEventType(eventType: string): TransportValue[] {
@@ -58,6 +59,7 @@ export const EVENT_TOPIC_MAP: Record<EventTypeValue, KafkaTopicValue> = {
 
   [EventType.CREDIT_AWARDED]: KafkaTopic.CREDIT_EVENTS,
   [EventType.CREDIT_SPENT]: KafkaTopic.CREDIT_EVENTS,
+  [EventType.CREDIT_RESERVATION_RELEASED]: KafkaTopic.CREDIT_EVENTS,
 }
 
 export function topicForEventType(eventType: string): KafkaTopicValue {
