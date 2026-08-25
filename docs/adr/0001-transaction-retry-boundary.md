@@ -2,6 +2,20 @@
 
 - **Status:** Accepted — 2026-07-29. **IMPLEMENTED cùng ngày trên TOÀN BỘ 5 package** (owner bỏ pilot,
   yêu cầu áp thẳng mọi service). Xem §9 cho những gì thực tế lệch khỏi bản thiết kế này.
+- ⚠️ **PARTIALLY SUPERSEDED by [ADR-0002](0002-placement-rule-and-outbox-as-capability.md) (2026-08-24).**
+  Nội dung dưới đây **giữ nguyên văn** theo quy ước ở `README.md` (*"đánh dấu Superseded, đừng sửa nội
+  dung gốc"*) — đọc nó như bản ghi *quyết định lúc 2026-07-29*, không phải mô tả code hôm nay. Hai
+  phần đã bị thay:
+  - **§5 `TxScopeToken` + registry** → collapse còn **MỘT** repos shape mỗi service, dựng bởi một
+    factory, truyền vào constructor của `PrismaTxRunner`. TypeScript từ chối dựng runner thiếu
+    factory, mạnh hơn hẳn check `canResolve()` lúc boot mà nó thay thế. (Landed 2026-07-30, mãi đến
+    ADR-0002 mới được ghi thành ADR — chính khoảng trễ đó là thứ ADR-0002 §1 nói tới.)
+  - **§9 điểm 2 `IOutboxAppender` / `IOutboxDispatchRepository`** → `IOutboxWriter` / `IOutboxStore`,
+    và cả hai chuyển sang `packages/shared-kernel/src/outbox/` cùng với engine. `IOutboxDispatchRepository`
+    thực ra **bị xoá hẳn** một lúc (mọi consumer đều là infra của core-api) rồi mới quay lại dưới tên
+    `IOutboxStore` khi engine sang shared-kernel — xem ADR-0002 §2.1.
+  - **Vẫn còn hiệu lực:** Unit of Work, suy transaction từ **kiểu** của handler thay vì cờ, fail-fast
+    lúc boot, và toàn bộ §1 (6 lỗ hổng) — đó vẫn là lý do kiến trúc này tồn tại.
 - **Người quyết:** owner dự án. **Người soạn:** AI agent, theo research có dẫn nguồn (§Tham chiếu).
 - **Phạm vi:** mọi write path đi qua `CommandBus` ở core-api / auth-service / notification-service, và
   event handler ghi DB ở notification-service / search-service.

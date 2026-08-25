@@ -29,3 +29,10 @@ nhớ vì sao không chọn cách phổ biến hơn — và không có ADR thì 
 | ADR | Tiêu đề | Status |
 |---|---|---|
 | [0001](0001-transaction-retry-boundary.md) | Ranh giới Transaction & Retry — Unit of Work + suy từ chữ ký + fail-fast lúc boot | Accepted (2026-07-29) |
+
+## Danh sách hiện có
+
+| ADR | Chủ đề | Status |
+|---|---|---|
+| [0001](0001-transaction-retry-boundary.md) | Ranh giới Transaction & Retry — Unit of Work, suy từ kiểu handler, fail-fast lúc boot | Accepted, **partially superseded by 0002** (§5 TxScopeToken/registry và §9.2 outbox port split) |
+| [0002](0002-placement-rule-and-outbox-as-capability.md) | Vị trí abstraction quyết bởi consumer; Outbox thành capability của shared-kernel | Accepted |

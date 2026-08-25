@@ -1,6 +1,8 @@
 # CQRS Command Pipeline & the Unit-of-Work boundary
 
-> **Rewritten 2026-07-29 for ADR-0001** (`docs/adr/0001-transaction-retry-boundary.md`). The previous
+> **Rewritten 2026-07-29 for ADR-0001** (`docs/adr/0001-transaction-retry-boundary.md`; two of its
+> sections were later superseded by `docs/adr/0002-placement-rule-and-outbox-as-capability.md` —
+> the `TxScopeToken`/registry design and the outbox port split. Read 0002 alongside it.) The previous
 > design — `ITransactionManager` + implicit `AsyncLocalStorage` + a `transactional` flag on the command
 > + three middlewares wired with `commandBus.use()` — is GONE. Read the ADR for why (6 invariants that
 > were only protected by comments), what was rejected, and the precedent for each piece.
