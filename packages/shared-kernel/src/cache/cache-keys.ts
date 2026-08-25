@@ -38,15 +38,33 @@ const SEPARATOR = '\u0000'
  */
 export const CACHE_NAMESPACES = {
   membership: 'membership',
+  orgPermissions: 'org-permissions',
   systemPermissions: 'system-permissions',
 } as const
 
 export type CacheNamespace = (typeof CACHE_NAMESPACES)[keyof typeof CACHE_NAMESPACES]
 
 export const CacheKeys = {
-  /** Org membership + resolved org permissions. Written by `MembershipVerifier`. */
+  /**
+   * Whether a user belongs to an org, and with which role. Invalidated by a
+   * membership write (role change, invite accepted).
+   */
   membership: (orgId: string, userId: string): string =>
     `${CACHE_NAMESPACES.membership}:${orgId}${SEPARATOR}${userId}`,
+
+  /**
+   * The permission set of one ROLE in one org. Keyed by role, not by user, on
+   * purpose (2026-08-25): `org_role_permissions` is edited by the org OWNER at
+   * runtime and one edit changes the answer for EVERY member holding that role.
+   * Keyed per user, invalidating that edit would mean finding every affected
+   * user and issuing one DELETE each — O(members), non-atomic, and able to fail
+   * halfway leaving some users stale with no signal. Keyed per role it is a
+   * single DELETE, and the cache stores one copy of the permission list instead
+   * of one per member. It also mirrors the database, where membership and
+   * role→permission are already two tables that change at different rates.
+   */
+  orgPermissions: (orgId: string, role: string): string =>
+    `${CACHE_NAMESPACES.orgPermissions}:${orgId}${SEPARATOR}${role}`,
 
   /** Resolved SYSTEM permissions. Written by core-api's `SystemPermissionsClient`. */
   systemPermissions: (userId: string): string => `${CACHE_NAMESPACES.systemPermissions}:${userId}`,

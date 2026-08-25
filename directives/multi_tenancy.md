@@ -171,6 +171,19 @@ Non-negotiables, all of them learned the hard way rather than chosen for eleganc
   `OrgAwareThrottlerGuard` stays local while `CircuitBreaker` is shared.
 - **The adapter MUST NOT throw.** Redis unreachable ⇒ cache MISS ⇒ re-query the source. A cache sits in
   FRONT of an authoritative source, so on an authz path a broken cache must never become a 500.
+- **Key by what INVALIDATES it, not by who reads it.** The permission set of a role is cached as
+  `org-permissions:{orgId}:{role}` — one entry shared by every member holding that role — because one
+  `PATCH /orgs/:id/role-permissions/:role` changes the answer for all of them at once. Keyed per user
+  it would take one DELETE per affected member: O(members), non-atomic, and able to fail halfway
+  leaving some members stale with no signal. Membership itself stays keyed per user
+  (`membership:{orgId} {userId}`) because that is what a membership write actually changes. This
+  mirrors the database, where the two facts are already two tables.
+- **Invalidate in `afterCommit`, never inside `execute`.** Deleting before the commit lands opens the
+  classic cache-aside race: a concurrent reader misses, reads the still-uncommitted OLD row, and
+  re-populates the cache — then the commit lands and the stale value survives a full TTL. `CommandBus`
+  swallows anything `afterCommit` throws, which is correct here: the database work already committed,
+  so a failed invalidation must degrade to the TTL rather than fail the request. TTL is the floor,
+  invalidation only shortens it — that is why the TTL must stay short enough to be acceptable alone.
 - **Never cache a failed lookup.** Absorbing a failing dependency is the circuit breaker's job; caching
   the failure turns one blip into a full TTL of denials. A negative *answer* (`isMember: false`) IS
   cacheable — that is a completed lookup, not a failure.

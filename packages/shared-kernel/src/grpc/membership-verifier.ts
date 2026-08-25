@@ -59,18 +59,38 @@ export interface MembershipVerifierOptions {
   cache?: MembershipCacheOptions
 }
 
-function parseCached(raw: string): MembershipCheckResult | undefined {
+/** What the RPC returns — richer than what callers get back. */
+interface MembershipRpcResult {
+  isMember: boolean
+  permissions: string[]
+  role: string
+}
+
+/** Cached shape of the membership entry: who belongs, with which role. */
+interface CachedMembership {
+  isMember: boolean
+  role: string
+}
+
+function parseCachedMembership(raw: string): CachedMembership | undefined {
   try {
     const parsed: unknown = JSON.parse(raw)
     if (typeof parsed !== 'object' || parsed === null) return undefined
-    const candidate = parsed as { isMember?: unknown; permissions?: unknown }
-    if (typeof candidate.isMember !== 'boolean' || !Array.isArray(candidate.permissions)) {
+    const candidate = parsed as { isMember?: unknown; role?: unknown }
+    if (typeof candidate.isMember !== 'boolean' || typeof candidate.role !== 'string') {
       return undefined
     }
-    return {
-      isMember: candidate.isMember,
-      permissions: candidate.permissions.filter((p): p is string => typeof p === 'string'),
-    }
+    return { isMember: candidate.isMember, role: candidate.role }
+  } catch {
+    return undefined
+  }
+}
+
+function parseCachedPermissions(raw: string): string[] | undefined {
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return undefined
+    return parsed.filter((p): p is string => typeof p === 'string')
   } catch {
     return undefined
   }
@@ -140,20 +160,77 @@ export class MembershipVerifier {
     return attachTraceparent(metadata, getCurrentTraceparent())
   }
 
+  /**
+   * TWO cache entries, not one (2026-08-25). Membership `(orgId, userId)` and
+   * the role's permission set `(orgId, role)` are cached separately because
+   * they are invalidated by different writes: accepting an invite or changing
+   * one member's role touches the first, while the OWNER editing
+   * `org_role_permissions` changes the second for EVERY member holding that
+   * role at once. Cached together per user, that second edit could only be
+   * invalidated by deleting one key per affected member.
+   *
+   * A single RPC still populates both, so a cold cache costs one round-trip,
+   * not two.
+   */
   async checkMembership(orgId: string, userId: string): Promise<MembershipCheckResult> {
-    return cachedLookup({
+    // Set only if THIS call went to the wire — one response carries both facts,
+    // so a request that already fetched must never ask a second time. Without
+    // this, an uncached (or cold) lookup would cost TWO round-trips instead of
+    // the one it cost before the split.
+    let fetched: MembershipRpcResult | undefined
+
+    const membership = await cachedLookup({
       store: this.store,
       key: CacheKeys.membership(orgId, userId),
       ttlMs: this.cacheTtlMs,
-      parse: parseCached,
-      fetch: () => this.fetchMembership(orgId, userId),
+      parse: parseCachedMembership,
+      fetch: async () => {
+        fetched = await this.fetchMembership(orgId, userId)
+        // Seed the role entry from the same response, so the lookup below is a
+        // hit for the NEXT caller holding this role too.
+        await this.seedPermissions(orgId, fetched.role, fetched.permissions)
+        return { isMember: fetched.isMember, role: fetched.role }
+      },
     })
+
+    if (!membership.isMember) return { isMember: false, permissions: [] }
+    if (fetched) return { isMember: true, permissions: fetched.permissions }
+
+    // Membership was cached but the role's permission set was not — the normal
+    // shape right after an OWNER edits org_role_permissions and invalidates it.
+    const permissions = await cachedLookup({
+      store: this.store,
+      key: CacheKeys.orgPermissions(orgId, membership.role),
+      ttlMs: this.cacheTtlMs,
+      parse: parseCachedPermissions,
+      fetch: async () => (await this.fetchMembership(orgId, userId)).permissions,
+    })
+
+    return { isMember: true, permissions }
   }
 
-  private async fetchMembership(orgId: string, userId: string): Promise<MembershipCheckResult> {
+  /**
+   * Best-effort write-through of the permission entry from a membership fetch.
+   * Never throws for the same reason the rest of the cache path never does: a
+   * cache problem must not fail an authorization check.
+   */
+  private async seedPermissions(orgId: string, role: string, permissions: string[]): Promise<void> {
+    if (!this.store || this.cacheTtlMs <= 0 || role === '') return
+    try {
+      await this.store.set(
+        CacheKeys.orgPermissions(orgId, role),
+        JSON.stringify(permissions),
+        this.cacheTtlMs,
+      )
+    } catch {
+      // A cache that cannot be written is still a working system.
+    }
+  }
+
+  private async fetchMembership(orgId: string, userId: string): Promise<MembershipRpcResult> {
     return this.call(
       () =>
-        new Promise<MembershipCheckResult>((resolve, reject) => {
+        new Promise<MembershipRpcResult>((resolve, reject) => {
           this.client.checkMembership(
             { orgId, userId },
             this.metadata(),
@@ -163,7 +240,11 @@ export class MembershipVerifier {
                 reject(err)
                 return
               }
-              resolve({ isMember: response.isMember, permissions: response.permissions })
+              resolve({
+                isMember: response.isMember,
+                permissions: response.permissions,
+                role: response.role,
+              })
             },
           )
         }),

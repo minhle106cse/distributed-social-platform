@@ -223,9 +223,21 @@ Request + Cookie(accessToken) + Header(X-Org-Id: orgId)
   dependency của **mọi** lượt đọc. Dùng Redis chứ không phải Map trong process: N instance mà cache in-process
   thì thành N cache lạnh, N lần tải gRPC, N cửa sổ stale khác nhau cho cùng một user, và mất sạch mỗi lần
   deploy. **Không bao giờ cache lượt gọi lỗi** (đó là việc của circuit breaker); kết quả "không phải member"
-  thì CÓ cache vì đó là một lượt tra cứu hoàn tất. Đánh đổi: thu hồi membership/permission trễ tối đa 30s —
-  vẫn thấp hơn nhiều so với TTL 15 phút của access token vốn đã chấp nhận, và **không có kênh invalidate**
-  nên đừng nâng lên hàng phút.
+  thì CÓ cache vì đó là một lượt tra cứu hoàn tất.
+  - **Hai entry, không phải một (siết 2026-08-25).** `membership:{orgId} {userId}` giữ "có phải member
+    không + role gì"; `org-permissions:{orgId} {role}` giữ tập permission của role. Tách ra vì **hai
+    thứ này bị invalidate bởi hai loại ghi khác nhau**: nhận invite / đổi role của một người chạm cái thứ
+    nhất, còn OWNER sửa `org_role_permissions` đổi cái thứ hai cho **mọi** member giữ role đó cùng lúc.
+    Nếu gộp chung theo user, một lần sửa quyền phải xoá N key (O(số member), không atomic, hỏng nửa chừng
+    thì một số member stale mà không có tín hiệu nào). Tách ra thì đúng **một** lệnh `DEL`, và tập permission
+    chỉ lưu 1 bản thay vì 1 bản/member. Một lượt RPC vẫn nạp được cả hai entry nên cache lạnh vẫn chỉ tốn
+    1 round-trip.
+  - **CÓ kênh invalidate (thêm 2026-08-25).** `UpdateRolePermissionsHandler` / `UpdateMemberRoleHandler` /
+    `AcceptInviteHandler` xoá key tương ứng trong `afterCommit`. **Bắt buộc afterCommit**, không được nằm
+    trong `execute`: xoá trước khi commit landed sẽ dính race kinh điển — reader miss, đọc bản CŨ chưa
+    commit, ghi lại vào cache; rồi commit landed và giá trị cũ sống hết TTL. `CommandBus` nuốt lỗi của
+    `afterCommit` (đúng — việc DB đã commit rồi), nên invalidate hỏng thì **tụt về đúng TTL 30s**, không
+    làm fail request. TTL là sàn, invalidate chỉ rút ngắn — nên vẫn đừng nâng TTL lên hàng phút.
   - Redis client **không** nằm trong shared-kernel: `check:arch` H cấm `ioredis` ở đó (kernel giữ thuật toán,
     không giữ kết nối sống). shared-kernel chỉ khai port `ICacheStore`; adapter Redis nằm ở
     `infrastructure/cache/` của từng service — cùng lý do `OrgAwareThrottlerGuard` ở lại từng service.
@@ -243,7 +255,7 @@ Request + Cookie(accessToken) + Header(X-Org-Id: orgId)
 | `GET`   | `/api/v1/orgs/:id/role-permissions`        | `org:manage_roles`   | Xem mapping hiện tại của cả 4 role |
 | `PATCH` | `/api/v1/orgs/:id/role-permissions/:role`  | `org:manage_roles`   | Thay thế toàn bộ tập permission của 1 role (trừ OWNER) |
 
-- Mọi thay đổi → invalidate cache `org_perms:{orgId}` (Phase 3).
+- Mọi thay đổi → `afterCommit` xoá `org-permissions:{orgId} {role}` — **một** key, xem §2.3.
 
 **Invite (do ADMIN+ dùng):**
 

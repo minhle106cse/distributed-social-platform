@@ -35,6 +35,16 @@ export interface CheckMembershipResponse {
    * callers never need to know role names, only permission codes.
    */
   permissions: string[]
+  /**
+   * The caller's role in this org — empty if not a member. Added 2026-08-25
+   * purely so the CLIENT can cache the two facts SEPARATELY: membership
+   * (org_id, user_id) and the permission set (org_id, role) change at very
+   * different rates and are invalidated by different writes. Callers still
+   * MUST authorize on `permissions`, never by comparing this role name —
+   * that is the hardcoded-role-check the whole dynamic Org RBAC exists to
+   * avoid.
+   */
+  role: string
 }
 
 function createBaseCheckMembershipRequest(): CheckMembershipRequest {
@@ -126,7 +136,7 @@ export const CheckMembershipRequest: MessageFns<CheckMembershipRequest> = {
 }
 
 function createBaseCheckMembershipResponse(): CheckMembershipResponse {
-  return { isMember: false, permissions: [] }
+  return { isMember: false, permissions: [], role: '' }
 }
 
 export const CheckMembershipResponse: MessageFns<CheckMembershipResponse> = {
@@ -139,6 +149,9 @@ export const CheckMembershipResponse: MessageFns<CheckMembershipResponse> = {
     }
     for (const v of message.permissions) {
       writer.uint32(18).string(v!)
+    }
+    if (message.role !== '') {
+      writer.uint32(26).string(message.role)
     }
     return writer
   },
@@ -166,6 +179,14 @@ export const CheckMembershipResponse: MessageFns<CheckMembershipResponse> = {
           message.permissions.push(reader.string())
           continue
         }
+        case 3: {
+          if (tag !== 26) {
+            break
+          }
+
+          message.role = reader.string()
+          continue
+        }
       }
       if ((tag & 7) === 4 || tag === 0) {
         break
@@ -185,6 +206,7 @@ export const CheckMembershipResponse: MessageFns<CheckMembershipResponse> = {
       permissions: globalThis.Array.isArray(object?.permissions)
         ? object.permissions.map((e: any) => globalThis.String(e))
         : [],
+      role: isSet(object.role) ? globalThis.String(object.role) : '',
     }
   },
 
@@ -195,6 +217,9 @@ export const CheckMembershipResponse: MessageFns<CheckMembershipResponse> = {
     }
     if (message.permissions?.length) {
       obj.permissions = message.permissions
+    }
+    if (message.role !== '') {
+      obj.role = message.role
     }
     return obj
   },
@@ -210,6 +235,7 @@ export const CheckMembershipResponse: MessageFns<CheckMembershipResponse> = {
     const message = createBaseCheckMembershipResponse()
     message.isMember = object.isMember ?? false
     message.permissions = object.permissions?.map((e) => e) || []
+    message.role = object.role ?? ''
     return message
   },
 }

@@ -40,6 +40,24 @@ describe('CacheKeys', () => {
     expect(
       CacheKeys.systemPermissions('user-1').startsWith(`${CACHE_NAMESPACES.systemPermissions}:`),
     ).toBe(true)
+    expect(
+      CacheKeys.orgPermissions('org-1', 'MEMBER').startsWith(`${CACHE_NAMESPACES.orgPermissions}:`),
+    ).toBe(true)
+  })
+
+  // Keyed by role, not by user: one edit to org_role_permissions invalidates
+  // with ONE delete no matter how many members hold that role.
+  it('gives every member of a role the SAME permission key', () => {
+    expect(CacheKeys.orgPermissions('org-1', 'MEMBER')).toBe('org-permissions:org-1\u0000MEMBER')
+  })
+
+  it('separates roles, and separates orgs holding the same role name', () => {
+    expect(CacheKeys.orgPermissions('org-1', 'MEMBER')).not.toBe(
+      CacheKeys.orgPermissions('org-1', 'ADMIN'),
+    )
+    expect(CacheKeys.orgPermissions('org-1', 'MEMBER')).not.toBe(
+      CacheKeys.orgPermissions('org-2', 'MEMBER'),
+    )
   })
 
   // The reason the separator is NUL and not ':' — orgId comes straight from a

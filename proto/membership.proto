@@ -24,4 +24,12 @@ message CheckMembershipResponse {
   // other roles read from org_role_permissions), computed server-side so
   // callers never need to know role names, only permission codes.
   repeated string permissions = 2;
+  // The caller's role in this org — empty if not a member. Added 2026-08-25
+  // purely so the CLIENT can cache the two facts SEPARATELY: membership
+  // (org_id, user_id) and the permission set (org_id, role) change at very
+  // different rates and are invalidated by different writes. Callers still
+  // MUST authorize on `permissions`, never by comparing this role name —
+  // that is the hardcoded-role-check the whole dynamic Org RBAC exists to
+  // avoid.
+  string role = 3;
 }

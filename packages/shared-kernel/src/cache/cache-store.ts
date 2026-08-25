@@ -21,4 +21,29 @@ export interface ICacheStore {
   get(key: string): Promise<string | null>
   /** Best-effort write; a failure must be swallowed, not propagated. */
   set(key: string, value: string, ttlMs: number): Promise<void>
+  /**
+   * Best-effort invalidation; deleting an absent key is a no-op, not an error.
+   *
+   * Swallowing a failure here is a REAL trade-off, unlike get/set: a dropped
+   * delete leaves a stale entry until its TTL expires. That is the price of
+   * never failing a write whose database work already committed, and it is why
+   * the TTL stays short enough to be an acceptable worst case on its own —
+   * invalidation shortens the stale window, it is not the only thing closing it.
+   */
+  del(key: string): Promise<void>
 }
+
+/**
+ * DI token for the port above. A plain `Symbol`, so it carries no framework
+ * dependency and can live beside the interface it names — the same convention
+ * the per-module repository ports follow (`MEMBERSHIP_QUERY_REPOSITORY` sits in
+ * the file declaring `IMembershipQueryRepository`).
+ *
+ * Declared here rather than per-service (changed 2026-08-25) because three
+ * services each defined their OWN `Symbol('CACHE_STORE')` for the same port.
+ * Distinct symbols are distinct tokens, so nothing shared could ever ask for
+ * "the cache" — every consumer had to import its own service's copy, which is
+ * exactly what stops an application-layer handler from depending on the port
+ * without reaching into `infrastructure/`.
+ */
+export const CACHE_STORE = Symbol('CACHE_STORE')
