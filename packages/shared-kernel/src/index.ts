@@ -21,6 +21,15 @@ export * from './auth/system-permissions.js'
 // Auth — org-level permission catalog (RBAC codes, cross-service — core-api
 // owns/administers, search-service and notification-service verify remotely)
 export * from './auth/org-permissions.js'
+// Auth — access-token verification, shared by every service's JwtAuthGuard
+// shell so the RS256 pinning + claim normalisation cannot drift between them.
+export * from './auth/access-token-verifier.js'
+// Cache — the ICacheStore PORT plus the cache-aside policy that uses it. The
+// Redis client lives per-service: check H bans ioredis from shared-kernel (no
+// live connections in the kernel).
+export * from './cache/cache-store.js'
+export * from './cache/cached-lookup.js'
+export * from './cache/cache-keys.js'
 
 // CQRS
 export * from './cqrs/index.js'
@@ -82,6 +91,17 @@ export {
   type RagQueryServer,
   RagQueryClient,
 } from './grpc/ai-query.js'
+// gRPC — core-api -> auth-service system-permission resolution, so the system
+// tier resolves per-request from auth_db instead of trusting a JWT snapshot.
+// Named (not `export *`) for the same ts-proto helper-name collision reason as
+// membership.js above.
+export {
+  type ResolveSystemPermissionsRequest,
+  type ResolveSystemPermissionsResponse,
+  SystemRbacService,
+  type SystemRbacServer,
+  SystemRbacClient,
+} from './grpc/system-rbac.js'
 // Transactional Outbox — the contract (write port + dispatch port + row shape)
 // and the framework-free publish loop. A service supplies the storage adapter,
 // the scheduler and the metrics; everything identical between services is here.
@@ -94,7 +114,12 @@ export * from './outbox/outbox-publisher.js'
 // two byte-identical per-service copies 2026-08-24 — reason B, see
 // folder_structure_sop.md § Where An Abstraction Lives.
 export { MembershipVerifier } from './grpc/membership-verifier.js'
-export type { MembershipCheckResult, BreakerCall } from './grpc/membership-verifier.js'
+export type {
+  MembershipCheckResult,
+  BreakerCall,
+  MembershipCacheOptions,
+  MembershipVerifierOptions,
+} from './grpc/membership-verifier.js'
 // gRPC — shared M2M auth convention (shared-secret metadata), reused by every
 // internal gRPC server/client so the wire format can't drift between them.
 export * from './grpc/internal-grpc-auth.js'

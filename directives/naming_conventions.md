@@ -58,7 +58,7 @@ insert `Grpc` into the middle of the name to distinguish the wrapper from the cl
 | `OllamaEmbeddingCaller` | HTTP call out to the Ollama embedding service |
 | `ElasticsearchSearchCaller` | The ES client's `search()` call |
 | `AuthProvisioningGrpcCaller` | Wraps `AuthProvisioningClient` (gRPC) |
-| `MembershipVerificationGrpcCaller` | Wraps `MembershipVerificationClient` (gRPC) |
+| `MembershipVerificationGrpcCaller` | The breaker `MembershipVerifier` calls through (gRPC) |
 
 100% consistent across the repo as of 2026-07-19 — no exceptions.
 
@@ -73,6 +73,12 @@ obvious from how it's used/generated).
 |---|---|
 | `AuthProvisioningClient` | `service AuthProvisioning` |
 | `MembershipVerificationClient` | `service MembershipVerification` |
+
+> The rule names the class that speaks the contract — usually the ts-proto **generated** stub. When a
+> hand-written class wraps that stub with policy of its own (caching, deadlines, metadata), name it for
+> what it *does*, not for the proto service: `MembershipVerifier` wraps the generated
+> `MembershipVerificationClient` and is NOT called `...Client`, precisely so the two are
+> distinguishable at a glance.
 
 ## 4. Repository (Domain interface + Infrastructure impl)
 

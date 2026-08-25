@@ -51,7 +51,8 @@ Platform (do bạn — nhà vận hành — sở hữu)
 │   ├── superadmin → xử lý report, monitor tài nguyên hệ thống, quản trị platform
 │   ├── support    → xem report, hỗ trợ, read-only monitor
 │   └── user       → chỉ dùng sản phẩm (DEFAULT khi đăng ký)
-│   → Gán role 1 lần, TOÀN CỤC. Nằm trong JWT (`roles`, `permissions`).
+│   → Gán role 1 lần, TOÀN CỤC. Có trong JWT, NHƯNG core-api không tin claim đó:
+│     nó resolve lại từ auth_db mỗi request (gRPC + cache Redis 30s) — xem §2.1.
 │   → Do nhà vận hành (bạn) quản lý.
 │
 └── TẦNG 2 — Org RBAC  (core-api / core_db)
@@ -76,8 +77,46 @@ Platform (do bạn — nhà vận hành — sở hữu)
   - `'*'` → pass mọi thứ
   - `'rbac:*'` → pass mọi action trên resource `rbac` (ví dụ: `rbac:read`, `rbac:create`)
   - `'rbac:read'` → exact match
-- **Enforce:** auth-service routes dùng `fastify.requirePermissions([...])`; core-api dùng `SystemPermissionGuard` + `@RequireSystemPermission(...)` (đọc thẳng JWT claim, KHÔNG query DB — khác hẳn `OrgGuard`).
+- **Enforce:** auth-service routes dùng `fastify.requirePermissions([...])` (đọc claim trong token nó tự ký); core-api dùng `SystemPermissionGuard` + `@RequireSystemPermission(...)` — **resolve từ auth_db qua gRPC + cache Redis**, KHÔNG đọc claim (đổi 2026-08-25, xem gạch đầu dòng bên dưới).
 - **Đặc tính:** ít thay đổi, gắn với vận hành platform, không biết gì về domain org.
+- **Tầng system resolve TỪ DB, KHÔNG đọc claim trong token nữa (đổi 2026-08-25).**
+  `SystemPermissionGuard` gọi gRPC `SystemRbac.ResolveSystemPermissions` (proto/system-rbac.proto) sang
+  auth-service — nơi duy nhất sở hữu System RBAC — rồi cache Redis 30s. Trước đó guard đọc thẳng claim
+  `permissions` trong JWT, tức **ảnh chụp tại thời điểm login**: thu hồi `SUPER_ADMIN` vẫn để token cũ
+  full quyền hết 15 phút còn lại, và cách duy nhất để rút ngắn là rút ngắn TTL của *mọi* token. Org RBAC
+  chưa bao giờ dính vì `OrgGuard` vốn resolve theo request — đây là đóng nốt bất đối xứng đó, đúng gốc rễ
+  đã ghi trong `.ai/memory/gotchas.jsonl`. auth-service **vẫn** đặt `permissions` vào token cho
+  `requirePermissions` của chính nó; chỉ core-api thôi không tin nữa.
+  - Đánh đổi: route admin của core-api giờ phụ thuộc auth-service. **Fail CLOSED → 503** (giống
+    `RemoteOrgMembershipGuard`), vì authz mà degrade thành "cho qua" khi nguồn chết thì tệ hơn không check.
+  - Luật resolve (SUPER_ADMIN implicit-all) nằm ở **một** hàm `resolveSystemPermissions()` (auth-service
+    `common/rbac/`), dùng chung bởi cả đường mint JWT (`UserMapper`) lẫn đường gRPC — hai đường lệch nhau
+    chính là lỗi đã từng xảy ra.
+  - Repo query loại luôn user/role đã `isActive=false` hoặc soft-delete, lọc **ở tầng DB** chứ không phải
+    trong JS, để điều kiện không âm thầm mất tác dụng khi đổi cột `select`.
+- **`SystemPermissionGuard` FAIL-CLOSED (siết 2026-08-25).** Route nào guard này bảo vệ mà **không** khai
+  `@RequireSystemPermission` sẽ bị **từ chối 403**, kể cả với `SUPER_ADMIN` — không còn cho qua như trước.
+  Lý do: tầng này **không có sàn** để rơi xuống. `OrgGuard` chứng minh membership trong DB *trước khi* nhìn tới
+  decorator, nên quên decorator ở tầng org tệ nhất là "member bất kỳ"; quên ở tầng system trước đây là
+  **"user đăng nhập bất kỳ"** — tức một member org thường chạm được endpoint platform-admin. Guard cũng đã
+  chuyển lên **class level** ở `PlatformAdminController` (`@UseGuards(JwtAuthGuard, SystemPermissionGuard)`),
+  nên route mới chỉ còn phải khai *quyền nào*, không thể quên *có gác hay không*. Đánh đổi có chủ đích:
+  route hỏng ồn ào (403 cho tất cả) tốt hơn route mở âm thầm.
+- **`@RequireSystemPermission(...permissions)` variadic, cùng hình dạng với `@RequireOrgPermission`
+  (đồng bộ 2026-08-25).** Nhiều permission = AND, giống hệt tầng org. Chưa route admin nào cần AND
+  thật, nhưng trước đó decorator này chỉ nhận 1 tham số **do tình cờ chứ không phải quyết định** —
+  hai decorator lệch hình dạng cho cùng một khái niệm ("cần permission gì để qua guard") là nguồn
+  nhầm lẫn, và là đúng kiểu lỗi đã xảy ra ở search/notification-service (xem gạch đầu dòng org bên
+  dưới). `@RequireSystemPermission()` không tham số = coi như không khai báo → vẫn 403 fail-closed.
+- **Đọc metadata bằng `getAllAndOverride([getHandler(), getClass()])`**, không phải `reflector.get(…, getHandler())`
+  — bản cũ bỏ qua decorator đặt ở class level một cách im lặng (fail-open, không lỗi, không cảnh báo).
+  Xem `directives/multi_tenancy.md` § *How a guard MUST read route metadata*.
+- **Verify access token dùng chung `verifyAccessToken`** (`packages/shared-kernel/src/auth/access-token-verifier.ts`).
+  Trước 2026-08-25 phần verify bị copy **byte-identical** ở cả 3 service (core-api, search-service,
+  notification-service); mỗi service nay chỉ giữ vỏ `JwtAuthGuard` (đọc config + map lỗi sang HTTP).
+  Hàm dùng chung ghim `algorithms: ['RS256']` (chặn algorithm-confusion: ký lại bằng HS256 với chính
+  public key làm HMAC secret) và **chuẩn hoá claim** (`roles`/`permissions` thiếu → `[]`, phần tử không phải
+  string bị loại) thay cho blind-cast payload như trước.
 
 ### 2.1a. gRPC Org-Provisioning Saga (shipped 2026-07-07) — chưa từng đặc tả ở đây
 
@@ -157,24 +196,43 @@ Request + Cookie(accessToken) + Header(X-Org-Id: orgId)
   │
   ├─ OrgGuard (core-api — có Membership local)         RemoteOrgMembershipGuard (search-service,
   │   1. orgId = header['x-org-id']  (thiếu → 403)      notification-service — KHÔNG có Membership local)
-  │   2. membership = find(orgId, user.sub)               1. gRPC sang core-api (MembershipVerificationClient)
+  │   2. membership = find(orgId, user.sub)               1. gRPC sang core-api (MembershipVerifier)
   │      (không phải member → 403)                           verify orgId + resolve permissions
   │   3. orgRole = membership.role                        2. Fail CLOSED: core-api unreachable/breaker OPEN
   │   4. permissions = resolveOrgPermissions(orgId, orgRole)  → 503, KHÔNG âm thầm cho qua (chống IDOR —
   │      ├─ OWNER → toàn bộ catalog (implicit)               trước đây X-Org-Id bị trust verbatim, đã vá)
-  │      └─ khác  → query org_role_permissions (DB          3. request.org = { orgId, orgRole, permissions }
-  │        trực tiếp, KHÔNG có cache — mục "cache Redis
-  │        5 phút" của tài liệu cũ là thiết kế Phase 3,
+  │      └─ khác  → query org_role_permissions (DB          3. request.org = { orgId, permissions }
+  │        trực tiếp, KHÔNG có cache — mục "cache Redis         (KHÔNG có orgRole: contract gRPC trả
+  │        5 phút" của tài liệu cũ là thiết kế Phase 3,          membership + permissions, không trả tên role)
   │        CHƯA triển khai)
   │   5. request.org = { orgId, orgRole, permissions }
-  │   6. nếu route có @RequireOrgPermission(p) và p ∉ permissions → 403 (cả 2 guard)
+  │   6. nếu route có @RequireOrgPermission(p1, p2…) → cần ĐỦ CẢ (AND), thiếu bất kỳ → 403 (cả 2 guard)
   │
   └─ TenantContextMiddleware mở ALS (đầu request); OrgGuard setTenantId(orgId) → getTenantId() khả dụng cho repo
 ```
 
 - Decorator khai báo trên route theo **action**, không theo role:
-  `@RequireOrgPermission(OrgPermission.ORG_MANAGE_MEMBERS)`.
+  `@RequireOrgPermission(OrgPermission.ORG_MANAGE_MEMBERS)`. Khai nhiều permission = **AND** (cần đủ cả),
+  variadic ở **cả 3 service** (thống nhất 2026-08-25 — trước đó search/notification chỉ nhận MỘT permission
+  dù trùng tên và trùng metadata key với core-api).
+- Handler nhận org đã verify qua `@CurrentOrg()`, **không** đọc lại `@Headers('x-org-id')` — giá trị đã kiểm
+  và giá trị đem dùng phải nối bằng data flow, không phải trùng nhau do tình cờ.
 - Đổi "ai được làm gì" = đổi dữ liệu trong `org_role_permissions`, **không đụng code route**.
+- **Cache membership 30s trên REDIS (thêm 2026-08-25, `MembershipVerifier` trong shared-kernel).** Trước đó
+  mỗi request org-scoped ở search/notification tốn 1 round-trip gRPC sang core-api → core-api là hard
+  dependency của **mọi** lượt đọc. Dùng Redis chứ không phải Map trong process: N instance mà cache in-process
+  thì thành N cache lạnh, N lần tải gRPC, N cửa sổ stale khác nhau cho cùng một user, và mất sạch mỗi lần
+  deploy. **Không bao giờ cache lượt gọi lỗi** (đó là việc của circuit breaker); kết quả "không phải member"
+  thì CÓ cache vì đó là một lượt tra cứu hoàn tất. Đánh đổi: thu hồi membership/permission trễ tối đa 30s —
+  vẫn thấp hơn nhiều so với TTL 15 phút của access token vốn đã chấp nhận, và **không có kênh invalidate**
+  nên đừng nâng lên hàng phút.
+  - Redis client **không** nằm trong shared-kernel: `check:arch` H cấm `ioredis` ở đó (kernel giữ thuật toán,
+    không giữ kết nối sống). shared-kernel chỉ khai port `ICacheStore`; adapter Redis nằm ở
+    `infrastructure/cache/` của từng service — cùng lý do `OrgAwareThrottlerGuard` ở lại từng service.
+  - Adapter **không bao giờ ném**: Redis chết = cache MISS, đi hỏi lại nguồn. Cache đứng TRƯỚC nguồn đáng tin,
+    nên cache hỏng không được phép biến thành 500 trên đường authz. Entry đọc lên được coi là **input không
+    đáng tin** (có thể do thứ khác ghi vào cùng Redis) — sai định dạng thì đọc thành miss, không tin và không
+    crash. Key có namespace (`membership:` / `system-permissions:`) đúng vì store dùng chung.
 
 ### 2.4. API quản lý Org RBAC & Invite
 
@@ -280,4 +338,22 @@ Request + Cookie(accessToken) + Header(X-Org-Id: orgId)
 | Token theft | Refresh rotation + family revoke + HTTP-only cookie |
 | AI cost abuse | Rate limit token-bucket + per-org quota |
 | XSS | No token in LocalStorage, sanitize markdown render |
+| Route mới quên khai quyền | Guard fail-closed (system tier) + guard ở class level + `getAllAndOverride` |
+| Algorithm confusion trên access token | `verifyAccessToken` ghim `algorithms:['RS256']`, có test forge HS256 bằng public key |
+| Lộ `INTERNAL_GRPC_SHARED_SECRET` | ⚠️ **CHƯA phòng thủ đủ — xem rủi ro mở bên dưới** |
 ```
+
+### 6.1. Rủi ro còn mở: internal gRPC chạy `createInsecure()` (ghi nhận 2026-08-25, CHƯA xử lý)
+
+Toàn bộ trust của kênh service-to-service dồn vào **một shared secret tĩnh** truyền **plaintext**
+(`grpc.credentials.createInsecure()` trong `MembershipVerifier` và các gRPC client khác). So sánh không bị
+timing attack (`verifyInternalGrpcSecret` dùng `timingSafeEqual` trên sha256), nhưng đó là bảo vệ *phép so
+sánh*, không bảo vệ *đường truyền*.
+
+Blast radius lớn bất thường vì `RagQuery` (`proto/ai-query.proto`) **cố ý không kiểm tra membership** — nó tin
+hoàn toàn vào caller. Lộ secret = đọc được knowledge base của **mọi org**, không cần JWT, không cần là member.
+
+**Chưa làm** vì đây là việc hạ tầng (CA + cert từng service + mount vào compose + cơ chế rotate) không thể
+verify nếu không dựng cả stack, và một "seam TLS" cắm sẵn nhưng không bao giờ chạy chính là loại trừu tượng
+đầu cơ mà repo này vẫn xoá đi (tiền lệ: `CommandOptions.safety`). Hướng xử lý khi làm: mTLS giữa các service,
+tối thiểu là secret rotation + network policy giới hạn ai chạm được cổng gRPC.

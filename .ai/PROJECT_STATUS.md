@@ -48,6 +48,9 @@ SagaCompensationOutbox + DLQ auto-replay · RAG/hybrid search (pgvector + ES + R
 | **Port** | **Không bao giờ** khai port trong `infrastructure/`. Consumer ở đâu quyết định port ở đâu — và đó là **ảnh chụp**, phải suy lại từ import graph mỗi khi code dịch chuyển | `resilience_patterns.md` §6.1 · `check:arch` F |
 | **shared-kernel** | Vào được chỉ khi thoả 1 trong 3: (A) code shared-kernel tự import, (B) ≥2 service dùng + độc lập framework, (C) wire contract được publish. Cộng kind test: không runtime-dep kafkajs/NestJS/Fastify/Prisma/Redis | `folder_structure_sop.md` § Where An Abstraction Lives · `check:arch` H |
 | **Error** | Mỗi module **đúng một** file: `modules/<x>/domain/<x>.error.ts`, số ít, tên trùng module. `common/errors/` **không còn tồn tại**. Mọi error `extends ApplicationError` (filter chỉ map loại đó) | `naming_conventions.md` §6 · `check:arch` I |
+| **Authz guard** | Guard đọc metadata bằng `getAllAndOverride([getHandler(), getClass()])` — `.get()` bỏ qua decorator ở class level và fail **open**. `SystemPermissionGuard` **fail-closed**: route không khai `@RequireSystemPermission` → 403 (tầng system không có sàn membership). Handler nhận org qua `@CurrentOrg()`, không đọc lại `x-org-id`. Nhiều permission = **AND**, variadic ở cả 3 service | `multi_tenancy.md` § How a guard MUST read route metadata · `docs/10_security_rbac.md` §2.1 |
+| **Authz resolve** | **CẢ HAI tầng resolve theo request, không tin claim trong token.** Org: `OrgGuard` (DB local) / `RemoteOrgMembershipGuard` (gRPC → core-api). System: `SystemPermissionGuard` → gRPC `SystemRbac` → auth_db. Cả hai **fail CLOSED → 503** khi nguồn không với tới được | `docs/10_security_rbac.md` §2.1 · `proto/system-rbac.proto` |
+| **Cache authz** | **Redis, không phải Map trong process.** shared-kernel chỉ giữ port `ICacheStore` (check H cấm `ioredis` ở kernel); adapter nằm ở `infrastructure/cache/` từng service. Adapter **không bao giờ ném** (Redis chết = miss); **không cache lượt lỗi**; entry đọc lên là **untrusted input**. Dùng `cachedLookup()` của shared-kernel, **đừng tự viết lại** read/validate/write. Key **cấp phát ở `CacheKeys`** (shared-kernel) — Redis là MỘT keyspace chung, prefix tự đặt tại chỗ là cấp phát mù; `cache-keys.spec.ts` kiểm tra va chạm | `multi_tenancy.md` § Caching an authz lookup |
 | **Transport** | Mọi thứ gRPC/Kafka ở `src/infrastructure/<transport>/` cấp service, **không** trong `modules/`. Module infra chỉ có 4 thư mục con: mappers, consumers, services, repositories | `folder_structure_sop.md` · `check:arch` G |
 | **Module wiring** | Module infra cấp service là `@Global` + import **một lần** ở `AppModule`. Application layer bị cấm `@/infrastructure/**` trừ `cqrs` | `folder_structure_sop.md` § Enforcement |
 | **Outbox** | Là **capability của shared-kernel**: contract + engine ở `shared-kernel/src/outbox/`; service chỉ cung cấp adapter Prisma + scheduler + metrics. Ghi qua `tx.outbox.append()` (`IOutboxWriter`) | `eventing_patterns.md` §4.1 |
@@ -57,9 +60,9 @@ SagaCompensationOutbox + DLQ auto-replay · RAG/hybrid search (pgvector + ES + R
 
 #### Gate phải xanh trước khi coi là xong
 
-`npm run check` = `check:arch` (**9 check A–I**) + `turbo typecheck lint format:check`. Test:
-`turbo test` — **33/33 task xanh** (core-api 58 suites/187 tests · shared-kernel 13/97 ·
-auth-service 30/123 · search 14/60 · notification 12/35).
+`npm run check` = `check:arch` (**9 check A–I**) + `turbo typecheck lint format:check` — **22/22 task
+xanh**. Test: `turbo test` — **12/12 task, 541 test** (core-api 59 suites/196 · shared-kernel 15/117 ·
+auth-service 30/123 · search 15/69 · notification 13/36), verified 2026-08-25.
 
 ⚠️ **`typecheck`/`lint`/`test` KHÔNG nhìn thấy lỗi DI wiring của Nest** — chỉ nổ lúc boot. Mỗi service
 NestJS có `src/app-module-graph.spec.ts` (NestFactory preview mode, không cần infra) làm gate duy nhất
@@ -100,6 +103,11 @@ gRPC org-provisioning saga (ts-proto codegen), System-Admin vs Org-Admin split, 
   `c207fed`) — see `directives/resilience_patterns.md` §7. A distinct `causationId` (event-caused-
   event chain) is still unmodeled — add when Phase 5b saga needs it.
 - **Outbox reorder:** retry can reorder same-aggregate events (fix = per-key sequencing; not worth it yet).
+- **Internal gRPC chạy `createInsecure()`** (ghi nhận 2026-08-25, trong lượt siết authz): shared secret tĩnh
+  truyền plaintext là *toàn bộ* trust boundary service-to-service, mà `RagQuery` thì cố ý không check
+  membership → lộ secret = đọc knowledge base của mọi org. Hướng xử lý: mTLS (hoặc tối thiểu rotation +
+  network policy). Hoãn vì là việc hạ tầng (CA/cert/compose/rotate) không verify được nếu không dựng cả
+  stack — chi tiết ở `docs/10_security_rbac.md` §6.1.
 - **Naming split:** `CORS_ORIGINS` (auth) vs `CORS_ALLOWED_ORIGINS` (3 NestJS services) — known,
   unmerged (touches 4 configs); see `directives/naming_conventions.md`.
 - **Test gaps:** `credit` module giờ đã có test thật (aggregate two-phase reserve + parity 2 bản fold + 3 handler mới + saga) — dòng "pending user review" cũ đã hết đúng, nhưng code 5b vẫn chưa được owner đọc lại; no

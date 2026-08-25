@@ -66,6 +66,12 @@ export const LogContext = {
   // HTTP idempotency-key enforcement (core-api) — IdempotencyInterceptor
   // (claim/replay/conflict) + IdempotencyCleanupService (nightly TTL purge).
   IDEMPOTENCY: 'Idempotency',
+  // Cache layer — the per-service Redis adapter behind shared-kernel's
+  // ICacheStore port (membership + system-permission lookups). Cache misses are
+  // silent; this context only ever carries a BACKEND FAILURE, which is exactly
+  // the thing that is invisible otherwise (a broken cache still serves correct
+  // answers, just slowly, so nothing else would ever surface it).
+  CACHE: 'Cache',
   // Process-level start/shutdown (main.ts in every service) — not a request/
   // dispatch boundary, but still a real log source, so it gets a real context
   // like everything else (2026-07-25 audit — was previously untagged).

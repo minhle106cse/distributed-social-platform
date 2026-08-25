@@ -5,6 +5,14 @@
 - **Supersedes:** ADR-0001 §5 (`TxScopeToken` + registry) và ADR-0001 §9 điểm 2
   (`IOutboxAppender`/`IOutboxDispatchRepository`). Phần còn lại của ADR-0001 — Unit of Work, suy
   transaction từ **kiểu** của handler, fail-fast lúc boot — **vẫn còn hiệu lực**.
+- **Amended 2026-08-25 (cơ chế, không đổi quyết định):** §3 bác phương án *"promote nguyên khối"* và
+  chốt *"mỗi service giữ vỏ `@Injectable()` và breaker riêng"*. Quyết định đó **vẫn đúng** — lõi lên
+  shared-kernel, breaker vẫn per-service. Chỉ **cái vỏ** đổi: từ một class `@Injectable()` sang một
+  `useFactory` provider trong `GrpcModule` của từng service. Lý do: cái vỏ hoá ra chỉ `new` verifier
+  rồi forward đúng một method, và bản thân nó lại bị nhân đôi byte-for-byte giữa hai service — đúng
+  loại trùng lặp mà chính ADR này tồn tại để loại. shared-kernel không mang được `@Injectable()`
+  (check H cấm `@nestjs/*`), nhưng đó là lý do để dùng factory, không phải lý do đẻ ra một class mỗi
+  service chỉ để chứa một decorator. Nội dung gốc bên dưới **giữ nguyên văn** theo quy ước `README.md`.
 - **Người quyết:** owner dự án. **Người soạn:** AI agent.
 - **Phạm vi:** mọi abstraction (port, interface, error class, adapter, transport endpoint) trong
   `apps/*` và `packages/shared-kernel`.

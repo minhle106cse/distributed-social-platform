@@ -237,8 +237,14 @@ NestJS services. Under reason B the guards/interceptors are settled — they are
 the kind test blocks them regardless. **The two membership-verification files were NOT settled, and were resolved
 2026-08-24**: their core is framework-independent with two real consumers, so reason B applied. The
 core is now `MembershipVerifier` in `shared-kernel/src/grpc/` (a runtime `@grpc/grpc-js` import is
-allowed there — check H), each service keeps a 39-line `@Injectable()` shell supplying config and its
-OWN breaker instance (two services must never share a breaker). The duplication had already cost
+allowed there — check H), and each service wires it with a `useFactory` provider in its `GrpcModule`
+supplying config, its own Redis `ICacheStore`, and its OWN breaker instance (two services must never
+share a breaker). **The shell is a factory, not a class** (2026-08-25): each service first kept a
+39-line `@Injectable()` wrapper that only `new`-ed the verifier and forwarded one method — a pure
+pass-through, itself duplicated byte-for-byte, which even re-declared the return type by hand instead
+of reusing `MembershipCheckResult`. shared-kernel cannot carry `@Injectable()` (check H bans
+`@nestjs/*`), but that argues for a factory provider, not for inventing a class per service to hold
+a decorator. Consumers now inject `MembershipVerifier` itself. The duplication had already cost
 something real: **neither copy attached `traceparent`**, so every membership check broke the W3C trace
 chain the other gRPC hops maintain — fixed once in the shared core, plus the two servers that never
 read it back (`MembershipVerificationGrpcService`, `RagQueryGrpcService`).

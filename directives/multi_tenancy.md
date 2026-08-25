@@ -126,6 +126,73 @@ async getMembers(@CurrentOrg() org: OrgContext) { ... }
 - Changing "who can do what" = editing `org_role_permissions` via the `PATCH /orgs/:id/role-permissions/:role` API.
   **Do NOT edit the route code.**
 - Seed the default mapping (ADMIN/MEMBER/GUEST) when the org is created (`CreateOrgHandler.seedDefaults`).
+- **Several permissions = AND, never OR.** `@RequireOrgPermission(A, B)` means the caller needs BOTH.
+  The decorator is variadic in all three services (unified 2026-08-25 — search-service and
+  notification-service used to accept only ONE permission while sharing core-api's name *and*
+  metadata key, so a route needing two could not express it and silently enforced neither).
+
+### How a guard MUST read route metadata (2026-08-25)
+
+```typescript
+// ✅ reads BOTH the method and the class; method wins
+this.reflector.getAllAndOverride<OrgPermissionValue[]>(ORG_PERMISSION_KEY, [
+  context.getHandler(),
+  context.getClass(),
+])
+
+// ⛔ method only — a decorator placed on the CONTROLLER CLASS reads as
+//    "not declared" and the route silently stops being permission-checked
+this.reflector.get<OrgPermissionValue[]>(ORG_PERMISSION_KEY, context.getHandler())
+```
+
+Class-level is the natural place to put the decorator when every route in a controller needs the
+same permission, so the trap is reachable by writing idiomatic Nest — and it fails **open**, with no
+error, warning, or failing test. Both `remote-org-membership.guard.spec.ts` files (search-service
+and notification-service, copied 2026-08-25 — the guards are logic-identical, only the doc comments
+differ) assert the reflector was consulted with **both** targets, so reverting to `.get()` in either
+service fails a test.
+
+### Caching an authz lookup (2026-08-25)
+
+Redis, never a per-process `Map`: N instances of a service otherwise means N cold caches, N times the
+load on the source, N different staleness windows for the same user, and everything lost on deploy.
+
+**Use `cachedLookup()` from shared-kernel — do NOT hand-roll the read/validate/write dance.** It
+takes `{store, key, ttlMs, parse, fetch}` and enforces every rule below in one place. Both
+`MembershipVerifier` and core-api's `SystemPermissionsClient` had each written their own copy first,
+differing only in which shape they validated; two copies of a policy this subtle is how one of them
+silently drifts into caching an error or trusting a malformed entry.
+
+Non-negotiables, all of them learned the hard way rather than chosen for elegance:
+
+- **shared-kernel gets the PORT, the service gets the CLIENT.** `check:arch` H bans `ioredis` from
+  shared-kernel — the kernel owns algorithms, never live connections. So `ICacheStore` crosses the
+  boundary and each service owns an adapter under `infrastructure/cache/`, the same way
+  `OrgAwareThrottlerGuard` stays local while `CircuitBreaker` is shared.
+- **The adapter MUST NOT throw.** Redis unreachable ⇒ cache MISS ⇒ re-query the source. A cache sits in
+  FRONT of an authoritative source, so on an authz path a broken cache must never become a 500.
+- **Never cache a failed lookup.** Absorbing a failing dependency is the circuit breaker's job; caching
+  the failure turns one blip into a full TTL of denials. A negative *answer* (`isMember: false`) IS
+  cacheable — that is a completed lookup, not a failure.
+- **Treat a cached entry as untrusted input.** It is whatever is in Redis, not necessarily what you
+  wrote. Validate its shape; malformed ⇒ miss, never trust and never crash.
+- **Allocate the key in `CacheKeys` (shared-kernel), never build it locally.** Redis is ONE keyspace
+  for the whole platform, so a prefix picked inside whichever class happens to need a cache is a
+  namespace allocated blind — two features can choose the same one and the only symptom is one
+  silently reading the other's value. `cache-keys.spec.ts` asserts the namespaces are distinct, that
+  none prefixes another, and that a crafted `orgId` cannot shift the separator to forge a collision.
+  Not every cache belongs there: rate-limit counters are per-process memory and HTTP idempotency is
+  Postgres — both deliberately outside Redis, and both must be added to `CacheKeys` FIRST if that
+  ever changes.
+
+### Consuming the verified org — never re-read the header
+
+The guard publishes `request.org` (`OrgContext`); handlers take `@CurrentOrg()`. Re-reading
+`@Headers('x-org-id')` in the handler re-derives a value the guard already validated, so the checked
+value and the used value are linked by coincidence rather than by data flow. search-service and
+notification-service did exactly that until 2026-08-25; both now mirror core-api. Their `OrgContext`
+has **no `orgRole`** — the gRPC contract returns membership + resolved permissions, not the role name,
+and an absent field beats one invented at the boundary.
 
 ### Mandatory guardrails (lock-out prevention)
 
@@ -158,6 +225,9 @@ The client only changes the `X-Org-Id` header on the next request. Do **NOT** re
 | Putting `OrgGuard` / `TenantContextMiddleware` in `common/` | HTTP infrastructure → `infrastructure/http/{guards,middlewares}/` (see `folder_structure_sop.md` §Enforcement) |
 | `OrgGuard` injecting `PrismaService` and querying directly | Go through `IMembershipRepository` — a guard must not bypass the repository |
 | `org-permissions.ts` (a domain catalog) placed in `common/` | `modules/tenant/domain/` — it is the tenant domain's vocabulary, not a cross-cutting abstraction |
+| `reflector.get(KEY, context.getHandler())` in a guard | `getAllAndOverride(KEY, [getHandler(), getClass()])` — `.get()` ignores a class-level decorator and fails OPEN |
+| A handler taking `@Headers('x-org-id')` | `@CurrentOrg()` — use the value the guard verified, not a second read of the raw header |
+| A permission guard returning `true` when the route declares nothing | Decide per tier: org tier may fall back to membership-only (it still proved membership); the **system tier must throw** — it has no floor (see `docs/10_security_rbac.md` §2.1) |
 
 ---
 
