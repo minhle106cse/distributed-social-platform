@@ -1,5 +1,11 @@
 # PLAN — Engagement Module (core-api) · Phase 1 (sau knowledge)
 
+> ⚠️ **BẢN GHI LỊCH SỬ, ĐÃ THỰC THI — đừng chép cấu trúc lỗi thời làm template.** Plan này đặt error
+> class ở `common/errors/engagement.error.ts`; kể từ ADR-0002 (2026-08-24), `common/errors/` **không
+> còn tồn tại** — mỗi module có đúng một file `modules/<module>/domain/<module>.error.ts`. Xem
+> `directives/naming_conventions.md` §6 và `docs/adr/0002-placement-rule-and-outbox-as-capability.md`
+> cho luật hiện hành trước khi dùng file này làm mẫu.
+
 > **Đối tượng thực thi:** session mới (Sonnet). Plan này TỰ ĐỦ — không cần đọc lại nhiều source.
 > Khi cần mẫu, mở **đúng các file template knowledge-module** (vừa làm xong, là tham chiếu tốt nhất).
 > Ngôn ngữ code/comment: theo repo (comment tiếng Việt ngắn gọn cho phần "vì sao").
