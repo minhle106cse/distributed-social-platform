@@ -1,7 +1,19 @@
 # Plan — thống nhất ranh giới domain của auth-service theo core-api
 
-> Trạng thái: **CHƯA THỰC HIỆN** — dựng 2026-08-24 theo yêu cầu của owner ("thống nhất theo core-api").
-> Không đụng logic. Toàn bộ là di chuyển khai báo + sửa đường import + 1 dòng eslint.
+> Trạng thái: **ĐÃ THỰC HIỆN 2026-08-24**, và owner mở rộng phạm vi ngay khi duyệt.
+>
+> **Thực tế đã làm rộng hơn plan này:** owner chốt *"quy về 1 mối, mỗi module 1 file lỗi"*, nên
+> không chỉ auth-service mà **cả 3 service** có `common/errors/` đều gom về
+> `modules/<module>/domain/<module>.error.ts` — 8 file di chuyển, 89 file sửa import,
+> `common/errors/` bị xoá hoàn toàn. `check:arch` check I đổi từ "1 trong 2 chỗ" thành "đúng 1 chỗ +
+> tên file trùng tên module". Commit: auth-service `9de1879`, core-api `d70e05f`,
+> notification-service `ec7a4e8`.
+>
+> **§4 điểm 1 (trùng basename `auth.error.ts` ở hai nơi) không còn tồn tại** — vì `common/errors/`
+> biến mất, mỗi tên file chỉ còn đúng một chỗ.
+>
+> Giữ file này làm bản ghi *cách quyết định được đưa ra*: đo ở cấp class chứ không cấp file, và lý do
+> `AuthMethodNotFoundError` đi theo người throw chứ không theo tên.
 
 ## 1. Vấn đề
 

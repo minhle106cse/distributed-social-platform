@@ -12,6 +12,8 @@
     `BountySettlementPolicy`/`bounty-settlement.policy.ts` hợp lệ theo ngoại lệ **pure domain
     service** của `naming_conventions.md` §9 (không `I`, không `Service`, filename khớp class —
     tiền lệ `TextChunker`, `RagPromptBuilder`).
+- ⚠️ **TIỀN ĐỀ ĐÃ LỖI THỜI — đọc mục "Cập nhật 2026-08-25" ngay dưới trước khi tin bất cứ dòng nào
+  trong khối này.** Giữ nguyên văn để thấy plan được dựng trên trạng thái nào.
 - **Tiền đề (kiểm bằng `git status`, không suy đoán):**
   - **Phase 5b vẫn CHƯA COMMIT** — 3 submodule `m` + 4 file untracked ở shared-kernel. 5c xây thẳng
     lên trên đó ⇒ **commit 5b trước**, đừng để bug 5b và bug 5c nằm chung một diff không tách được.
@@ -24,6 +26,33 @@
     `credit/domain/services/rag-query.service.ts`, eslint application-boundary siết thành
     `@/infrastructure/**`. Plan này bám trạng thái đó; **handler mới TUYỆT ĐỐI không import
     `@/infrastructure/**`**.
+
+
+### ⚠️ Cập nhật 2026-08-25 — 4 tiền đề ở trên đã thay đổi
+
+Plan này viết ngày 2026-08-24 **trước** một đợt refactor placement lớn. Thiết kế nghiệp vụ (§1 trở
+đi) vẫn đúng; phần **tiền đề kỹ thuật** thì không. Đối chiếu lại trước khi code:
+
+| Plan viết | Thực tế bây giờ |
+|---|---|
+| "Phase 5b vẫn CHƯA COMMIT" | **Đã commit** — 25 commit ngày 2026-08-24, cây sạch |
+| `IOutboxAppender` ở `common/outbox/outbox-appender.ts` | **`IOutboxWriter`**, ở `packages/shared-kernel/src/outbox/outbox.ports.ts`. Import: `from '@distributed-social-platform/shared-kernel'` |
+| "cả 5 check A–F của `check-repo-placement.cjs`" | **9 check A–I.** Mới: F (không port trong `infrastructure/`), G (danh sách đóng thư mục con của module infra), H (shared-kernel không runtime-dep transport/framework), I (một file lỗi mỗi module) |
+| Error class ở `common/errors/<module>.error.ts` | **`common/errors/` không còn tồn tại.** Mỗi module đúng một file: `modules/<module>/domain/<module>.error.ts` — kể cả `credit.error.ts` (số ít) |
+
+Ba hệ quả trực tiếp cho code của 5c:
+
+1. **File lỗi của bounty/reputation** phải là `modules/<module>/domain/<module>.error.ts`, không phải
+   `common/errors/`. Check I fail build nếu đặt sai chỗ hoặc đặt tên không trùng module.
+2. **Đừng khai báo port nào trong `infrastructure/`** — check F chặn. Port đi ra ngoài
+   (`domain/services/` nếu một module dùng, `common/` nếu xuyên module, shared-kernel nếu xuyên
+   service, và chỉ khi thoả một trong 3 lý do A/B/C ở `folder_structure_sop.md` § Where An
+   Abstraction Lives).
+3. **Ghi outbox** dùng `IOutboxWriter` từ shared-kernel qua `tx.outbox.append(...)` như cũ — tên type
+   đổi, cách gọi không đổi.
+
+Đọc kèm: `directives/folder_structure_sop.md` § Where An Abstraction Lives ·
+`directives/naming_conventions.md` §6 · `directives/resilience_patterns.md` §6.1.
 
 ---
 
